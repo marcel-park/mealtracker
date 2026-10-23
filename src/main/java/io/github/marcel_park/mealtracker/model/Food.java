@@ -11,19 +11,19 @@ public class Food {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @NotBlank
+    @Column(nullable = false, length = 100)
     private String name;
 
-    @PositiveOrZero
+    @Column(nullable = false)
     private double kcalPer100g;
 
-    @PositiveOrZero
+    @Column(nullable = false)
     private double protein;
 
-    @PositiveOrZero
+    @Column(nullable = false)
     private double carbs;
 
-    @PositiveOrZero
+    @Column(nullable = false)
     private double fat;
 
     // Getter und Setter für alle Felder (siehe Tipp unten)

@@ -1,6 +1,7 @@
 package io.github.marcel_park.mealtracker.controller;
 
-import io.github.marcel_park.mealtracker.model.Food;
+import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.service.FoodService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -18,19 +19,24 @@ public class FoodController {
     }
 
     @GetMapping
-    public List<Food> list(@RequestParam(required = false) String q) {
+    public List<FoodResponse> list(@RequestParam(required = false) String q) {
         return service.find(q);
     }
 
     @GetMapping("/{id}")
-    public Food get(@PathVariable Long id) {
+    public FoodResponse get(@PathVariable Long id) {
         return service.get(id);
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Food create(@Valid @RequestBody Food food) {
-        return service.create(food);
+    public FoodResponse create(@Valid @RequestBody FoodRequest request) {
+        return service.create(request);
+    }
+
+    @PutMapping("/{id}")
+    public FoodResponse update(@PathVariable Long id, @Valid @RequestBody FoodRequest request) {
+        return service.update(id, request);
     }
 
     @DeleteMapping("/{id}")
