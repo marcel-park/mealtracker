@@ -4,9 +4,8 @@ import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
-import org.springframework.http.HttpStatus;
+import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 
 @Service
@@ -47,7 +46,7 @@ public class FoodService {
 
     private Food getEntity(Long id) {
         return repository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Food not found"));
+                .orElseThrow(() -> new NotFoundException("Food", id));
     }
 
     private void apply(FoodRequest request, Food food) {
