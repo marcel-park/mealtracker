@@ -44,7 +44,7 @@ public class FoodService {
         repository.delete(getEntity(id));
     }
 
-    private Food getEntity(Long id) {
+    Food getEntity(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Food", id));
     }
