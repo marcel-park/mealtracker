@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import './App.css'
 
 // Backend address from the Vite env (see .env.example). Empty: same origin as the page.
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 const API = { foods: `${BASE}/api/foods`, meals: `${BASE}/api/meals` }
 
+const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
 const SEARCH_DELAY_MS = 250 // search only once typing pauses
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
@@ -646,18 +649,35 @@ function NumberField({ label, value, onChange }) {
 }
 
 // Lets the system back button step back inside the app instead of leaving it.
-// While anything above the main view is shown, one extra history entry sits on
-// top of the app's entry; pressing back removes it and runs goBack instead.
+// Native app: the hardware back button arrives as a Capacitor event.
+// Browser: while anything above the main view is shown, one extra history entry sits
+// on top of the app's entry; pressing back removes it and runs goBack instead.
 function useBackNavigation(isNested, goBack) {
   const [hasEntry, setHasEntry] = useState(false)
   const isRemovingEntry = useRef(false) // true while our own history.back() is in flight
   const goBackRef = useRef(goBack)
+  const isNestedRef = useRef(isNested)
 
   useEffect(() => {
     goBackRef.current = goBack
+    isNestedRef.current = isNested
   })
 
+  // Native app
   useEffect(() => {
+    if (!IS_NATIVE) return
+    const listener = CapacitorApp.addListener('backButton', () => {
+      if (isNestedRef.current) goBackRef.current()
+      else CapacitorApp.exitApp()
+    })
+    return () => {
+      listener.then((handle) => handle.remove())
+    }
+  }, [])
+
+  // Browser
+  useEffect(() => {
+    if (IS_NATIVE) return
     function onPopState() {
       setHasEntry(false)
       if (isRemovingEntry.current) isRemovingEntry.current = false
@@ -668,6 +688,7 @@ function useBackNavigation(isNested, goBack) {
   }, [])
 
   useEffect(() => {
+    if (IS_NATIVE) return
     if (isNested && !hasEntry) {
       history.pushState(null, '')
       setHasEntry(true)
@@ -679,6 +700,7 @@ function useBackNavigation(isNested, goBack) {
   }, [isNested, hasEntry])
 
   useEffect(() => {
+    if (IS_NATIVE) return
     history.scrollRestoration = 'manual'
     return () => {
       history.scrollRestoration = 'auto'
