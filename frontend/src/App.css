@@ -1,184 +1,494 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
+/* =============================================================================
+   Tokens
+   ============================================================================= */
 
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --ink: #18212b;
+  --muted: #66727f;
+  --line: #dde2e8;
+  --accent: #2c4fd8;
+  --on-accent: #ffffff;
+  --danger: #b3382c;
+  --ok: #1e7a3c;
+
+  --gutter: 16px; /* side padding of the app, the bottom bar and the dialog backdrop */
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --icon-button-size: 40px;
+  --search-height: 48px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12171d;
+    --surface: #1b222a;
+    --ink: #e8ecf0;
+    --muted: #96a1ad;
+    --line: #2d3742;
+    --accent: #7e97ff;
+    --on-accent: #0f1522;
+    --danger: #ff8d80;
+    --ok: #6fd08c;
   }
 }
 
-.hero {
-  position: relative;
+/* =============================================================================
+   Base
+   ============================================================================= */
 
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
-
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
-
-  .framework,
-  .vite {
-    position: absolute;
-  }
-
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
-  }
+* {
+  box-sizing: border-box;
 }
 
-#center {
+[hidden] {
+  display: none !important;
+}
+
+body {
+  /* undo the centred flex layout of the Vite template's index.css */
+  display: block;
+  place-items: initial;
+  min-width: 0;
+
+  min-height: 100vh; /* fallback for browsers without dvh */
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* undo the #root styles of the Vite template */
+#root {
+  display: block;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  text-align: left;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  touch-action: manipulation; /* no double-tap zoom delay */
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+input {
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* =============================================================================
+   Layout
+   ============================================================================= */
+
+.app {
+  /* the bottom padding keeps the last row clear of the fixed bottom bar */
+  padding: 0 var(--gutter) calc(96px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Headers stick to the top, so only the list below them scrolls */
+.list-head,
+.search,
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 16px 0 12px;
+  background: var(--bg);
+}
+
+/* Fixed action bar at the bottom */
+.bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--gutter) calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.bar .primary {
+  flex: 1;
+}
+
+/* =============================================================================
+   Components
+   ============================================================================= */
+
+/* ----- Buttons ----- */
+
+.btn {
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn.danger {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn.small {
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+
+.btn.wide {
+  display: block;
+  width: 100%;
+}
+
+/* icon buttons in the toolbar of the main view */
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.tool-btn.danger {
+  color: var(--danger);
+}
+
+.btn:active:not(:disabled),
+.tool-btn:active:not(:disabled) {
+  border-color: var(--muted);
+}
+
+/* square buttons: the grey "×" (icon-btn) and the coloured "+" (add) */
+.icon-btn,
+.add {
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.icon-btn {
+  background: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.icon-btn:active {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.add {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 1.3rem;
+}
+
+/* ----- Lists ----- */
+
+.rows {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.row:first-child {
+  border-top: 0;
+}
+
+/* the clickable part of a row (a plain div in the read-only preview) */
+.row-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 25px;
-  place-content: center;
-  place-items: center;
-  flex-grow: 1;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
-  }
 }
 
-#next-steps {
+/* one line each, cut off with "…" */
+.name,
+.sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* search and preview rows wrap long names instead */
+.row-open.wrap .name,
+.row-open.wrap .sub {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.kcal {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amount {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* amount added to an already saved meal */
+.delta {
+  color: var(--ok);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chevron {
+  padding-right: 8px;
+  color: var(--muted);
+  font-size: 1.5rem;
+}
+
+.empty {
+  padding: 24px 0;
+  color: var(--muted);
+}
+
+.error {
+  margin: 16px 0 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--danger);
+  color: var(--on-accent);
+}
+
+/* ----- Search bar ----- */
+
+.search {
   display: flex;
-  border-top: 1px solid var(--border);
-  text-align: left;
-
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
-  }
-
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
-  }
+  align-items: center;
+  gap: 4px;
 }
 
-#docs {
-  border-right: 1px solid var(--border);
-
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
+.search input {
+  flex: 1;
+  height: var(--search-height);
 }
 
-#next-steps ul {
-  list-style: none;
-  padding: 0;
+/* the "+" next to the search field is a square as tall as the field */
+.search .add {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--search-height);
+  height: var(--search-height);
+  margin-left: 4px;
+}
+
+/* ----- Top bar ----- */
+
+.topbar {
   display: flex;
-  gap: 8px;
-  margin: 32px 0 0;
-
-  .logo {
-    height: 18px;
-  }
-
-  a {
-    color: var(--text-h);
-    font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-  }
+  align-items: center;
+  gap: 12px;
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
+.topbar h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
-.ticks {
-  position: relative;
+/* centred title: the empty ::after balances the "×" on the left */
+.topbar.centered h1 {
+  text-align: center;
+}
+
+.topbar.centered::after {
+  content: '';
+  width: var(--icon-button-size);
+}
+
+/* ----- Form fields ----- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ----- Dialog ----- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gutter);
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialog {
   width: 100%;
+  max-width: 400px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
-  }
+.dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
-  }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
-  }
+.dialog p {
+  margin: 0 0 20px;
+  color: var(--muted);
+}
+
+.dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* =============================================================================
+   Views
+   ============================================================================= */
+
+/* ----- Main view: toolbar and total kcal ----- */
+
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.total {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.total-value {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.total-unit {
+  color: var(--muted);
+  font-size: 1.25rem;
+}
+
+/* ----- Detail view: amount of one food ----- */
+
+.detail-line {
+  margin: 0 0 20px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.detail-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.detail-amount input {
+  flex: 1;
+  padding: 12px 14px;
+  font-size: 1.25rem;
+}
+
+.detail-amount span {
+  color: var(--muted);
+  font-size: 1.25rem;
 }
