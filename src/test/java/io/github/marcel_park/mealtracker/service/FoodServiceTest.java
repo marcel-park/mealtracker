@@ -157,6 +157,20 @@ class FoodServiceTest {
     }
 
     @Test
+    void update_existingId_overwritesAllFieldsOnEntityAndInResponse() {
+        Food existing = food(1L, "Haferflocken");   // 372 kcal, 13.5 protein, 58.7 carbs, 7 fat
+        when(repository.findById(1L)).thenReturn(Optional.of(existing));
+        when(repository.save(existing)).thenReturn(existing);
+
+        FoodResponse result = service.update(1L, new FoodRequest("Haferflocken zart", 370.0, 13.0, 59.0, 6.5));
+
+        assertThat(existing)
+                .extracting(Food::getName, Food::getKcalPer100g, Food::getProtein, Food::getCarbs, Food::getFat)
+                .containsExactly("Haferflocken zart", 370.0, 13.0, 59.0, 6.5);
+        assertThat(result).isEqualTo(new FoodResponse(1L, "Haferflocken zart", 370.0, 13.0, 59.0, 6.5));
+    }
+
+    @Test
     void update_missingId_throwsNotFoundAndSavesNothing() {
         when(repository.findById(999L)).thenReturn(Optional.empty());
 
