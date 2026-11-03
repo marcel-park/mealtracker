@@ -16,7 +16,7 @@ public class MealItem {
     @MapsId("foodId")
     private Food food;
 
-    @Column(nullable = false)
+    @Column(name = "amount_g", nullable = false)
     private double amountG;
 
     public MealItem() {}
