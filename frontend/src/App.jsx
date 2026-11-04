@@ -6,6 +6,7 @@ import './App.css'
 // Backend address from the Vite env (see .env.example). Empty: same origin as the page.
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 const API = { foods: `${BASE}/api/foods`, meals: `${BASE}/api/meals` }
+const SEARCH_PARAM = 'query'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
