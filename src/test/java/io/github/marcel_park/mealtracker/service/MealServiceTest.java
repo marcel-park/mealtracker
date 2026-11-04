@@ -8,7 +8,9 @@ import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
+import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
+import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -41,7 +43,13 @@ class MealServiceTest {
     @Mock
     private FoodService foodService;
 
+    @Mock
+    private UserRepository userRepository;
+
     private MealService service;
+
+    // The logged-in user on whose behalf every call is made.
+    private static final Long USER_ID = 7L;
 
     private final Food oats = food(1L, "Haferflocken", 372.0);
     private final Food milk = food(2L, "Milch", 64.0);
@@ -50,7 +58,7 @@ class MealServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MealService(mealRepository, foodService);
+        service = new MealService(mealRepository, foodService, userRepository);
     }
 
     // ---------- test data ----------
@@ -85,10 +93,10 @@ class MealServiceTest {
 
         @Test
         void findAll_keepsNewestFirstOrderFromRepository() {
-            when(mealRepository.findAllByOrderByBookedAtDesc())
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID))
                     .thenReturn(List.of(meal(2L, "Mittagessen"), meal(1L, "Frühstück")));
 
-            List<MealResponse> result = service.findAll();
+            List<MealResponse> result = service.findAll(USER_ID);
 
             assertThat(result).extracting(MealResponse::id).containsExactly(2L, 1L);
         }
@@ -98,9 +106,9 @@ class MealServiceTest {
             LocalDateTime bookedAt = LocalDateTime.of(2026, 11, 3, 7, 45);
             Meal meal = meal(1L, "Frühstück");
             meal.setBookedAt(bookedAt);
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
-            MealResponse result = service.findAll().get(0);
+            MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.id()).isEqualTo(1L);
             assertThat(result.title()).isEqualTo("Frühstück");
@@ -112,9 +120,9 @@ class MealServiceTest {
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(oats, 150);
             meal.addItem(milk, 200);
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
-            MealResponse result = service.findAll().get(0);
+            MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.items())
                     .extracting(MealItemResponse::foodId, MealItemResponse::foodName, MealItemResponse::amountG)
@@ -139,9 +147,9 @@ class MealServiceTest {
         void itemKcal_isAmountTimesKcalPer100gDividedBy100(double amountG, double kcalPer100g, double expectedKcal) {
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(food(1L, "Haferflocken", kcalPer100g), amountG);
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
-            MealItemResponse item = service.findAll().get(0).items().get(0);
+            MealItemResponse item = service.findAll(USER_ID).get(0).items().get(0);
 
             assertThat(item.kcal()).isEqualTo(expectedKcal);
         }
@@ -151,18 +159,18 @@ class MealServiceTest {
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(oats, 150);   // 558 kcal
             meal.addItem(milk, 200);   // 128 kcal
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
-            MealResponse result = service.findAll().get(0);
+            MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.kcal()).isEqualTo(686.0);
         }
 
         @Test
         void mealKcal_withoutItems_isZero() {
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal(1L, "Leer")));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal(1L, "Leer")));
 
-            MealResponse result = service.findAll().get(0);
+            MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.kcal()).isZero();
         }
@@ -173,9 +181,9 @@ class MealServiceTest {
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(oats, 100);
             oats.setKcalPer100g(380.0);
-            when(mealRepository.findAllByOrderByBookedAtDesc()).thenReturn(List.of(meal));
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
-            MealResponse result = service.findAll().get(0);
+            MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.kcal()).isEqualTo(380.0);
         }
@@ -192,7 +200,7 @@ class MealServiceTest {
             when(foodService.getEntity(2L)).thenReturn(milk);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
 
-            service.create(request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
+            service.create(USER_ID, request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
 
             ArgumentCaptor<Meal> captor = ArgumentCaptor.forClass(Meal.class);
             verify(mealRepository).save(captor.capture());
@@ -205,6 +213,21 @@ class MealServiceTest {
         }
 
         @Test
+        void create_setsLoggedInUserAsOwner() {
+            User owner = new User();
+            owner.setId(USER_ID);
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(owner);
+            when(foodService.getEntity(1L)).thenReturn(oats);
+            when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(USER_ID, request("Haferflocken", item(1L, 150)));
+
+            ArgumentCaptor<Meal> captor = ArgumentCaptor.forClass(Meal.class);
+            verify(mealRepository).save(captor.capture());
+            assertThat(captor.getValue().getUser()).isSameAs(owner);
+        }
+
+        @Test
         void create_returnsResponseWithIdFromRepositoryAndComputedKcal() {
             when(foodService.getEntity(1L)).thenReturn(oats);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> {
@@ -213,7 +236,7 @@ class MealServiceTest {
                 return saved;
             });
 
-            MealResponse result = service.create(request("Haferflocken", item(1L, 150)));
+            MealResponse result = service.create(USER_ID, request("Haferflocken", item(1L, 150)));
 
             assertThat(result.id()).isEqualTo(42L);
             assertThat(result.title()).isEqualTo("Haferflocken");
@@ -224,7 +247,7 @@ class MealServiceTest {
         void create_unknownFood_throwsNotFoundAndSavesNothing() {
             when(foodService.getEntity(99L)).thenThrow(new NotFoundException("Food", 99L));
 
-            assertThatThrownBy(() -> service.create(request("Unbekannt", item(99L, 50))))
+            assertThatThrownBy(() -> service.create(USER_ID, request("Unbekannt", item(99L, 50))))
                     .isInstanceOf(NotFoundException.class)
                     .hasMessage("Food with id 99 not found");
 
@@ -253,9 +276,9 @@ class MealServiceTest {
 
         @Test
         void update_unknownMeal_throwsNotFoundAndLoadsNoFood() {
-            when(mealRepository.findById(99L)).thenReturn(Optional.empty());
+            when(mealRepository.findByIdAndUserId(99L, USER_ID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.update(99L, request("Egal", item(1L, 100))))
+            assertThatThrownBy(() -> service.update(USER_ID, 99L, request("Egal", item(1L, 100))))
                     .isInstanceOf(NotFoundException.class)
                     .hasMessage("Meal with id 99 not found");
 
@@ -263,10 +286,22 @@ class MealServiceTest {
         }
 
         @Test
-        void update_newTitle_replacesTitle() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+        void update_mealOfAnotherUser_throwsNotFound() {
+            // findByIdAndUserId finds nothing for a meal that belongs to someone else
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.empty());
 
-            MealResponse result = service.update(1L, request("Frühstück", item(1L, 150), item(2L, 200)));
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request("Egal", item(1L, 100))))
+                    .isInstanceOf(NotFoundException.class)
+                    .hasMessage("Meal with id 1 not found");
+
+            assertThat(existing.getTitle()).isEqualTo("Haferflocken, Milch");
+        }
+
+        @Test
+        void update_newTitle_replacesTitle() {
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+
+            MealResponse result = service.update(USER_ID, 1L, request("Frühstück", item(1L, 150), item(2L, 200)));
 
             assertThat(result.title()).isEqualTo("Frühstück");
             assertThat(existing.getTitle()).isEqualTo("Frühstück");
@@ -277,9 +312,9 @@ class MealServiceTest {
             // meal_item's primary key is (meal_id, food_id) and Hibernate flushes INSERTs before
             // DELETEs. Replacing the item of a kept food with a new instance would insert a
             // duplicate key, so the existing instance must stay in the list.
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            service.update(1L, request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
+            service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
             verifyNoInteractions(foodService);
@@ -287,9 +322,9 @@ class MealServiceTest {
 
         @Test
         void update_changedAmount_updatesExistingItemInPlace() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            service.update(1L, request("Haferflocken, Milch", item(1L, 80), item(2L, 200)));
+            service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 80), item(2L, 200)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
             assertThat(oatsItem.getAmountG()).isEqualTo(80.0);
@@ -298,20 +333,20 @@ class MealServiceTest {
 
         @Test
         void update_foodMissingFromRequest_removesItsItem() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            service.update(1L, request("Haferflocken", item(1L, 150)));
+            service.update(USER_ID, 1L, request("Haferflocken", item(1L, 150)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem);
         }
 
         @Test
         void update_newFood_appendsItemAfterKeptItems() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
             when(foodService.getEntity(3L)).thenReturn(apple);
 
             // the new food comes first in the request, but kept items keep their position
-            service.update(1L, request("Apfel, Haferflocken, Milch", item(3L, 120), item(1L, 150), item(2L, 200)));
+            service.update(USER_ID, 1L, request("Apfel, Haferflocken, Milch", item(3L, 120), item(1L, 150), item(2L, 200)));
 
             assertThat(existing.getItems())
                     .extracting(MealItem::getFood, MealItem::getAmountG)
@@ -320,11 +355,11 @@ class MealServiceTest {
 
         @Test
         void update_severalNewFoods_addsThemInRequestOrder() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
             when(foodService.getEntity(4L)).thenReturn(cheese);
             when(foodService.getEntity(3L)).thenReturn(apple);
 
-            service.update(1L, request("Gouda, Apfel", item(4L, 30), item(3L, 120)));
+            service.update(USER_ID, 1L, request("Gouda, Apfel", item(4L, 30), item(3L, 120)));
 
             assertThat(existing.getItems())
                     .extracting(MealItem::getFood)
@@ -333,9 +368,9 @@ class MealServiceTest {
 
         @Test
         void update_sameKeptFoodTwice_sumsAmountsIntoExistingItem() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            service.update(1L, request("Haferflocken, Milch", item(1L, 100), item(1L, 50), item(2L, 200)));
+            service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 100), item(1L, 50), item(2L, 200)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
             assertThat(oatsItem.getAmountG()).isEqualTo(150.0);
@@ -344,10 +379,10 @@ class MealServiceTest {
         @Test
         void update_sameNewFoodTwice_addsOneItemWithSummedAmount() {
             // a meal can hold each food only once (primary key), so duplicates are merged
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
             when(foodService.getEntity(3L)).thenReturn(apple);
 
-            service.update(1L, request("Apfel", item(3L, 70), item(3L, 50)));
+            service.update(USER_ID, 1L, request("Apfel", item(3L, 70), item(3L, 50)));
 
             assertThat(existing.getItems())
                     .extracting(MealItem::getFood, MealItem::getAmountG)
@@ -357,19 +392,19 @@ class MealServiceTest {
 
         @Test
         void update_unknownFood_throwsNotFound() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
             when(foodService.getEntity(99L)).thenThrow(new NotFoundException("Food", 99L));
 
-            assertThatThrownBy(() -> service.update(1L, request("Unbekannt", item(99L, 50))))
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request("Unbekannt", item(99L, 50))))
                     .isInstanceOf(NotFoundException.class)
                     .hasMessage("Food with id 99 not found");
         }
 
         @Test
         void update_returnsResponseWithSameIdAndRecomputedKcal() {
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            MealResponse result = service.update(1L, request("Haferflocken, Milch", item(1L, 100), item(2L, 200)));
+            MealResponse result = service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 100), item(2L, 200)));
 
             assertThat(result.id()).isEqualTo(1L);
             assertThat(result.items())
@@ -387,18 +422,18 @@ class MealServiceTest {
         @Test
         void delete_existingId_deletesEntity() {
             Meal existing = meal(1L, "Frühstück");
-            when(mealRepository.findById(1L)).thenReturn(Optional.of(existing));
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
 
-            service.delete(1L);
+            service.delete(USER_ID, 1L);
 
             verify(mealRepository).delete(existing);
         }
 
         @Test
         void delete_missingId_throwsNotFoundAndDeletesNothing() {
-            when(mealRepository.findById(99L)).thenReturn(Optional.empty());
+            when(mealRepository.findByIdAndUserId(99L, USER_ID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.delete(99L))
+            assertThatThrownBy(() -> service.delete(USER_ID, 99L))
                     .isInstanceOf(NotFoundException.class)
                     .hasMessage("Meal with id 99 not found");
 
@@ -406,10 +441,11 @@ class MealServiceTest {
         }
 
         @Test
-        void deleteAll_deletesAllMeals() {
-            service.deleteAll();
+        void deleteAll_deletesOnlyTheMealsOfTheUser() {
+            service.deleteAll(USER_ID);
 
-            verify(mealRepository).deleteAll();
+            verify(mealRepository).deleteAllByUserId(USER_ID);
+            verify(mealRepository, never()).deleteAll();
         }
     }
 }

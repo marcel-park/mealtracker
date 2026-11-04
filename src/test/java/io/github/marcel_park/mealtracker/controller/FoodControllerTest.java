@@ -1,7 +1,11 @@
 package io.github.marcel_park.mealtracker.controller;
 
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.security.SecurityConfig;
+import io.github.marcel_park.mealtracker.security.WithCurrentUser;
+import io.github.marcel_park.mealtracker.service.AuthTokenService;
 import io.github.marcel_park.mealtracker.service.FoodService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -9,6 +13,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,7 +32,10 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+// The food database is shared by all users, but only logged-in users may use it.
 @WebMvcTest(FoodController.class)
+@Import({SecurityConfig.class, CorsConfig.class})
+@WithCurrentUser
 class FoodControllerTest {
 
     @Autowired
@@ -35,6 +43,11 @@ class FoodControllerTest {
 
     @MockitoBean
     private FoodService service;
+
+    // Needed by the token filter in SecurityConfig, unused here because @WithCurrentUser
+    // authenticates the requests directly.
+    @MockitoBean
+    private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
             {"name":"Haferflocken","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":7}

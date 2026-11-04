@@ -9,6 +9,7 @@ import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
+import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,28 +18,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+// Every method takes the id of the logged-in user and only ever touches that user's meals.
+// A meal of another user is reported as "not found", so its existence is not revealed either.
 @Service
 public class MealService {
 
     private final MealRepository mealRepository;
     private final FoodService foodService;
+    private final UserRepository userRepository;
 
-    public MealService(MealRepository mealRepository, FoodService foodService) {
+    public MealService(MealRepository mealRepository, FoodService foodService, UserRepository userRepository) {
         this.mealRepository = mealRepository;
         this.foodService = foodService;
+        this.userRepository = userRepository;
     }
 
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
     @Transactional(readOnly = true)
-    public List<MealResponse> findAll() {
-        return mealRepository.findAllByOrderByBookedAtDesc().stream()
+    public List<MealResponse> findAll(Long userId) {
+        return mealRepository.findAllByUserIdOrderByBookedAtDesc(userId).stream()
                 .map(this::toResponse)
                 .toList();
     }
 
     @Transactional
-    public MealResponse create(MealRequest request) {
+    public MealResponse create(Long userId, MealRequest request) {
         Meal meal = new Meal();
+        // A reference is enough to set the foreign key; it does not load the user.
+        meal.setUser(userRepository.getReferenceById(userId));
         meal.setTitle(request.title());
         for (MealItemRequest item : request.items()) {
             meal.addItem(foodService.getEntity(item.foodId()), item.amountG());
@@ -47,8 +54,8 @@ public class MealService {
     }
 
     @Transactional
-    public MealResponse update(Long id, MealRequest request) {
-        Meal meal = getEntity(id);
+    public MealResponse update(Long userId, Long id, MealRequest request) {
+        Meal meal = getEntity(userId, id);
         meal.setTitle(request.title());
 
         // Update the item list in place instead of clear() + addItem() for every requested food:
@@ -75,17 +82,18 @@ public class MealService {
     }
 
     @Transactional
-    public void delete(Long id) {
-        mealRepository.delete(getEntity(id));
+    public void delete(Long userId, Long id) {
+        mealRepository.delete(getEntity(userId, id));
     }
 
+    // Only the meals of this user, the "reset" button of the main view.
     @Transactional
-    public void deleteAll() {
-        mealRepository.deleteAll();
+    public void deleteAll(Long userId) {
+        mealRepository.deleteAllByUserId(userId);
     }
 
-    private Meal getEntity(Long id) {
-        return mealRepository.findById(id)
+    private Meal getEntity(Long userId, Long id) {
+        return mealRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new NotFoundException("Meal", id));
     }
 

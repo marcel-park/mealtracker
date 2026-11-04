@@ -3,6 +3,7 @@ package io.github.marcel_park.mealtracker.repository;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
+import io.github.marcel_park.mealtracker.model.User;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,15 +26,22 @@ class MealRepositoryTest {
     private FoodRepository foodRepository;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private EntityManager entityManager;
 
     private Food oats;
     private Food milk;
+    private User alice;
+    private User bob;
 
     @BeforeEach
     void setUp() {
         oats = saveFood("Haferflocken", 372.0);
         milk = saveFood("Milch", 64.0);
+        alice = saveUser("alice@example.com");
+        bob = saveUser("bob@example.com");
     }
 
     // ---------- helpers ----------
@@ -48,15 +56,24 @@ class MealRepositoryTest {
         return foodRepository.save(food);
     }
 
-    private Meal saveMeal(String title, LocalDateTime bookedAt) {
+    private User saveUser(String email) {
+        User user = new User();
+        user.setEmail(email);
+        user.setPasswordHash("{bcrypt}not-a-real-hash");
+        return userRepository.save(user);
+    }
+
+    private Meal saveMeal(User owner, String title, LocalDateTime bookedAt) {
         Meal meal = new Meal();
+        meal.setUser(owner);
         meal.setTitle(title);
         meal.setBookedAt(bookedAt);
         return mealRepository.save(meal);
     }
 
-    private Meal saveMealWithOatsAndMilk() {
+    private Meal saveMealWithOatsAndMilk(User owner) {
         Meal meal = new Meal();
+        meal.setUser(owner);
         meal.setTitle("Haferflocken, Milch");
         meal.addItem(oats, 150);
         meal.addItem(milk, 200);
@@ -83,20 +100,70 @@ class MealRepositoryTest {
     // ---------- tests ----------
 
     @Test
-    void findAllByOrderByBookedAtDesc_returnsNewestMealFirst() {
-        saveMeal("Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0));
-        saveMeal("Abendessen", LocalDateTime.of(2026, 11, 3, 19, 0));
-        saveMeal("Mittagessen", LocalDateTime.of(2026, 11, 3, 12, 0));
+    void findAllByUserIdOrderByBookedAtDesc_returnsNewestMealFirst() {
+        saveMeal(alice, "Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0));
+        saveMeal(alice, "Abendessen", LocalDateTime.of(2026, 11, 3, 19, 0));
+        saveMeal(alice, "Mittagessen", LocalDateTime.of(2026, 11, 3, 12, 0));
 
-        List<Meal> result = mealRepository.findAllByOrderByBookedAtDesc();
+        List<Meal> result = mealRepository.findAllByUserIdOrderByBookedAtDesc(alice.getId());
 
         assertThat(result).extracting(Meal::getTitle)
                 .containsExactly("Abendessen", "Mittagessen", "Frühstück");
     }
 
     @Test
+    void findAllByUserIdOrderByBookedAtDesc_leavesOutMealsOfOtherUsers() {
+        saveMeal(alice, "Alices Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0));
+        saveMeal(bob, "Bobs Frühstück", LocalDateTime.of(2026, 11, 3, 9, 0));
+
+        List<Meal> result = mealRepository.findAllByUserIdOrderByBookedAtDesc(alice.getId());
+
+        assertThat(result).extracting(Meal::getTitle).containsExactly("Alices Frühstück");
+    }
+
+    @Test
+    void findByIdAndUserId_findsOwnMealButNotThatOfAnotherUser() {
+        Long mealId = saveMeal(alice, "Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0)).getId();
+
+        assertThat(mealRepository.findByIdAndUserId(mealId, alice.getId())).isPresent();
+        assertThat(mealRepository.findByIdAndUserId(mealId, bob.getId())).isEmpty();
+    }
+
+    @Test
+    void deleteAllByUserId_removesOnlyThatUsersMealsAndTheirItems() {
+        Long aliceMealId = saveMealWithOatsAndMilk(alice).getId();
+        Long bobMealId = saveMealWithOatsAndMilk(bob).getId();
+        flushAndClear();
+
+        mealRepository.deleteAllByUserId(alice.getId());
+        flushAndClear();
+
+        assertThat(mealRepository.findById(aliceMealId)).isEmpty();
+        assertThat(countMealItemsOf(aliceMealId)).isZero();
+        assertThat(mealRepository.findById(bobMealId)).isPresent();
+        assertThat(countMealItemsOf(bobMealId)).isEqualTo(2);
+    }
+
+    @Test
+    void assignOwnerlessMealsTo_givesMealsWithoutOwnerToTheUser() {
+        // owner null = booked before multi-user support
+        Long ownMealId = saveMeal(bob, "Bobs Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0)).getId();
+        Long oldMealId = saveMeal(null, "Alte Mahlzeit", LocalDateTime.of(2026, 11, 2, 8, 0)).getId();
+        flushAndClear();
+
+        int assigned = mealRepository.assignOwnerlessMealsTo(alice);
+        flushAndClear();
+
+        assertThat(assigned).isEqualTo(1);
+        assertThat(mealRepository.findAllByUserIdOrderByBookedAtDesc(alice.getId()))
+                .extracting(Meal::getId).containsExactly(oldMealId);
+        assertThat(mealRepository.findAllByUserIdOrderByBookedAtDesc(bob.getId()))
+                .extracting(Meal::getId).containsExactly(ownMealId);
+    }
+
+    @Test
     void save_cascadesItemsWithCompositeKeyOfMealAndFood() {
-        Meal saved = saveMealWithOatsAndMilk();
+        Meal saved = saveMealWithOatsAndMilk(alice);
         flushAndClear();
 
         Meal loaded = mealRepository.findById(saved.getId()).orElseThrow();
@@ -114,7 +181,7 @@ class MealRepositoryTest {
 
     @Test
     void removeItemFromList_deletesOrphanedMealItem() {
-        Long mealId = saveMealWithOatsAndMilk().getId();
+        Long mealId = saveMealWithOatsAndMilk(alice).getId();
         Long milkId = milk.getId();
         flushAndClear();
         Meal loaded = mealRepository.findById(mealId).orElseThrow();
@@ -129,7 +196,7 @@ class MealRepositoryTest {
 
     @Test
     void delete_removesItsMealItemsButKeepsFoods() {
-        Long mealId = saveMealWithOatsAndMilk().getId();
+        Long mealId = saveMealWithOatsAndMilk(alice).getId();
         flushAndClear();
 
         mealRepository.delete(mealRepository.findById(mealId).orElseThrow());
@@ -141,10 +208,10 @@ class MealRepositoryTest {
 
     @Test
     void deleteAll_removesAllMealItems() {
-        // MealService.deleteAll() relies on this: deleteAll() removes meal by meal, so the
-        // cascade to meal_item applies (deleteAllInBatch() would bypass it).
-        saveMealWithOatsAndMilk();
-        saveMealWithOatsAndMilk();
+        // deleteAll() removes meal by meal, so the cascade to meal_item applies
+        // (deleteAllInBatch() would bypass it).
+        saveMealWithOatsAndMilk(alice);
+        saveMealWithOatsAndMilk(bob);
         flushAndClear();
 
         mealRepository.deleteAll();
