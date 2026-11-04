@@ -581,3 +581,11 @@ input:focus-visible {
   color: var(--ink);
   font-weight: 600;
 }
+
+.profile-server {
+  font-size: 0.85rem;
+}
+
+.field .hint.warning {
+  color: var(--danger);
+}

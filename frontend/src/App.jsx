@@ -3,9 +3,13 @@ import './App.css'
 import {
   API,
   clearToken,
-  loadToken,
+  getServerUrl,
+  isUnencrypted,
+  loadSession,
+  normalizeServerUrl,
   request,
-  saveToken,
+  requestAt,
+  saveSession,
   setUnauthorizedHandler,
 } from './api.js'
 
@@ -694,7 +698,11 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
   return (
     <section>
       <TopBar title="Profil" closeLabel="Schließen" onClose={onClose} />
-      <p className="profile-email">{user.email}</p>
+      <p className="profile-email">
+        {user.email}
+        <br />
+        <span className="profile-server">{getServerUrl() || window.location.origin}</span>
+      </p>
 
       <form onSubmit={save}>
         <label className="field">
@@ -749,13 +757,15 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
 const AUTH_ERRORS = {
   400: 'Bitte prüfe E-Mail-Adresse und Passwort.',
   401: 'E-Mail-Adresse oder Passwort ist falsch.',
+  404: 'Unter dieser Adresse läuft kein Mealtracker-Server.',
+  405: 'Unter dieser Adresse läuft kein Mealtracker-Server.',
   409: 'Für diese E-Mail-Adresse gibt es schon ein Konto.',
 }
 
 // fetch() itself throws (without status) when the server cannot be reached at all.
-function authErrorMessage(error, url) {
-  if (error.status === undefined) return 'Der Server ist nicht erreichbar.'
-  if (error.status === 403 && url === API.login) return 'Dieses Konto ist deaktiviert.'
+function authErrorMessage(error, path) {
+  if (error.status === undefined) return 'Der Server ist nicht erreichbar. Bitte prüfe die Adresse.'
+  if (error.status === 403 && path === API.login) return 'Dieses Konto ist deaktiviert.'
   return AUTH_ERRORS[error.status] ?? error.message
 }
 
@@ -772,7 +782,10 @@ function passwordProblem(password, passwordRepeat) {
 
 // "Anmelden" logs in. "Registrieren" first only shows the "repeat password" field and registers
 // on the second click. Enter in a field triggers the highlighted button.
+// The server field is pre-filled with the server used last; another address only replaces it
+// once a login there succeeded.
 function LoginPage({ onLoggedIn }) {
+  const [server, setServer] = useState(getServerUrl)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordRepeat, setPasswordRepeat] = useState('')
@@ -782,18 +795,23 @@ function LoginPage({ onLoggedIn }) {
 
   const hasCredentials = email.trim() !== '' && password !== ''
 
-  function authenticate(url) {
+  function authenticate(path) {
+    const serverUrl = normalizeServerUrl(server)
+    if (serverUrl === null) {
+      setError('Bitte gib eine gültige Serveradresse ein, z. B. https://mealtracker.example.org.')
+      return
+    }
     runAction(async () => {
       let response
       try {
-        response = await request(url, {
+        response = await requestAt(serverUrl, path, {
           method: 'POST',
           body: JSON.stringify({ email: email.trim(), password }),
         })
       } catch (error) {
-        throw new Error(authErrorMessage(error, url))
+        throw new Error(authErrorMessage(error, path))
       }
-      await onLoggedIn(response.token, response.user)
+      await onLoggedIn(serverUrl, response.token, response.user)
     })
   }
 
@@ -846,13 +864,33 @@ function LoginPage({ onLoggedIn }) {
       {/* noValidate: the checks above show German messages instead of the browser's own. */}
       <form onKeyDown={submitOnEnter} onSubmit={(event) => event.preventDefault()} noValidate>
         <label className="field">
+          <span>Server</span>
+          <input
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="https://mealtracker.example.org"
+            autoFocus={server === ''}
+            value={server}
+            onChange={(event) => setServer(event.target.value)}
+          />
+          {isUnencrypted(server) && (
+            <span className="hint warning">
+              Unverschlüsselte Verbindung (http). Nur in einem vertrauenswürdigen Netz oder über
+              VPN verwenden.
+            </span>
+          )}
+        </label>
+        <label className="field">
           <span>E-Mail-Adresse</span>
           <input
             type="email"
             inputMode="email"
             autoComplete="username"
             autoCapitalize="none"
-            autoFocus
+            autoFocus={server !== ''}
             maxLength={254}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -1224,7 +1262,7 @@ export default function App() {
 
   const restoreLogin = useCallback(async () => {
     try {
-      if (!(await loadToken())) {
+      if (!(await loadSession())) {
         setAuth(LOGGED_OUT)
         return
       }
@@ -1244,8 +1282,8 @@ export default function App() {
     restoreLogin()
   }, [restoreLogin])
 
-  async function logIn(token, user) {
-    await saveToken(token)
+  async function logIn(serverUrl, token, user) {
+    await saveSession(serverUrl, token)
     setAuth({ status: 'loggedIn', user })
   }
 
