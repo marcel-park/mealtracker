@@ -1,0 +1,9 @@
+{
+  "appId": "io.github.marcelpark.mealtracker",
+  "appName": "Mealtracker",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}
