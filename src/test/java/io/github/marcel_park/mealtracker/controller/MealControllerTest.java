@@ -4,7 +4,11 @@ import io.github.marcel_park.mealtracker.dto.MealItemRequest;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
+import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.security.SecurityConfig;
+import io.github.marcel_park.mealtracker.security.WithCurrentUser;
+import io.github.marcel_park.mealtracker.service.AuthTokenService;
 import io.github.marcel_park.mealtracker.service.MealService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,6 +16,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,14 +36,24 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+// Every request runs as user 1 (@WithCurrentUser); the controller must pass that id on.
 @WebMvcTest(MealController.class)
+@Import({SecurityConfig.class, CorsConfig.class})
+@WithCurrentUser(userId = MealControllerTest.USER_ID)
 class MealControllerTest {
+
+    static final long USER_ID = 1L;
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockitoBean
     private MealService service;
+
+    // Needed by the token filter in SecurityConfig, unused here because @WithCurrentUser
+    // authenticates the requests directly.
+    @MockitoBean
+    private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
             {"title":"Haferflocken, Milch","items":[{"foodId":1,"amountG":150},{"foodId":2,"amountG":200}]}
@@ -57,7 +72,7 @@ class MealControllerTest {
 
     @Test
     void list_returnsMealsWithItemsAsJson() throws Exception {
-        when(service.findAll()).thenReturn(List.of(meal(1L)));
+        when(service.findAll(USER_ID)).thenReturn(List.of(meal(1L)));
 
         mockMvc.perform(get("/api/meals"))
                 .andExpect(status().isOk())
@@ -76,7 +91,7 @@ class MealControllerTest {
 
     @Test
     void create_validRequest_returns201WithBody() throws Exception {
-        when(service.create(any())).thenReturn(meal(1L));
+        when(service.create(eq(USER_ID), any())).thenReturn(meal(1L));
 
         mockMvc.perform(post("/api/meals")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -88,14 +103,14 @@ class MealControllerTest {
 
     @Test
     void create_validRequest_passesDeserializedRequestToService() throws Exception {
-        when(service.create(any())).thenReturn(meal(1L));
+        when(service.create(eq(USER_ID), any())).thenReturn(meal(1L));
 
         mockMvc.perform(post("/api/meals")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(VALID_BODY));
 
         ArgumentCaptor<MealRequest> captor = ArgumentCaptor.forClass(MealRequest.class);
-        verify(service).create(captor.capture());
+        verify(service).create(eq(USER_ID), captor.capture());
         MealRequest passed = captor.getValue();
         assertThat(passed.title()).isEqualTo("Haferflocken, Milch");
         assertThat(passed.items())
@@ -105,7 +120,7 @@ class MealControllerTest {
 
     @Test
     void create_unknownFood_returns404WithErrorBody() throws Exception {
-        when(service.create(any())).thenThrow(new NotFoundException("Food", 99L));
+        when(service.create(eq(USER_ID), any())).thenThrow(new NotFoundException("Food", 99L));
 
         mockMvc.perform(post("/api/meals")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -153,7 +168,7 @@ class MealControllerTest {
 
     @Test
     void update_validRequest_returns200WithBody() throws Exception {
-        when(service.update(eq(1L), any())).thenReturn(meal(1L));
+        when(service.update(eq(USER_ID), eq(1L), any())).thenReturn(meal(1L));
 
         mockMvc.perform(put("/api/meals/1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -165,7 +180,7 @@ class MealControllerTest {
 
     @Test
     void update_unknownMeal_returns404WithErrorBody() throws Exception {
-        when(service.update(eq(999L), any())).thenThrow(new NotFoundException("Meal", 999L));
+        when(service.update(eq(USER_ID), eq(999L), any())).thenThrow(new NotFoundException("Meal", 999L));
 
         mockMvc.perform(put("/api/meals/999")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -197,12 +212,12 @@ class MealControllerTest {
         mockMvc.perform(delete("/api/meals/1"))
                 .andExpect(status().isNoContent());
 
-        verify(service).delete(1L);
+        verify(service).delete(USER_ID, 1L);
     }
 
     @Test
     void delete_unknownId_returns404WithErrorBody() throws Exception {
-        doThrow(new NotFoundException("Meal", 999L)).when(service).delete(999L);
+        doThrow(new NotFoundException("Meal", 999L)).when(service).delete(USER_ID, 999L);
 
         mockMvc.perform(delete("/api/meals/999"))
                 .andExpect(status().isNotFound())
@@ -223,6 +238,6 @@ class MealControllerTest {
         mockMvc.perform(delete("/api/meals"))
                 .andExpect(status().isNoContent());
 
-        verify(service).deleteAll();
+        verify(service).deleteAll(USER_ID);
     }
 }

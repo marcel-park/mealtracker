@@ -2,10 +2,19 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import './App.css'
+import {
+  API,
+  clearToken,
+  getServerUrl,
+  isUnencrypted,
+  loadSession,
+  normalizeServerUrl,
+  request,
+  requestAt,
+  saveSession,
+  setUnauthorizedHandler,
+} from './api.js'
 
-// Backend address from the Vite env (see .env.example). Empty: same origin as the page.
-const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-const API = { foods: `${BASE}/api/foods`, meals: `${BASE}/api/meals` }
 const SEARCH_PARAM = 'query'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
@@ -16,24 +25,22 @@ const MAX_TITLE_LENGTH = 100
 const LOCALE = 'de-DE'
 const DATE_TIME_FORMAT = { dateStyle: 'short', timeStyle: 'short' }
 
+// Same rules as the backend (RegisterRequest, UserSettingsRequest).
+const MIN_PASSWORD_LENGTH = 8
+const MAX_PASSWORD_BYTES = 72 // bcrypt only uses the first 72 bytes, the backend rejects longer passwords
+const MAX_CALORIE_TARGET = 20000
+
+const COLOR_THEMES = [
+  { value: 'LIGHT', label: 'Hell' },
+  { value: 'DARK', label: 'Dunkel' },
+]
+
 // The meal being put together; mealId is null for a new meal.
 // Entries are { food, amountG, baseG }. baseG is the amount already saved in the meal,
 // so amountG - baseG is what the preview shows as "+X g".
 const NEW_DRAFT = { mealId: null, entries: [] }
 
 const NEW_FOOD = { id: null }
-
-async function request(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (!response.ok) {
-    throw new Error(`Die Anfrage ist fehlgeschlagen (Status ${response.status}).`)
-  }
-  const text = await response.text() // empty for 204 and other responses without a body
-  return text ? JSON.parse(text) : null
-}
 
 function fetchFoods(query, signal) {
   const search = query.trim()
@@ -116,6 +123,16 @@ function ResetIcon() {
     <svg viewBox="0 0 24 24" width="24" {...iconProps}>
       <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" />
       <path d="M3.5 3.5v5h5" />
+    </svg>
+  )
+}
+
+function AvatarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" {...iconProps}>
+      <circle cx="12" cy="12" r="9.5" />
+      <circle cx="12" cy="10" r="3.2" />
+      <path d="M6.3 18.6c1.3-2.2 3.3-3.4 5.7-3.4s4.4 1.2 5.7 3.4" />
     </svg>
   )
 }
@@ -254,7 +271,7 @@ function ConfirmDialog({ title, text, confirmLabel, onConfirm, onClose }) {
   )
 }
 
-function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods }) {
+function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods, onOpenProfile }) {
   const totalKcal = meals.reduce((sum, meal) => sum + meal.kcal, 0)
 
   return (
@@ -279,6 +296,15 @@ function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods }) 
             onClick={onDeleteAll}
           >
             <ResetIcon />
+          </button>
+          <button
+            type="button"
+            className="tool-btn"
+            title="Profil"
+            aria-label="Profil"
+            onClick={onOpenProfile}
+          >
+            <AvatarIcon />
           </button>
         </div>
         <div className="total" role="status" aria-label="Gesamtkalorien">
@@ -649,20 +675,309 @@ function NumberField({ label, value, onChange }) {
   )
 }
 
+function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
+  const [targetText, setTargetText] = useState(String(user.calorieTarget))
+  const runAction = useActionRunner(onError)
+  const themeLabelId = useId()
+
+  const target = Number(targetText)
+  const isValid = targetText !== '' && Number.isInteger(target) && target >= 1 && target <= MAX_CALORIE_TARGET
+  const isChanged = target !== user.calorieTarget
+
+  function save(event) {
+    event.preventDefault()
+    if (!isValid || !isChanged) return
+    runAction(async () => {
+      // The color theme cannot be changed yet, so the current value is sent back unchanged.
+      const updated = await request(API.me, {
+        method: 'PUT',
+        body: JSON.stringify({ calorieTarget: target, colorTheme: user.colorTheme }),
+      })
+      onUserChange(updated)
+      onError(null)
+    })
+  }
+
+  return (
+    <section>
+      <TopBar title="Profil" closeLabel="Schließen" onClose={onClose} />
+      <p className="profile-email">
+        {user.email}
+        <br />
+        <span className="profile-server">{getServerUrl() || window.location.origin}</span>
+      </p>
+
+      <form onSubmit={save}>
+        <label className="field">
+          <span>Kalorienziel (kcal)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            enterKeyHint="done"
+            min="1"
+            max={MAX_CALORIE_TARGET}
+            step="1"
+            value={targetText}
+            onChange={(event) => setTargetText(event.target.value)}
+          />
+        </label>
+        <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
+          Speichern
+        </button>
+      </form>
+
+      {/* Shown but not usable yet: the backend stores the value, the app does not use it so far. */}
+      <div className="field theme-field">
+        <span id={themeLabelId}>Farbschema</span>
+        <div className="segmented" role="radiogroup" aria-labelledby={themeLabelId} aria-disabled="true">
+          {COLOR_THEMES.map((theme) => (
+            <button
+              key={theme.value}
+              type="button"
+              role="radio"
+              aria-checked={user.colorTheme === theme.value}
+              className={user.colorTheme === theme.value ? 'selected' : undefined}
+              disabled
+            >
+              {theme.label}
+            </button>
+          ))}
+        </div>
+        <span className="hint">Kommt bald.</span>
+      </div>
+
+      <div className="bar">
+        <button type="button" className="btn danger wide" onClick={onLogout}>
+          Abmelden
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// German messages for the answers of the login and register endpoints. 403 only means
+// "account disabled" for a login; elsewhere it can also be e.g. a rejected CORS request.
+const AUTH_ERRORS = {
+  400: 'Bitte prüfe E-Mail-Adresse und Passwort.',
+  401: 'E-Mail-Adresse oder Passwort ist falsch.',
+  404: 'Unter dieser Adresse läuft kein Mealtracker-Server.',
+  405: 'Unter dieser Adresse läuft kein Mealtracker-Server.',
+  409: 'Für diese E-Mail-Adresse gibt es schon ein Konto.',
+}
+
+// fetch() itself throws (without status) when the server cannot be reached at all.
+function authErrorMessage(error, path) {
+  if (error.status === undefined) return 'Der Server ist nicht erreichbar. Bitte prüfe die Adresse.'
+  if (error.status === 403 && path === API.login) return 'Dieses Konto ist deaktiviert.'
+  return AUTH_ERRORS[error.status] ?? error.message
+}
+
+function passwordProblem(password, passwordRepeat) {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Das Passwort braucht mindestens ${MIN_PASSWORD_LENGTH} Zeichen.`
+  }
+  if (new TextEncoder().encode(password).length > MAX_PASSWORD_BYTES) {
+    return 'Das Passwort ist zu lang.'
+  }
+  if (password !== passwordRepeat) return 'Die Passwörter stimmen nicht überein.'
+  return null
+}
+
+// "Anmelden" logs in. "Registrieren" first only shows the "repeat password" field and registers
+// on the second click. Enter in a field triggers the highlighted button.
+// The server field is pre-filled with the server used last; another address only replaces it
+// once a login there succeeded.
+function LoginPage({ onLoggedIn }) {
+  const [server, setServer] = useState(getServerUrl)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [passwordRepeat, setPasswordRepeat] = useState('')
+  const [isRegistering, setIsRegistering] = useState(false)
+  const [error, setError] = useState(null)
+  const runAction = useActionRunner(setError)
+
+  const hasCredentials = email.trim() !== '' && password !== ''
+
+  function authenticate(path) {
+    const serverUrl = normalizeServerUrl(server)
+    if (serverUrl === null) {
+      setError('Bitte gib eine gültige Serveradresse ein, z. B. https://mealtracker.example.org.')
+      return
+    }
+    runAction(async () => {
+      let response
+      try {
+        response = await requestAt(serverUrl, path, {
+          method: 'POST',
+          body: JSON.stringify({ email: email.trim(), password }),
+        })
+      } catch (error) {
+        throw new Error(authErrorMessage(error, path))
+      }
+      await onLoggedIn(serverUrl, response.token, response.user)
+    })
+  }
+
+  function logIn() {
+    setIsRegistering(false)
+    if (!hasCredentials) {
+      setError('Bitte gib E-Mail-Adresse und Passwort ein.')
+      return
+    }
+    authenticate(API.login)
+  }
+
+  function register() {
+    if (!isRegistering) {
+      setIsRegistering(true)
+      setError(null)
+      return
+    }
+    const problem =
+      email.trim() === ''
+        ? 'Bitte gib eine E-Mail-Adresse ein.'
+        : passwordProblem(password, passwordRepeat)
+    if (problem) {
+      setError(problem)
+      return
+    }
+    authenticate(API.register)
+  }
+
+  const primaryAction = isRegistering ? register : logIn
+
+  // Both buttons are plain buttons: switching a button's type to "submit" inside its own click
+  // handler would make the browser submit the form right away. With two or more fields and no
+  // submit button the browser does not submit on Enter either, so Enter is handled here.
+  function submitOnEnter(event) {
+    if (event.key === 'Enter' && event.target.tagName === 'INPUT') {
+      event.preventDefault()
+      primaryAction()
+    }
+  }
+
+  return (
+    <main className="app login">
+      <h1 className="login-title">Mealtracker</h1>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {/* noValidate: the checks above show German messages instead of the browser's own. */}
+      <form onKeyDown={submitOnEnter} onSubmit={(event) => event.preventDefault()} noValidate>
+        <label className="field">
+          <span>Server</span>
+          <input
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="https://mealtracker.example.org"
+            autoFocus={server === ''}
+            value={server}
+            onChange={(event) => setServer(event.target.value)}
+          />
+          {isUnencrypted(server) && (
+            <span className="hint warning">
+              Unverschlüsselte Verbindung (http). Nur in einem vertrauenswürdigen Netz oder über
+              VPN verwenden.
+            </span>
+          )}
+        </label>
+        <label className="field">
+          <span>E-Mail-Adresse</span>
+          <input
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            autoFocus={server !== ''}
+            maxLength={254}
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Passwort</span>
+          <input
+            type="password"
+            autoComplete={isRegistering ? 'new-password' : 'current-password'}
+            enterKeyHint="go"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+        {isRegistering && (
+          <label className="field">
+            <span>Passwort wiederholen</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              enterKeyHint="go"
+              autoFocus
+              value={passwordRepeat}
+              onChange={(event) => setPasswordRepeat(event.target.value)}
+            />
+            <span className="hint">Mindestens {MIN_PASSWORD_LENGTH} Zeichen.</span>
+          </label>
+        )}
+        <div className="login-actions">
+          <button type="button" className={isRegistering ? 'btn' : 'btn primary'} onClick={logIn}>
+            Anmelden
+          </button>
+          <button type="button" className={isRegistering ? 'btn primary' : 'btn'} onClick={register}>
+            Registrieren
+          </button>
+        </div>
+      </form>
+    </main>
+  )
+}
+
+// Shown while the stored login is checked, and when the server cannot be reached at app start.
+function StartupScreen({ isOffline, onRetry }) {
+  return (
+    <main className="app startup">
+      {isOffline ? (
+        <>
+          <p>Der Server ist nicht erreichbar.</p>
+          <button type="button" className="btn primary" onClick={onRetry}>
+            Erneut versuchen
+          </button>
+        </>
+      ) : (
+        <p>Lädt …</p>
+      )}
+    </main>
+  )
+}
+
 // Lets the system back button step back inside the app instead of leaving it.
 // Native app: the hardware back button arrives as a Capacitor event.
 // Browser: while anything above the main view is shown, one extra history entry sits
 // on top of the app's entry; pressing back removes it and runs goBack instead.
 function useBackNavigation(isNested, goBack) {
   const [hasEntry, setHasEntry] = useState(false)
+  const hasEntryRef = useRef(false) // hasEntry for the unmount cleanup below
   const isRemovingEntry = useRef(false) // true while our own history.back() is in flight
   const goBackRef = useRef(goBack)
   const isNestedRef = useRef(isNested)
 
-  useEffect(() => {
+   useEffect(() => {
     goBackRef.current = goBack
+    hasEntryRef.current = hasEntry
     isNestedRef.current = isNested
   })
+
+  // Unmounted while a nested view is open (e.g. logout from the profile): remove the extra
+  // browser history entry as well. In the native app there is none (hasEntry stays false).
+  useEffect(() => {
+    return () => {
+      if (hasEntryRef.current) history.back()
+    }
+  }, [])
 
   // Native app
   useEffect(() => {
@@ -709,8 +1024,9 @@ function useBackNavigation(isNested, goBack) {
   }, [])
 }
 
-export default function App() {
-  const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods'
+// The app after login. Keyed by the user id in App, so nothing carries over to another account.
+function MealTracker({ user, onUserChange, onLogout }) {
+  const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
   const [detail, setDetail] = useState(null) // null or { food, mode: 'add' | 'set', amountG }
@@ -832,6 +1148,16 @@ export default function App() {
     setView('list')
   }
 
+  function openProfile() {
+    setError(null)
+    setView('profile')
+  }
+
+  function closeProfile() {
+    setError(null)
+    setView('list')
+  }
+
   // One handler for every "×" and for the system back button: close the topmost layer.
   function goBack() {
     if (confirmingDeleteAll) setConfirmingDeleteAll(false)
@@ -840,6 +1166,7 @@ export default function App() {
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
     else if (view === 'foods') closeFoods()
+    else if (view === 'profile') closeProfile()
   }
 
   useBackNavigation(view !== 'list' || detail !== null || confirmingDeleteAll, goBack)
@@ -860,6 +1187,17 @@ export default function App() {
           onDelete={deleteMeal}
           onDeleteAll={() => setConfirmingDeleteAll(true)}
           onOpenFoods={openFoods}
+          onOpenProfile={openProfile}
+        />
+      )}
+
+      {view === 'profile' && (
+        <ProfilePage
+          user={user}
+          onUserChange={onUserChange}
+          onLogout={onLogout}
+          onClose={goBack}
+          onError={setError}
         />
       )}
 
@@ -927,5 +1265,77 @@ export default function App() {
         />
       )}
     </main>
+  )
+}
+
+const LOADING = { status: 'loading', user: null }
+const LOGGED_OUT = { status: 'loggedOut', user: null }
+
+// Decides between login page and app. A token stored on this device keeps the user logged in
+// across app restarts: at start the token is checked once against the server (GET /api/users/me).
+export default function App() {
+  // status: 'loading' | 'offline' | 'loggedOut' | 'loggedIn'
+  const [auth, setAuth] = useState(LOADING)
+
+  const logOutLocally = useCallback(async () => {
+    await clearToken()
+    setAuth(LOGGED_OUT)
+  }, [])
+
+  const restoreLogin = useCallback(async () => {
+    try {
+      if (!(await loadSession())) {
+        setAuth(LOGGED_OUT)
+        return
+      }
+      setAuth({ status: 'loggedIn', user: await request(API.me) })
+    } catch (error) {
+      // A rejected token (401) is handled by the unauthorized handler: token removed, login shown.
+      // Anything else, e.g. no network: keep the token, the user is still logged in, just offline.
+      if (error.status !== 401) setAuth({ status: 'offline', user: null })
+    }
+  }, [])
+
+  useEffect(() => {
+    setUnauthorizedHandler(logOutLocally)
+  }, [logOutLocally])
+
+  useEffect(() => {
+    restoreLogin()
+  }, [restoreLogin])
+
+  async function logIn(serverUrl, token, user) {
+    await saveSession(serverUrl, token)
+    setAuth({ status: 'loggedIn', user })
+  }
+
+  async function logOut() {
+    try {
+      await request(API.logout, { method: 'POST' })
+    } catch {
+      // Logged out on this device anyway. If the server was unreachable, the token stays valid
+      // there, but nobody has it any more once it is removed here.
+    }
+    await logOutLocally()
+  }
+
+  function retry() {
+    setAuth(LOADING)
+    restoreLogin()
+  }
+
+  if (auth.status === 'loading' || auth.status === 'offline') {
+    return <StartupScreen isOffline={auth.status === 'offline'} onRetry={retry} />
+  }
+  if (auth.status === 'loggedOut') {
+    return <LoginPage onLoggedIn={logIn} />
+  }
+  return (
+    <MealTracker
+      key={auth.user.id}
+      user={auth.user}
+      onUserChange={(user) => setAuth({ status: 'loggedIn', user })}
+      onLogout={logOut}
+    />
   )
 }

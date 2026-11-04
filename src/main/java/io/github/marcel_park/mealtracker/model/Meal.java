@@ -12,6 +12,14 @@ public class Meal {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // The owner. MealService sets it for every new meal. It is nullable like the database column
+    // only because meals booked before multi-user support have no owner until the first user
+    // registers (see V3 migration). Once a migration makes the column NOT NULL, add
+    // optional = false and nullable = false here as well.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
+
     @Column(length = 100)
     private String title;
 
@@ -23,6 +31,8 @@ public class Meal {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+    public User getUser() { return user; }
+    public void setUser(User user) { this.user = user; }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public LocalDateTime getBookedAt() { return bookedAt; }
