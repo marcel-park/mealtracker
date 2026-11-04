@@ -492,3 +492,92 @@ input:focus-visible {
   color: var(--muted);
   font-size: 1.25rem;
 }
+
+/* ----- Login page ----- */
+
+.login {
+  max-width: 420px;
+  margin: 0 auto;
+  padding-top: max(48px, env(safe-area-inset-top, 0px));
+}
+
+.login-title {
+  margin: 0 0 24px;
+  font-size: 2rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.login .field input {
+  height: var(--search-height);
+}
+
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.login-actions .btn {
+  padding: 12px 16px;
+}
+
+/* small explanation below a form field */
+.field .hint,
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ----- Startup screen (checking the stored login, server offline) ----- */
+
+.startup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-bottom: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ----- Profile ----- */
+
+.profile-email {
+  margin: 0 0 20px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.theme-field {
+  margin-top: 24px;
+}
+
+/* two-option switch; only shown disabled for now */
+.segmented {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.segmented button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 3px);
+  background: none;
+  color: var(--muted);
+}
+
+.segmented button.selected {
+  background: var(--line);
+  color: var(--ink);
+  font-weight: 600;
+}
