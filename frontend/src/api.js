@@ -4,6 +4,7 @@ import { Preferences } from '@capacitor/preferences'
 // Paths of the backend endpoints. The server address is put in front by request().
 export const API = {
   foods: '/api/foods',
+  recipes: '/api/recipes',
   meals: '/api/meals',
   register: '/api/auth/register',
   login: '/api/auth/login',
