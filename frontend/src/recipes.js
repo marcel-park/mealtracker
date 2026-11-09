@@ -76,3 +76,147 @@ export function onePortion(recipe) {
   const items = itemsOf(recipe, variation).filter((item) => item.amountG > 0)
   return scaleItems(items, 1 / servingsOf(recipe, variation))
 }
+
+// ----- State of the booking view and the recipe editor -----
+// Kept here, not in App.jsx, so it can be tested without rendering (recipes.test.js).
+
+// Same limit as the backend (RecipeRequest, VariationRequest).
+const MAX_NAME_LENGTH = 100
+
+export const UNIT_PORTION = 'portion'
+export const UNIT_GRAM = 'gram'
+
+// The recipe editor: the original (variationId null) or one of its variations. Items are
+// { food, amountG, originalG }; originalG is the amount in the original, which a variation is
+// compared with. layer: the amount view of one item ({ type: 'amount', foodId }) or null.
+export const NEW_EDITOR = {
+  recipe: null,
+  id: null,
+  owned: true,
+  variationId: null,
+  name: '',
+  servingsText: '1',
+  weightText: '',
+  published: false,
+  wasPublished: false,
+  items: [],
+  layer: null,
+}
+
+// Foods added to the recipe editor: same food twice adds up. In a variation, a food the original
+// does not contain is compared with 0 g.
+export function mergeEditorItems(items, added, isVariation) {
+  const merged = items.map((item) => ({ ...item }))
+  for (const { food, amountG } of added) {
+    const existing = merged.find((item) => item.food.id === food.id)
+    if (existing) existing.amountG = roundToOneDecimal(existing.amountG + amountG)
+    else merged.push({ food, amountG, originalG: isVariation ? 0 : amountG })
+  }
+  return merged
+}
+
+// The editor showing the original (variationId null) or a variation of `recipe`. Switching
+// starts over from the saved values, so unsaved changes are dropped.
+export function editorFor(recipe, variationId = null) {
+  const variation = variationOf(recipe, variationId)
+  return {
+    ...NEW_EDITOR,
+    recipe,
+    id: recipe.id,
+    owned: recipe.owned,
+    variationId: variation?.id ?? null,
+    name: variation ? variation.name : recipe.name,
+    servingsText: String(servingsOf(recipe, variation)),
+    weightText: variation?.weightG != null ? String(variation.weightG) : '',
+    published: recipe.published,
+    wasPublished: recipe.published,
+    // savedG: amount as saved in the shown version, to tell what was changed (see editorChanges)
+    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
+  }
+}
+
+// What was changed in the editor since the shown version was loaded. items: the ingredients or
+// portions (what a variation can hold); any: anything, name and visibility included.
+export function editorChanges(editor) {
+  const { recipe, variationId } = editor
+  if (recipe === null) return { items: true, any: true }
+  const variation = variationOf(recipe, variationId)
+  const savedItemCount = itemsOf(recipe, variation).length
+  const items =
+    editor.items.some((item) => item.amountG !== item.savedG) ||
+    editor.items.filter((item) => item.savedG !== undefined).length !== savedItemCount ||
+    parseFloat(editor.servingsText) !== servingsOf(recipe, variation)
+  const any =
+    items ||
+    editor.name !== (variation ? variation.name : recipe.name) ||
+    (variation === null && editor.published !== recipe.published)
+  return { items, any }
+}
+
+// What the booking view shows for the original (null) or a variation; adjustments are dropped.
+// saved: the values as saved, to tell whether something was changed since (see isAdjusted).
+// Items keep savedG (amount in the shown version) next to originalG (amount in the original).
+export function bookingSelection(recipe, variationId) {
+  const variation = variationOf(recipe, variationId)
+  const servingsText = String(servingsOf(recipe, variation))
+  const weightText = variation?.weightG != null ? String(variation.weightG) : null
+  return {
+    variationId: variation?.id ?? null,
+    servingsText,
+    weightText,
+    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
+    saved: { servingsText, weightText },
+  }
+}
+
+// State of the booking view of a recipe, kept in MealTracker so it survives the amount view and
+// the dialogs. weightText null: the sum of the ingredients. layer: null, { type: 'amount', foodId },
+// { type: 'saveVariation' } or { type: 'copy' }.
+export function bookingFor(recipe, variationId = recipe.lastUsedVariationId) {
+  return {
+    recipe,
+    unit: UNIT_PORTION,
+    quantityText: '1',
+    layer: null,
+    ...bookingSelection(recipe, variationId ?? null),
+  }
+}
+
+// Changed since the shown version (original or variation) was loaded or saved. Booking is only
+// possible once that is saved: as a (new) variation, or as an own copy of somebody else's recipe.
+export function isAdjusted(booking) {
+  const { saved } = booking
+  return (
+    booking.items.some((item) => item.amountG !== item.savedG) ||
+    parseFloat(booking.servingsText) !== parseFloat(saved.servingsText) ||
+    booking.weightText !== saved.weightText
+  )
+}
+
+// e.g. "Gulasch, 09.11."
+export function suggestedVariationName(recipeName, date = new Date()) {
+  const day = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+  return `${recipeName}, ${day}`.slice(0, MAX_NAME_LENGTH)
+}
+
+// weightText null or empty: the sum of the ingredients.
+export function variationRequest(name, servingsText, weightText, items) {
+  const weightG = weightText === null || weightText.trim() === '' ? null : parseFloat(weightText)
+  return {
+    name: name.trim(),
+    servings: parseFloat(servingsText),
+    weightG,
+    items: items.map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
+  }
+}
+
+export function recipeRequest({ name, servingsText, published, items }) {
+  return {
+    name: name.trim(),
+    servings: parseFloat(servingsText),
+    published,
+    items: items
+      .filter((item) => item.amountG > 0)
+      .map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
+  }
+}
