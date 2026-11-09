@@ -29,11 +29,20 @@ export function addAmount(entries, food, amountG, label = food.name) {
   )
 }
 
-// A booked recipe: all its (scaled) foods, labelled with the recipe name.
-export function addRecipeItems(entries, items, recipeName) {
-  return items
-    .filter((item) => item.amountG > 0)
+// A booked recipe: all its (scaled) foods, labelled with the recipe name (for the title) and
+// marked with the recipe id in recipeIds (to know which recipes are still in the meal, see
+// mealRequest; names are not unique, a food may be called like a recipe).
+export function addRecipeItems(entries, items, recipeName, recipeId) {
+  const booked = items.filter((item) => item.amountG > 0)
+  const bookedFoodIds = new Set(booked.map((item) => item.food.id))
+  return booked
     .reduce((result, item) => addAmount(result, item.food, item.amountG, recipeName), entries)
+    .map((entry) => {
+      const recipeIds = entry.recipeIds ?? []
+      return bookedFoodIds.has(entry.food.id) && !recipeIds.includes(recipeId)
+        ? { ...entry, recipeIds: [...recipeIds, recipeId] }
+        : entry
+    })
 }
 
 // Meal items only carry the kcal of their amount, so the value per 100 g is derived from it.
@@ -53,14 +62,15 @@ export function entriesFromMeal(meal) {
   })
 }
 
-// Only recipes that still have something in the meal count as booked.
+// recipeUses: [{ recipeId, variationId }] of the recipes added to the draft. Only recipes that
+// still have a food in the meal count as booked (the user may have removed them again).
 export function mealRequest(entries, recipeUses = []) {
   const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
   return {
     title: makeTitle(labels),
     items: entries.map((entry) => ({ foodId: entry.food.id, amountG: entry.amountG })),
-    recipes: recipeUses
-      .filter((use) => labels.includes(use.label))
-      .map(({ recipeId, variationId }) => ({ recipeId, variationId })),
+    recipes: recipeUses.filter((use) =>
+      entries.some((entry) => (entry.recipeIds ?? []).includes(use.recipeId)),
+    ),
   }
 }

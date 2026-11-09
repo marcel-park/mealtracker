@@ -25,6 +25,7 @@ export function shareOf({ unit, quantity, servings, weightG }) {
   return unit === 'portion' ? quantity / servings : quantity / weightG
 }
 
+// The items with all amounts multiplied by share (e.g. 0.25 for one of four portions).
 export function scaleItems(items, share) {
   return items.map((item) => ({ food: item.food, amountG: roundToOneDecimal(item.amountG * share) }))
 }
@@ -65,6 +66,7 @@ export function itemsOf(recipe, variation) {
   return items
 }
 
+// A variation without own number of portions has as many as the original.
 export function servingsOf(recipe, variation) {
   return variation?.servings ?? recipe.servings
 }
@@ -210,6 +212,7 @@ export function variationRequest(name, servingsText, weightText, items) {
   }
 }
 
+// Body of POST/PUT /api/recipes. Left-out ingredients (0 g) are not part of an original.
 export function recipeRequest({ name, servingsText, published, items }) {
   return {
     name: name.trim(),

@@ -70,8 +70,9 @@ const COLOR_THEMES = [
 // Entries are { food, amountG, baseG, labels }. baseG is the amount already saved in the meal,
 // so amountG - baseG is what the preview shows as "+X g". labels are what the entry was added as
 // (the food's own name, or the names of the recipes it came with); they make up the meal title.
-// recipeUses: which recipes were added, in which variation ({ recipeId, variationId, label }); sent
-// with the meal so the variation is preselected next time.
+// recipeUses: which recipes were added, in which variation ({ recipeId, variationId }); sent
+// with the meal so the variation is preselected next time. Entries added from a recipe also carry
+// recipeIds, see addRecipeItems.
 const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
 const NEW_FOOD = { id: null, owned: true, published: false }
@@ -96,6 +97,7 @@ const SCOPE_FILTERS = [
 ]
 
 
+// GET /api/foods or /api/recipes with the search text and the filter (scope), if any.
 function fetchCatalog(kind, query, scope, signal) {
   const params = new URLSearchParams()
   const search = query.trim()
@@ -388,6 +390,7 @@ function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked
   )
 }
 
+// Search text, filter (null: everything the user may see) and kind of a search view.
 const NEW_SEARCH = { query: '', scope: null, kind: KIND_FOODS }
 
 // A native select (for the phone's own picker) with a monochrome chevron.
@@ -411,24 +414,21 @@ function SelectBox({ label, value, options, disabled = false, className = '', on
   )
 }
 
-// Two-option switch between private and public.
-function VisibilitySwitch({ published, disabled = false, onChange }) {
+// A field with a few side-by-side options to pick one of (a radio group), e.g. private / public.
+// children: e.g. a hint below the options.
+function SegmentedChoice({ label, options, value, disabled = false, onChange, children }) {
   const labelId = useId()
-  const options = [
-    { value: false, label: 'Privat' },
-    { value: true, label: 'Öffentlich' },
-  ]
   return (
     <div className="field">
-      <span id={labelId}>Sichtbarkeit</span>
+      <span id={labelId}>{label}</span>
       <div className="segmented" role="radiogroup" aria-labelledby={labelId}>
         {options.map((option) => (
           <button
             key={option.label}
             type="button"
             role="radio"
-            aria-checked={published === option.value}
-            className={published === option.value ? 'selected' : undefined}
+            aria-checked={value === option.value}
+            className={value === option.value ? 'selected' : undefined}
             disabled={disabled}
             onClick={() => onChange(option.value)}
           >
@@ -436,15 +436,30 @@ function VisibilitySwitch({ published, disabled = false, onChange }) {
           </button>
         ))}
       </div>
+      {children}
     </div>
   )
 }
 
-// tone: 'danger' for destructive actions, 'primary' otherwise.
-function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, onClose }) {
-  const titleId = useId()
-  const textId = useId()
+const VISIBILITY_OPTIONS = [
+  { value: false, label: 'Privat' },
+  { value: true, label: 'Öffentlich' },
+]
 
+function VisibilitySwitch({ published, disabled = false, onChange }) {
+  return (
+    <SegmentedChoice
+      label="Sichtbarkeit"
+      options={VISIBILITY_OPTIONS}
+      value={published}
+      disabled={disabled}
+      onChange={onChange}
+    />
+  )
+}
+
+// Closes a dialog with the Escape key.
+function useCloseOnEscape(onClose) {
   useEffect(() => {
     function closeOnEscape(event) {
       if (event.key === 'Escape') onClose()
@@ -452,6 +467,13 @@ function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, 
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
+}
+
+// tone: 'danger' for destructive actions, 'primary' otherwise.
+function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, onClose }) {
+  const titleId = useId()
+  const textId = useId()
+  useCloseOnEscape(onClose)
 
   // Only a click on the dark backdrop itself closes the dialog, not one inside it.
   function closeOnBackdropClick(event) {
@@ -872,6 +894,7 @@ function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onEr
   )
 }
 
+// A food or recipe in the database list; sub is the second line (kcal, portions).
 function DatabaseRow({ entry, sub, onOpen }) {
   return (
     <div className="row">
@@ -1030,14 +1053,7 @@ function IngredientRow({ item, showDeviation, onOpen, onRemove }) {
 // Dialog with form fields (children). Enter confirms.
 function FormDialog({ title, confirmLabel, canConfirm, onConfirm, onClose, children }) {
   const titleId = useId()
-
-  useEffect(() => {
-    function closeOnEscape(event) {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [onClose])
+  useCloseOnEscape(onClose)
 
   function submit(event) {
     event.preventDefault()
@@ -1062,6 +1078,7 @@ function FormDialog({ title, confirmLabel, canConfirm, onConfirm, onClose, child
   )
 }
 
+// Asks for the name of a new variation, suggesting recipe name and date.
 function SaveVariationDialog({ recipeName, onSave, onClose }) {
   const [name, setName] = useState(() => suggestedVariationName(recipeName))
   return (
@@ -1087,13 +1104,17 @@ function SaveVariationDialog({ recipeName, onSave, onClose }) {
   )
 }
 
+const COPY_OPTIONS = [
+  { value: false, label: 'Original' },
+  { value: true, label: 'Variation' },
+]
+
 // Copying a recipe of somebody else. Adjusted: the adjustments become the copy's original, or
 // a variation of an unchanged copy.
 function CopyRecipeDialog({ recipeName, isAdjusted, onCopy, onClose }) {
   const [name, setName] = useState(recipeName)
   const [asVariation, setAsVariation] = useState(false)
   const [variationName, setVariationName] = useState(() => suggestedVariationName(recipeName))
-  const choiceId = useId()
   const canConfirm = name.trim() !== '' && (!asVariation || variationName.trim() !== '')
 
   return (
@@ -1116,31 +1137,18 @@ function CopyRecipeDialog({ recipeName, isAdjusted, onCopy, onClose }) {
         />
       </label>
       {isAdjusted && (
-        <div className="field">
-          <span id={choiceId}>Deine Anpassungen speichern als</span>
-          <div className="segmented" role="radiogroup" aria-labelledby={choiceId}>
-            {[
-              { value: false, label: 'Original' },
-              { value: true, label: 'Variation' },
-            ].map((option) => (
-              <button
-                key={option.label}
-                type="button"
-                role="radio"
-                aria-checked={asVariation === option.value}
-                className={asVariation === option.value ? 'selected' : undefined}
-                onClick={() => setAsVariation(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+        <SegmentedChoice
+          label="Deine Anpassungen speichern als"
+          options={COPY_OPTIONS}
+          value={asVariation}
+          onChange={setAsVariation}
+        >
           <span className="hint">
             {asVariation
               ? 'Das Original wird unverändert kopiert, deine Anpassungen werden seine erste Variation.'
               : 'Die Kopie übernimmt deine angepassten Mengen als Original.'}
           </span>
-        </div>
+        </SegmentedChoice>
       )}
       {isAdjusted && asVariation && (
         <label className="field">
@@ -2061,11 +2069,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
   function addRecipeToDraft(items, recipeName, use) {
     setDraft((current) => ({
       ...current,
-      entries: addRecipeItems(current.entries, items, recipeName),
-      recipeUses: [
-        ...current.recipeUses.filter((other) => other.recipeId !== use.recipeId),
-        { ...use, label: recipeName },
-      ],
+      entries: addRecipeItems(current.entries, items, recipeName, use.recipeId),
+      // the same recipe added twice: the variation added last counts
+      recipeUses: [...current.recipeUses.filter((other) => other.recipeId !== use.recipeId), use],
     }))
   }
 

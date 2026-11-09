@@ -34,7 +34,7 @@ describe('addAmount', () => {
 })
 
 describe('addRecipeItems', () => {
-  it('adds the scaled foods labelled with the recipe, skipping left-out ones', () => {
+  it('adds the scaled foods labelled with the recipe and marked with its id, skipping left-out ones', () => {
     const entries = addRecipeItems(
       addAmount([], banana, 100),
       [
@@ -43,11 +43,20 @@ describe('addRecipeItems', () => {
         { food: banana, amountG: 20 },
       ],
       'Chili',
+      50,
     )
-    expect(entries.map((entry) => [entry.food.name, entry.amountG, entry.labels])).toEqual([
-      ['Banane', 120, ['Banane', 'Chili']],
-      ['Bohnen', 120, ['Chili']],
+    expect(entries.map((entry) => [entry.food.name, entry.amountG, entry.labels, entry.recipeIds])).toEqual([
+      ['Banane', 120, ['Banane', 'Chili'], [50]],
+      ['Bohnen', 120, ['Chili'], [50]],
     ])
+  })
+
+  it('marks each recipe only once per food', () => {
+    let entries = addRecipeItems([], [{ food: beans, amountG: 100 }], 'Chili', 50)
+    entries = addRecipeItems(entries, [{ food: beans, amountG: 100 }], 'Chili', 50)
+    entries = addRecipeItems(entries, [{ food: beans, amountG: 100 }], 'Bohnensalat', 51)
+    expect(entries[0].recipeIds).toEqual([50, 51])
+    expect(entries[0].amountG).toBe(300)
   })
 })
 
@@ -77,7 +86,7 @@ describe('entriesFromMeal', () => {
 
 describe('mealRequest', () => {
   it('builds the title from the labels and lists the foods', () => {
-    const entries = addAmount(addRecipeItems([], [{ food: beans, amountG: 150 }], 'Chili'), apple, 100)
+    const entries = addAmount(addRecipeItems([], [{ food: beans, amountG: 150 }], 'Chili', 50), apple, 100)
     expect(mealRequest(entries)).toEqual({
       title: 'Chili, Apfel',
       items: [
@@ -89,11 +98,18 @@ describe('mealRequest', () => {
   })
 
   it('only reports recipes that still have something in the meal', () => {
-    const entries = addRecipeItems([], [{ food: beans, amountG: 150 }], 'Chili')
+    const entries = addRecipeItems([], [{ food: beans, amountG: 150 }], 'Chili', 50)
     const uses = [
-      { recipeId: 50, variationId: 7, label: 'Chili' },
-      { recipeId: 51, variationId: null, label: 'Linsensuppe' },
+      { recipeId: 50, variationId: 7 },
+      { recipeId: 51, variationId: null },
     ]
     expect(mealRequest(entries, uses).recipes).toEqual([{ recipeId: 50, variationId: 7 }])
+  })
+
+  it('does not mistake a food named like a removed recipe for that recipe', () => {
+    // Recipe "Chili" was added and its foods removed again; a food called "Chili" stays.
+    const chiliPepper = { id: 9, name: 'Chili', kcalPer100g: 40 }
+    const entries = addAmount([], chiliPepper, 5)
+    expect(mealRequest(entries, [{ recipeId: 50, variationId: 7 }]).recipes).toEqual([])
   })
 })
