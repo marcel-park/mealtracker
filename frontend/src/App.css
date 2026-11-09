@@ -861,3 +861,125 @@ fieldset.plain:disabled input {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* ----- Recipe variations ----- */
+
+/* portions (an eighth), variation select (the rest), save button (as wide as its text).
+   In gram mode the weight needs room for four digits. */
+.variation-row {
+  display: grid;
+  grid-template-columns: calc(12.5% - 7px) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.variation-row.gram {
+  grid-template-columns: calc(20% - 7px) minmax(0, 1fr) auto;
+}
+
+/* recipes of others have no variations: field and copy button only */
+.variation-row.foreign {
+  grid-template-columns: calc(12.5% - 4px) minmax(0, 1fr);
+}
+
+.variation-row.gram.foreign {
+  grid-template-columns: calc(20% - 4px) minmax(0, 1fr);
+}
+
+.variation-row .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* the narrow field's label may reach over the select, which has no label of its own */
+.variation-row .field > span {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.variation-row input {
+  width: 100%;
+  min-width: 0;
+  height: var(--search-height);
+  padding: 0 4px;
+  text-align: center;
+  appearance: textfield;
+}
+
+.variation-row input::-webkit-inner-spin-button,
+.variation-row input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.variation-row .btn {
+  height: var(--search-height);
+  padding: 0 12px;
+  font-size: 0.9rem;
+  line-height: 1.15;
+}
+
+/* on phones "Variation speichern" breaks into two lines, leaving room for the variation names */
+@media (max-width: 479px) {
+  .variation-row:not(.foreign) .save-variation {
+    max-width: 7.5em;
+  }
+}
+
+.select-box.wide {
+  display: flex;
+  width: 100%;
+}
+
+.select-box.wide select {
+  width: 100%;
+  min-width: 0;
+  height: var(--search-height);
+  text-overflow: ellipsis;
+}
+
+.variation-hint {
+  margin: 8px 0 0;
+}
+
+.hint.warning {
+  color: var(--danger);
+}
+
+.variation-row + .rows,
+.variation-hint + .rows {
+  margin-top: 12px;
+}
+
+/* difference to the original below zero */
+.delta.minus {
+  color: var(--danger);
+}
+
+/* left out in this variation: stays listed, greyed */
+.row.left-out .name,
+.row.left-out .amount {
+  color: var(--muted);
+}
+
+/* ----- Dialogs with fields ----- */
+
+.dialog .field {
+  margin-bottom: 16px;
+}
+
+.dialog .field input {
+  width: 100%;
+}
+
+/* buttons stacked in the bottom bar (recipe editor): save, overwrite, delete */
+.bar.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* the stacked bar is taller, so the end of the list needs more room */
+.app:has(.bar.stacked) {
+  padding-bottom: calc(200px + env(safe-area-inset-bottom, 0px));
+}
