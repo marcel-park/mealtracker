@@ -34,7 +34,45 @@ export function convertQuantity({ fromUnit, quantity, servings, weightG }) {
   return fromUnit === 'portion' ? (quantity * weightG) / servings : (quantity * servings) / weightG
 }
 
-// One portion with the amounts as saved in the recipe: what the + in the search adds.
+// ----- Variations -----
+// A variation (only the owner gets them) lists only the ingredients it changes, with their amount
+// in the variation (0: left out). Everything else is taken from the original.
+
+export function variationOf(recipe, variationId) {
+  return (recipe.variations ?? []).find((variation) => variation.id === variationId) ?? null
+}
+
+// The variation booked last, preselected when booking. null: the original.
+export function lastUsedVariation(recipe) {
+  return variationOf(recipe, recipe.lastUsedVariationId)
+}
+
+// The ingredients of the original (variation null) or of a variation, each with the amount of the
+// original next to it (originalG, 0 for foods only the variation contains). Left-out ingredients
+// stay in the list with 0 g, so the difference to the original can be shown.
+export function itemsOf(recipe, variation) {
+  const changed = new Map((variation?.items ?? []).map((item) => [item.food.id, item.amountG]))
+  const items = recipe.items.map((item) => ({
+    food: item.food,
+    originalG: item.amountG,
+    amountG: changed.get(item.food.id) ?? item.amountG,
+  }))
+  for (const item of variation?.items ?? []) {
+    if (!recipe.items.some((original) => original.food.id === item.food.id)) {
+      items.push({ food: item.food, originalG: 0, amountG: item.amountG })
+    }
+  }
+  return items
+}
+
+export function servingsOf(recipe, variation) {
+  return variation?.servings ?? recipe.servings
+}
+
+// One portion of what is preselected (the variation booked last, or the original):
+// what the + in the search adds.
 export function onePortion(recipe) {
-  return scaleItems(recipe.items, 1 / recipe.servings)
+  const variation = lastUsedVariation(recipe)
+  const items = itemsOf(recipe, variation).filter((item) => item.amountG > 0)
+  return scaleItems(items, 1 / servingsOf(recipe, variation))
 }

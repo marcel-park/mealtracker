@@ -16,12 +16,16 @@ import {
 } from './api.js'
 import {
   convertQuantity,
+  itemsOf,
   kcalOf,
+  lastUsedVariation,
   onePortion,
   roundToOneDecimal,
   scaleItems,
+  servingsOf,
   shareOf,
   totalsOf,
+  variationOf,
 } from './recipes.js'
 
 const SEARCH_PARAM = 'query'
@@ -49,20 +53,27 @@ const COLOR_THEMES = [
 // Entries are { food, amountG, baseG, labels }. baseG is the amount already saved in the meal,
 // so amountG - baseG is what the preview shows as "+X g". labels are what the entry was added as
 // (the food's own name, or the names of the recipes it came with); they make up the meal title.
-const NEW_DRAFT = { mealId: null, entries: [] }
+// recipeUses: which recipes were added, in which variation ({ recipeId, variationId, label }); sent
+// with the meal so the variation is preselected next time.
+const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
 const NEW_FOOD = { id: null, owned: true, published: false }
 
-// The recipe in the recipe editor. Items are { food, amountG }; their amounts cannot be changed
-// once added, only removed and added again.
-const NEW_RECIPE = {
+// The recipe editor: the original (variationId null) or one of its variations. Items are
+// { food, amountG, originalG }; originalG is the amount in the original, which a variation is
+// compared with. layer: the amount view of one item ({ type: 'amount', foodId }) or null.
+const NEW_EDITOR = {
+  recipe: null,
   id: null,
   owned: true,
+  variationId: null,
   name: '',
   servingsText: '1',
+  weightText: '',
   published: false,
   wasPublished: false,
   items: [],
+  layer: null,
 }
 
 // The two kinds of entries in the search, and the filters that apply to both.
@@ -103,11 +114,15 @@ function createOrUpdate(url, id, data) {
     : request(`${url}/${id}`, { method: 'PUT', body })
 }
 
-function mealRequest(entries) {
+// Only recipes that still have something in the meal count as booked.
+function mealRequest(entries, recipeUses = []) {
   const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
   return {
     title: makeTitle(labels),
     items: entries.map((entry) => ({ foodId: entry.food.id, amountG: entry.amountG })),
+    recipes: recipeUses
+      .filter((use) => labels.includes(use.label))
+      .map(({ recipeId, variationId }) => ({ recipeId, variationId })),
   }
 }
 
@@ -166,35 +181,121 @@ function entriesFromMeal(meal) {
   })
 }
 
-// Same food twice: the amounts are added up, like in the backend.
-function mergeItems(items, added) {
+// Foods added to the recipe editor: same food twice adds up. In a variation, a food the original
+// does not contain is compared with 0 g.
+function mergeEditorItems(items, added, isVariation) {
   const merged = items.map((item) => ({ ...item }))
   for (const { food, amountG } of added) {
     const existing = merged.find((item) => item.food.id === food.id)
     if (existing) existing.amountG = roundToOneDecimal(existing.amountG + amountG)
-    else merged.push({ food, amountG })
+    else merged.push({ food, amountG, originalG: isVariation ? 0 : amountG })
   }
   return merged
 }
 
-function recipeDraftFrom(recipe) {
+// The editor showing the original (variationId null) or a variation of `recipe`. Switching
+// starts over from the saved values, so unsaved changes are dropped.
+function editorFor(recipe, variationId = null) {
+  const variation = variationOf(recipe, variationId)
   return {
+    ...NEW_EDITOR,
+    recipe,
     id: recipe.id,
     owned: recipe.owned,
-    name: recipe.name,
-    servingsText: String(recipe.servings),
+    variationId: variation?.id ?? null,
+    name: variation ? variation.name : recipe.name,
+    servingsText: String(servingsOf(recipe, variation)),
+    weightText: variation?.weightG != null ? String(variation.weightG) : '',
     published: recipe.published,
     wasPublished: recipe.published,
-    items: recipe.items.map((item) => ({ food: item.food, amountG: item.amountG })),
+    // savedG: amount as saved in the shown version, to tell what was changed (see editorChanges)
+    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
   }
 }
 
-function recipeRequest(draft) {
+// What was changed in the editor since the shown version was loaded. items: the ingredients or
+// portions (what a variation can hold); any: anything, name and visibility included.
+function editorChanges(editor) {
+  const { recipe, variationId } = editor
+  if (recipe === null) return { items: true, any: true }
+  const variation = variationOf(recipe, variationId)
+  const savedItemCount = itemsOf(recipe, variation).length
+  const items =
+    editor.items.some((item) => item.amountG !== item.savedG) ||
+    editor.items.filter((item) => item.savedG !== undefined).length !== savedItemCount ||
+    parseFloat(editor.servingsText) !== servingsOf(recipe, variation)
+  const any =
+    items ||
+    editor.name !== (variation ? variation.name : recipe.name) ||
+    (variation === null && editor.published !== recipe.published)
+  return { items, any }
+}
+
+// What the booking view shows for the original (null) or a variation; adjustments are dropped.
+// saved: the values as saved, to tell whether something was changed since (see isAdjusted).
+// Items keep savedG (amount in the shown version) next to originalG (amount in the original).
+function bookingSelection(recipe, variationId) {
+  const variation = variationOf(recipe, variationId)
+  const servingsText = String(servingsOf(recipe, variation))
+  const weightText = variation?.weightG != null ? String(variation.weightG) : null
   return {
-    name: draft.name.trim(),
-    servings: parseFloat(draft.servingsText),
-    published: draft.published,
-    items: draft.items.map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
+    variationId: variation?.id ?? null,
+    servingsText,
+    weightText,
+    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
+    saved: { servingsText, weightText },
+  }
+}
+
+// State of the booking view of a recipe, kept in MealTracker so it survives the amount view and
+// the dialogs. weightText null: the sum of the ingredients. layer: null, { type: 'amount', foodId },
+// { type: 'saveVariation' } or { type: 'copy' }.
+function bookingFor(recipe, variationId = recipe.lastUsedVariationId) {
+  return {
+    recipe,
+    unit: UNIT_PORTION,
+    quantityText: '1',
+    layer: null,
+    ...bookingSelection(recipe, variationId ?? null),
+  }
+}
+
+// Changed since the shown version (original or variation) was loaded or saved. Booking is only
+// possible once that is saved: as a (new) variation, or as an own copy of somebody else's recipe.
+function isAdjusted(booking) {
+  const { saved } = booking
+  return (
+    booking.items.some((item) => item.amountG !== item.savedG) ||
+    parseFloat(booking.servingsText) !== parseFloat(saved.servingsText) ||
+    booking.weightText !== saved.weightText
+  )
+}
+
+// e.g. "Gulasch, 09.11."
+function suggestedVariationName(recipeName) {
+  const date = new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
+  return `${recipeName}, ${date}`.slice(0, MAX_TITLE_LENGTH)
+}
+
+// weightText null or empty: the sum of the ingredients.
+function variationRequest(name, servingsText, weightText, items) {
+  const weightG = weightText === null || weightText.trim() === '' ? null : parseFloat(weightText)
+  return {
+    name: name.trim(),
+    servings: parseFloat(servingsText),
+    weightG,
+    items: items.map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
+  }
+}
+
+function recipeRequest({ name, servingsText, published, items }) {
+  return {
+    name: name.trim(),
+    servings: parseFloat(servingsText),
+    published,
+    items: items
+      .filter((item) => item.amountG > 0)
+      .map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
   }
 }
 
@@ -631,6 +732,7 @@ function MealRow({ meal, onEdit, onDelete }) {
 // recipes cannot contain recipes). Stays mounted while hidden, so search and filter survive.
 function FoodSearch({
   visible,
+  version = 0,
   kindLocked = false,
   draftCount,
   submitLabel,
@@ -646,7 +748,7 @@ function FoodSearch({
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const kind = kindLocked ? KIND_FOODS : search.kind
-  const entries = useCatalog(kind, search.query, search.scope, 0, onError)
+  const entries = useCatalog(kind, search.query, search.scope, version, onError)
 
   return (
     <section hidden={!visible}>
@@ -739,10 +841,14 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
   )
 }
 
-function RecipeSummary({ recipe }) {
+// variation: describe that variation instead of the original.
+function RecipeSummary({ recipe, variation = null }) {
+  const servings = servingsOf(recipe, variation)
+  const kcal = variation ? totalsOf(itemsOf(recipe, variation)).kcal : recipe.kcal
   return (
     <>
-      {formatKcal(recipe.kcal / recipe.servings)} pro Portion · {formatServings(recipe.servings)}
+      {variation && `${variation.name} · `}
+      {formatKcal(kcal / servings)} pro Portion · {formatServings(servings)}
     </>
   )
 }
@@ -758,7 +864,7 @@ function RecipeSearchRow({ recipe, onOpen, onAdd }) {
             <PrivateMark entry={recipe} />
           </span>
           <span className="sub">
-            <RecipeSummary recipe={recipe} />
+            <RecipeSummary recipe={recipe} variation={lastUsedVariation(recipe)} />
           </span>
         </span>
         <span className="amount">1 Portion</span>
@@ -1041,43 +1147,293 @@ function FoodForm({ food, onSave, onDelete, onClose }) {
   )
 }
 
-// Name, portions, visibility and the foods of a recipe. Added foods can only be removed, not
-// changed: remove and add again. Recipes of others are shown read-only.
-function RecipeEditor({ draft, onChange, onAddFoods, onSave, onDelete, onClose }) {
-  const isNew = draft.id === null
-  const readOnly = !draft.owned
-  const servings = parseFloat(draft.servingsText)
-  const totals = totalsOf(draft.items)
-  const isValid = draft.name.trim() !== '' && servings > 0 && draft.items.length > 0
+// Difference to the original recipe: green "+100 g", red "−100 g", nothing when equal.
+function Deviation({ amountG, originalG }) {
+  const difference = roundToOneDecimal(amountG - originalG)
+  if (difference === 0) return null
+  return (
+    <span className={difference > 0 ? 'delta' : 'delta minus'}>
+      {difference > 0 ? '+' : '−'}
+      {formatNumber(Math.abs(difference))} g
+    </span>
+  )
+}
 
-  function update(changes) {
-    onChange({ ...draft, ...changes })
-  }
+// One ingredient of a recipe or variation. Without onOpen the row is read-only; without
+// onRemove there is no "×". A left-out ingredient (0 g) stays listed, greyed.
+function IngredientRow({ item, showDeviation, onOpen, onRemove }) {
+  const isLeftOut = item.amountG === 0
+  const content = (
+    <>
+      <span className="main">
+        <span className="name">
+          {item.food.name}
+          <PrivateMark entry={item.food} />
+        </span>
+        <span className="sub">{formatKcal(kcalOf(item.food, item.amountG))}</span>
+      </span>
+      {showDeviation && <Deviation amountG={item.amountG} originalG={item.originalG} />}
+      <span className="amount">{formatNumber(item.amountG)} g</span>
+    </>
+  )
+
+  return (
+    <div className={isLeftOut ? 'row left-out' : 'row'}>
+      {onOpen ? (
+        <button type="button" className="row-open wrap" onClick={onOpen}>
+          {content}
+        </button>
+      ) : (
+        <div className="row-open wrap">{content}</div>
+      )}
+      {onRemove && !isLeftOut && (
+        <CrossButton label={`${item.food.name} weglassen`} onClick={onRemove} />
+      )}
+    </div>
+  )
+}
+
+// Dialog with form fields (children). Enter confirms.
+function FormDialog({ title, confirmLabel, canConfirm, onConfirm, onClose, children }) {
+  const titleId = useId()
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
 
   function submit(event) {
     event.preventDefault()
-    if (isValid && !readOnly) onSave()
+    if (canConfirm) onConfirm()
+  }
+
+  return (
+    <div className="overlay" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit}>
+        <h2 id={titleId}>{title}</h2>
+        {children}
+        <div className="actions">
+          <button type="button" className="btn" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button type="submit" className="btn primary" disabled={!canConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function SaveVariationDialog({ recipeName, onSave, onClose }) {
+  const [name, setName] = useState(() => suggestedVariationName(recipeName))
+  return (
+    <FormDialog
+      title="Variation speichern"
+      confirmLabel="Speichern"
+      canConfirm={name.trim() !== ''}
+      onConfirm={() => onSave(name)}
+      onClose={onClose}
+    >
+      <label className="field">
+        <span>Name der Variation</span>
+        <input
+          type="text"
+          autoFocus
+          maxLength={100}
+          value={name}
+          onFocus={(event) => event.target.select()}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+    </FormDialog>
+  )
+}
+
+// Copying a recipe of somebody else. Adjusted: the adjustments become the copy's original, or
+// a variation of an unchanged copy.
+function CopyRecipeDialog({ recipeName, isAdjusted, onCopy, onClose }) {
+  const [name, setName] = useState(recipeName)
+  const [asVariation, setAsVariation] = useState(false)
+  const [variationName, setVariationName] = useState(() => suggestedVariationName(recipeName))
+  const choiceId = useId()
+  const canConfirm = name.trim() !== '' && (!asVariation || variationName.trim() !== '')
+
+  return (
+    <FormDialog
+      title="Als eigenes Rezept speichern"
+      confirmLabel="Speichern"
+      canConfirm={canConfirm}
+      onConfirm={() => onCopy({ name, asVariation: isAdjusted && asVariation, variationName })}
+      onClose={onClose}
+    >
+      <p>Du bekommst eine private Kopie, die du bearbeiten und variieren kannst.</p>
+      <label className="field">
+        <span>Name des Rezepts</span>
+        <input
+          type="text"
+          autoFocus
+          maxLength={100}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      {isAdjusted && (
+        <div className="field">
+          <span id={choiceId}>Deine Anpassungen speichern als</span>
+          <div className="segmented" role="radiogroup" aria-labelledby={choiceId}>
+            {[
+              { value: false, label: 'Original' },
+              { value: true, label: 'Variation' },
+            ].map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                role="radio"
+                aria-checked={asVariation === option.value}
+                className={asVariation === option.value ? 'selected' : undefined}
+                onClick={() => setAsVariation(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <span className="hint">
+            {asVariation
+              ? 'Das Original wird unverändert kopiert, deine Anpassungen werden seine erste Variation.'
+              : 'Die Kopie übernimmt deine angepassten Mengen als Original.'}
+          </span>
+        </div>
+      )}
+      {isAdjusted && asVariation && (
+        <label className="field">
+          <span>Name der Variation</span>
+          <input
+            type="text"
+            maxLength={100}
+            value={variationName}
+            onChange={(event) => setVariationName(event.target.value)}
+          />
+        </label>
+      )}
+    </FormDialog>
+  )
+}
+
+// Name, portions, visibility and the foods of a recipe, or one of its variations (owner only).
+// Tapping a food changes its amount. Switching between original and variations drops unsaved
+// changes. Recipes of others are shown read-only.
+//
+// Buttons, stacked at the bottom: a new recipe is saved as it is. A changed original is either
+// saved as a new variation or overwritten (red, with a confirmation). A variation is saved into
+// itself. "Löschen" (red, with a confirmation) comes last.
+function RecipeEditor({
+  editor,
+  onChange,
+  onSelectVariation,
+  onAddFoods,
+  onSave,
+  onSaveAsVariation,
+  onOverwrite,
+  onDelete,
+  onClose,
+}) {
+  const { recipe, variationId, items, layer } = editor
+  const isNew = editor.id === null
+  const readOnly = !editor.owned
+  const isVariation = variationId !== null
+  const variations = recipe?.variations ?? []
+  const servings = parseFloat(editor.servingsText)
+  const weightG = editor.weightText.trim() === '' ? null : parseFloat(editor.weightText)
+  const totals = totalsOf(items)
+  const isValid =
+    editor.name.trim() !== '' &&
+    servings > 0 &&
+    (weightG === null || weightG > 0) &&
+    items.some((item) => item.amountG > 0)
+
+  function setAmount(foodId, amountG) {
+    onChange({
+      items: items.map((item) => (item.food.id === foodId ? { ...item, amountG } : item)),
+      layer: null,
+    })
+  }
+
+  // In a variation, an ingredient of the original stays listed with 0 g.
+  function remove(item) {
+    onChange({
+      items:
+        isVariation && item.originalG > 0
+          ? items.map((other) => (other === item ? { ...other, amountG: 0 } : other))
+          : items.filter((other) => other !== item),
+    })
+  }
+
+  const changes = editorChanges(editor)
+  const isSavedOriginal = !isNew && !isVariation
+
+  // Enter saves only where there is just one way to save.
+  function submit(event) {
+    event.preventDefault()
+    if (isValid && !readOnly && !isSavedOriginal) onSave()
+  }
+
+  if (layer?.type === 'amount') {
+    const item = items.find((other) => other.food.id === layer.foodId)
+    return (
+      <FoodDetail
+        food={item.food}
+        initialAmountG={item.amountG || item.originalG || DEFAULT_AMOUNT_G}
+        confirmLabel="Übernehmen"
+        onConfirm={(food, amountG) => setAmount(food.id, amountG)}
+        onClose={() => onChange({ layer: null })}
+      />
+    )
   }
 
   let title = 'Rezept bearbeiten'
   if (isNew) title = 'Rezept anlegen'
   else if (readOnly) title = 'Rezept'
+  else if (isVariation) title = 'Variation bearbeiten'
 
   return (
     <section>
       <TopBar title={title} closeLabel="Schließen" onClose={onClose} />
       {readOnly && <NotOwnedHint what="Rezept" />}
       <form onSubmit={submit}>
+        {!readOnly && variations.length > 0 && (
+          <div className="field">
+            <span>Variation</span>
+            <SelectBox
+              label="Original oder Variation"
+              className="wide"
+              value={String(variationId ?? '')}
+              options={[
+                { value: '', label: 'Original' },
+                ...variations.map((variation) => ({ value: String(variation.id), label: variation.name })),
+              ]}
+              onChange={(value) => onSelectVariation(value === '' ? null : Number(value))}
+            />
+            {isVariation && (
+              <span className="hint">
+                Nur du siehst diese Variation. Was du hier nicht änderst, folgt dem Original.
+              </span>
+            )}
+          </div>
+        )}
         <fieldset className="plain" disabled={readOnly}>
           <label className="field">
-            <span>Name</span>
+            <span>{isVariation ? 'Name der Variation' : 'Name'}</span>
             <input
               type="text"
               autoFocus={isNew}
               autoComplete="off"
               maxLength={100}
-              value={draft.name}
-              onChange={(event) => update({ name: event.target.value })}
+              value={editor.name}
+              onChange={(event) => onChange({ name: event.target.value })}
             />
           </label>
           <label className="field">
@@ -1087,52 +1443,61 @@ function RecipeEditor({ draft, onChange, onAddFoods, onSave, onDelete, onClose }
               inputMode="decimal"
               min="0"
               step="any"
-              value={draft.servingsText}
-              onChange={(event) => update({ servingsText: event.target.value })}
+              value={editor.servingsText}
+              onChange={(event) => onChange({ servingsText: event.target.value })}
             />
             <span className="hint">So viele Portionen ergeben die Mengen unten.</span>
           </label>
-          <VisibilitySwitch published={draft.published} onChange={(published) => update({ published })} />
-          {draft.published && !draft.wasPublished && (
-            <p className="hint switch-hint">
-              Deine privaten Lebensmittel in diesem Rezept werden beim Speichern mit veröffentlicht.
-            </p>
+          {isVariation ? (
+            <label className="field">
+              <span>Gesamtgewicht (g)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                placeholder={formatNumber(totals.amountG)}
+                value={editor.weightText}
+                onChange={(event) => onChange({ weightText: event.target.value })}
+              />
+              <span className="hint">Gewicht nach dem Kochen. Leer: Summe der Zutaten.</span>
+            </label>
+          ) : (
+            <>
+              <VisibilitySwitch
+                published={editor.published}
+                onChange={(published) => onChange({ published })}
+              />
+              {editor.published && !editor.wasPublished && (
+                <p className="hint switch-hint">
+                  Deine privaten Lebensmittel in diesem Rezept werden beim Speichern mit
+                  veröffentlicht. Variationen bleiben privat.
+                </p>
+              )}
+            </>
           )}
         </fieldset>
 
         <div className="section-head">
           <h2>Zutaten</h2>
           <span className="section-meta">
-            {draft.items.length > 0 &&
+            {items.length > 0 &&
               `${formatNumber(totals.amountG)} g · ${formatKcal(totals.kcal)}` +
                 (servings > 0 ? ` · ${formatKcal(totals.kcal / servings)} pro Portion` : '')}
           </span>
         </div>
-        {draft.items.length === 0 ? (
+        {items.length === 0 ? (
           <p className="empty">Noch keine Lebensmittel.</p>
         ) : (
           <div className="rows">
-            {draft.items.map((item) => (
-              <div className="row" key={item.food.id}>
-                <div className="row-open wrap">
-                  <span className="main">
-                    <span className="name">
-                      {item.food.name}
-                      <PrivateMark entry={item.food} />
-                    </span>
-                    <span className="sub">{formatKcal(kcalOf(item.food, item.amountG))}</span>
-                  </span>
-                  <span className="amount">{formatNumber(item.amountG)} g</span>
-                </div>
-                {!readOnly && (
-                  <CrossButton
-                    label={`${item.food.name} entfernen`}
-                    onClick={() =>
-                      update({ items: draft.items.filter((other) => other.food.id !== item.food.id) })
-                    }
-                  />
-                )}
-              </div>
+            {items.map((item) => (
+              <IngredientRow
+                key={item.food.id}
+                item={item}
+                showDeviation={isVariation}
+                onOpen={readOnly ? undefined : () => onChange({ layer: { type: 'amount', foodId: item.food.id } })}
+                onRemove={readOnly ? undefined : () => remove(item)}
+              />
             ))}
           </div>
         )}
@@ -1144,18 +1509,47 @@ function RecipeEditor({ draft, onChange, onAddFoods, onSave, onDelete, onClose }
         )}
 
         {!readOnly && (
-          <div className="bar">
-            {!isNew && (
-              <button type="button" className="btn danger-outline" onClick={onDelete}>
-                Löschen
+          <div className={isNew ? 'bar' : 'bar stacked'}>
+            {isSavedOriginal ? (
+              <>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!isValid || !changes.items}
+                  onClick={() => onChange({ layer: { type: 'saveVariation' } })}
+                >
+                  Variation speichern
+                </button>
+                <button
+                  type="button"
+                  className="btn danger"
+                  disabled={!isValid || !changes.any}
+                  onClick={onOverwrite}
+                >
+                  Original überschreiben
+                </button>
+              </>
+            ) : (
+              <button type="submit" className="btn primary" disabled={!isValid}>
+                {isVariation ? 'Variation speichern' : 'Rezept speichern'}
               </button>
             )}
-            <button type="submit" className="btn primary" disabled={!isValid}>
-              Rezept speichern
-            </button>
+            {!isNew && (
+              <button type="button" className="btn danger" onClick={onDelete}>
+                {isVariation ? 'Variation löschen' : 'Rezept löschen'}
+              </button>
+            )}
           </div>
         )}
       </form>
+
+      {layer?.type === 'saveVariation' && (
+        <SaveVariationDialog
+          recipeName={recipe.name}
+          onSave={onSaveAsVariation}
+          onClose={() => onChange({ layer: null })}
+        />
+      )}
     </section>
   )
 }
@@ -1165,54 +1559,100 @@ const BOOKING_UNITS = [
   { value: UNIT_GRAM, label: 'Gramm' },
 ]
 
-// Books a recipe into the meal draft: as portions, or as grams of the finished dish. The amounts
-// and, depending on the unit, the number of portions or the weight of the dish can be adjusted for
-// this one booking; the recipe itself stays as it is. Only the setting that matters for the chosen
-// unit is shown. The weight follows the ingredients until it is typed in by hand (e.g. after
-// weighing the pot), and follows them again after "Aus Zutaten berechnen".
-function RecipeBooking({ recipe, onConfirm, onClose }) {
-  const [unit, setUnit] = useState(UNIT_PORTION)
-  const [quantityText, setQuantityText] = useState('1')
-  const [servingsText, setServingsText] = useState(String(recipe.servings))
-  const [items, setItems] = useState(() =>
-    recipe.items.map((item) => ({ food: item.food, amountText: String(roundToOneDecimal(item.amountG)) })),
-  )
-  const [weightText, setWeightText] = useState(null) // null: sum of the ingredients
-
-  const amounts = items.map((item) => ({ food: item.food, amountG: parseFloat(item.amountText) }))
-  const amountsValid = amounts.length > 0 && amounts.every((item) => item.amountG >= 0)
-  const totals = totalsOf(amountsValid ? amounts : [])
+// Books a recipe into the meal draft: as portions, or as grams of the finished dish. Controlled:
+// the state (see bookingFor) lives in MealTracker, onChange merges changes into it.
+//
+// "Dieses Rezept variieren": amounts, portions and the weight of the dish can be changed. Changes
+// to the original are saved as a new variation, changes to a variation update that variation.
+// Only saved versions can be booked. Recipes of others have no variations; they can be copied
+// ("Als eigenes Rezept speichern") and then booked and varied as the user's own.
+function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, onClose }) {
+  const { recipe, unit, quantityText, servingsText, weightText, items, variationId, layer } = booking
+  const isVariation = variationId !== null
+  const totals = totalsOf(items)
   const weightG = weightText === null ? totals.amountG : parseFloat(weightText)
   const servings = parseFloat(servingsText)
   const quantity = parseFloat(quantityText)
-  const isValid = amountsValid && totals.amountG > 0 && servings > 0 && weightG > 0 && quantity > 0
+  const isValid = totals.amountG > 0 && servings > 0 && weightG > 0 && quantity > 0
   const share = isValid ? shareOf({ unit, quantity, servings, weightG }) : 0
+  const adjusted = isAdjusted(booking)
 
   function changeUnit(newUnit) {
     if (newUnit === unit) return
+    const changes = { unit: newUnit }
     if (isValid) {
       const converted = convertQuantity({ fromUnit: unit, quantity, servings, weightG })
-      setQuantityText(String(newUnit === UNIT_GRAM ? Math.round(converted) : roundToOneDecimal(converted)))
+      changes.quantityText = String(
+        newUnit === UNIT_GRAM ? Math.round(converted) : roundToOneDecimal(converted),
+      )
     }
-    setUnit(newUnit)
+    onChange(changes)
   }
 
-  function changeAmount(foodId, amountText) {
-    setItems((current) =>
-      current.map((item) => (item.food.id === foodId ? { ...item, amountText } : item)),
-    )
-    setWeightText(null)
+  // Changing an ingredient makes the weight follow the ingredients again.
+  function setAmount(foodId, amountG) {
+    onChange({
+      items: items.map((item) => (item.food.id === foodId ? { ...item, amountG } : item)),
+      weightText: null,
+      layer: null,
+    })
   }
 
-  function removeItem(foodId) {
-    setItems((current) => current.filter((item) => item.food.id !== foodId))
-    setWeightText(null)
+  // A new variation needs a name; an existing one is updated right away.
+  function save() {
+    if (isVariation) onSaveVariation(null)
+    else onChange({ layer: { type: 'saveVariation' } })
   }
 
   function submit(event) {
     event.preventDefault()
-    if (isValid) onConfirm(scaleItems(amounts, share), recipe.name)
+    if (!isValid || adjusted) return
+    const booked = scaleItems(
+      items.filter((item) => item.amountG > 0),
+      share,
+    )
+    onConfirm(booked, recipe.name, { recipeId: recipe.id, variationId })
   }
+
+  if (layer?.type === 'amount') {
+    const item = items.find((other) => other.food.id === layer.foodId)
+    return (
+      <FoodDetail
+        food={item.food}
+        initialAmountG={item.amountG || item.originalG}
+        confirmLabel="Übernehmen"
+        onConfirm={(food, amountG) => setAmount(food.id, amountG)}
+        onClose={() => onChange({ layer: null })}
+      />
+    )
+  }
+
+  const settingInput =
+    unit === UNIT_PORTION ? (
+      <label className="field">
+        <span>Portionen</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          min="0"
+          step="any"
+          value={servingsText}
+          onChange={(event) => onChange({ servingsText: event.target.value })}
+        />
+      </label>
+    ) : (
+      <label className="field">
+        <span>Gewicht (g)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          min="0"
+          step="any"
+          value={weightText ?? String(roundToOneDecimal(totals.amountG))}
+          onChange={(event) => onChange({ weightText: event.target.value })}
+        />
+      </label>
+    )
 
   return (
     <section>
@@ -1235,7 +1675,7 @@ function RecipeBooking({ recipe, onConfirm, onClose }) {
             step="any"
             value={quantityText}
             onFocus={(event) => event.target.select()}
-            onChange={(event) => setQuantityText(event.target.value)}
+            onChange={(event) => onChange({ quantityText: event.target.value })}
             aria-label={unit === UNIT_PORTION ? 'Anzahl Portionen' : 'Menge in Gramm'}
           />
         </div>
@@ -1244,76 +1684,108 @@ function RecipeBooking({ recipe, onConfirm, onClose }) {
         </p>
 
         <div className="section-head">
-          <h2>Für diese Buchung anpassen</h2>
+          <h2>Dieses Rezept variieren</h2>
         </div>
-        {unit === UNIT_PORTION ? (
-          <label className="field">
-            <span>Portionen gesamt</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              value={servingsText}
-              onChange={(event) => setServingsText(event.target.value)}
-            />
-          </label>
-        ) : (
-          <label className="field">
-            <span>Gesamtgewicht (g)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              value={weightText ?? String(roundToOneDecimal(totals.amountG))}
-              onChange={(event) => setWeightText(event.target.value)}
-            />
+        <div
+          className={[
+            'variation-row',
+            unit === UNIT_GRAM ? 'gram' : '',
+            recipe.owned ? '' : 'foreign',
+          ].join(' ')}
+        >
+          {settingInput}
+          {recipe.owned && (
+            <div className="field">
+              <SelectBox
+                label="Variation"
+                className="wide"
+                value={String(variationId ?? '')}
+                options={[
+                  { value: '', label: 'Original' },
+                  ...recipe.variations.map((variation) => ({
+                    value: String(variation.id),
+                    label: variation.name,
+                  })),
+                ]}
+                onChange={(value) => onChange(bookingSelection(recipe, value === '' ? null : Number(value)))}
+              />
+            </div>
+          )}
+          {recipe.owned ? (
+            <button
+              type="button"
+              className="btn save-variation"
+              disabled={!adjusted || !isValid}
+              onClick={save}
+            >
+              Variation speichern
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn save-variation"
+              disabled={!isValid}
+              onClick={() => onChange({ layer: { type: 'copy' } })}
+            >
+              Als eigenes Rezept speichern
+            </button>
+          )}
+        </div>
+        {unit === UNIT_GRAM && (
+          <p className="variation-hint">
             {weightText === null ? (
               <span className="hint">Summe der Zutaten. Gewicht nach dem Kochen hier eintragen.</span>
             ) : (
-              <button type="button" className="link-btn" onClick={() => setWeightText(null)}>
+              <button type="button" className="link-btn" onClick={() => onChange({ weightText: null })}>
                 Aus Zutaten berechnen
               </button>
             )}
-          </label>
+          </p>
+        )}
+        {adjusted && (
+          <p className="hint warning variation-hint">
+            {!recipe.owned
+              ? 'Geändert. Speichere das Rezept als dein eigenes, um es so zu buchen.'
+              : isVariation
+                ? 'Geändert. Speichere die Variation, um sie so zu buchen.'
+                : 'Geändert. Speichere die Änderungen als Variation, um sie zu buchen.'}
+          </p>
         )}
 
         <div className="rows">
           {items.map((item) => (
-            <div className="row" key={item.food.id}>
-              <span className="main">
-                <span className="name wrap-name">{item.food.name}</span>
-                <span className="sub">
-                  {parseFloat(item.amountText) >= 0
-                    ? formatKcal(kcalOf(item.food, parseFloat(item.amountText)))
-                    : '–'}
-                </span>
-              </span>
-              <span className="amount-input">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  value={item.amountText}
-                  onFocus={(event) => event.target.select()}
-                  onChange={(event) => changeAmount(item.food.id, event.target.value)}
-                  aria-label={`Menge ${item.food.name} in Gramm`}
-                />
-                <span>g</span>
-              </span>
-              <CrossButton label={`${item.food.name} weglassen`} onClick={() => removeItem(item.food.id)} />
-            </div>
+            <IngredientRow
+              key={item.food.id}
+              item={item}
+              showDeviation
+              onOpen={() => onChange({ layer: { type: 'amount', foodId: item.food.id } })}
+              onRemove={() => setAmount(item.food.id, 0)}
+            />
           ))}
         </div>
 
         <div className="bar">
-          <button type="submit" className="btn primary" disabled={!isValid}>
+          <button type="submit" className="btn primary" disabled={!isValid || adjusted}>
             Zur Mahlzeit hinzufügen
           </button>
         </div>
       </form>
+
+      {layer?.type === 'saveVariation' && (
+        <SaveVariationDialog
+          recipeName={recipe.name}
+          onSave={onSaveVariation}
+          onClose={() => onChange({ layer: null })}
+        />
+      )}
+      {layer?.type === 'copy' && (
+        <CopyRecipeDialog
+          recipeName={recipe.name}
+          isAdjusted={adjusted}
+          onCopy={onCopy}
+          onClose={() => onChange({ layer: null })}
+        />
+      )}
     </section>
   )
 }
@@ -1689,9 +2161,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
   const [detail, setDetail] = useState(null) // null or { food, mode: 'add' | 'set' | 'recipe-add', amountG }
-  const [recipeBooking, setRecipeBooking] = useState(null) // recipe shown for booking
+  const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
-  const [recipeEditor, setRecipeEditor] = useState(null) // recipe draft, see NEW_RECIPE
+  const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
   const [recipeSearch, setRecipeSearch] = useState(null) // null or { entries, previewing }: foods about to be added to the recipe
   const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
   const [confirm, setConfirm] = useState(null) // props of the open ConfirmDialog
@@ -1720,7 +2192,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   }
 
   function editMeal(meal) {
-    setDraft({ mealId: meal.id, entries: entriesFromMeal(meal) })
+    setDraft({ mealId: meal.id, entries: entriesFromMeal(meal), recipeUses: [] })
     setView('edit')
   }
 
@@ -1734,17 +2206,105 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, amountG) }))
   }
 
-  function addRecipeToDraft(items, recipeName) {
-    setDraft((current) => ({ ...current, entries: addRecipeItems(current.entries, items, recipeName) }))
+  // use: { recipeId, variationId }, remembered for the preselection next time.
+  function addRecipeToDraft(items, recipeName, use) {
+    setDraft((current) => ({
+      ...current,
+      entries: addRecipeItems(current.entries, items, recipeName),
+      recipeUses: [
+        ...current.recipeUses.filter((other) => other.recipeId !== use.recipeId),
+        { ...use, label: recipeName },
+      ],
+    }))
   }
 
+  // The + in the search: one portion of the preselected variation (or the original).
   function addRecipePortion(recipe) {
-    addRecipeToDraft(onePortion(recipe), recipe.name)
+    const variation = lastUsedVariation(recipe)
+    addRecipeToDraft(onePortion(recipe), recipe.name, {
+      recipeId: recipe.id,
+      variationId: variation?.id ?? null,
+    })
   }
 
-  function confirmRecipeBooking(items, recipeName) {
-    addRecipeToDraft(items, recipeName)
+  function openRecipeBooking(recipe) {
+    setRecipeBooking(bookingFor(recipe))
+  }
+
+  function updateBooking(changes) {
+    setRecipeBooking((current) => ({ ...current, ...changes }))
+  }
+
+  function confirmRecipeBooking(items, recipeName, use) {
+    addRecipeToDraft(items, recipeName, use)
     setRecipeBooking(null)
+  }
+
+  // Saves the changes in the booking view: changes to the original as a new variation (name from
+  // the dialog), changes to a variation into that variation (name null: keeps its name). Shows the
+  // saved variation afterwards, keeping unit and quantity.
+  function saveBookingVariation(name) {
+    const booking = recipeBooking
+    const { recipe: before, variationId } = booking
+    runAction(async () => {
+      const existing = variationOf(before, variationId)
+      const body = JSON.stringify(
+        variationRequest(name ?? existing.name, booking.servingsText, booking.weightText, booking.items),
+      )
+      const variation = existing
+        ? await request(`${API.recipes}/${before.id}/variations/${existing.id}`, { method: 'PUT', body })
+        : await request(`${API.recipes}/${before.id}/variations`, { method: 'POST', body })
+      const recipe = {
+        ...before,
+        variations: existing
+          ? before.variations.map((other) => (other.id === variation.id ? variation : other))
+          : [...before.variations, variation],
+      }
+      setRecipeBooking({
+        ...bookingFor(recipe, variation.id),
+        unit: booking.unit,
+        quantityText: booking.quantityText,
+      })
+      setCatalogVersion((version) => version + 1)
+      setError(null)
+    })
+  }
+
+  // A recipe of somebody else becomes the user's own (private) recipe: either with the adjusted
+  // amounts as its original, or unchanged with the adjustments as its first variation.
+  function copyBookingRecipe({ name, asVariation, variationName }) {
+    const booking = recipeBooking
+    const { recipe: source } = booking
+    runAction(async () => {
+      const original = asVariation
+        ? { name, servingsText: String(source.servings), published: false, items: itemsOf(source, null) }
+        : { name, servingsText: booking.servingsText, published: false, items: booking.items }
+      let copy = await request(API.recipes, {
+        method: 'POST',
+        body: JSON.stringify(recipeRequest(original)),
+      })
+      let variationId = null
+      if (asVariation) {
+        const variation = await request(`${API.recipes}/${copy.id}/variations`, {
+          method: 'POST',
+          body: JSON.stringify(
+            variationRequest(variationName, booking.servingsText, booking.weightText, booking.items),
+          ),
+        })
+        copy = { ...copy, variations: [variation] }
+        variationId = variation.id
+      }
+      setRecipeBooking({
+        ...bookingFor(copy, variationId),
+        unit: booking.unit,
+        quantityText: booking.quantityText,
+        // the weight of the dish is not part of a recipe, only of variations
+        ...(asVariation ? {} : { weightText: booking.weightText }),
+      })
+      setNotice(`„${copy.name}“ ist jetzt dein eigenes Rezept.`)
+      setCatalogVersion((version) => version + 1)
+      setError(null)
+    })
   }
 
   function removeFromDraft(foodId) {
@@ -1756,7 +2316,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function submitMeal() {
     runAction(async () => {
-      await createOrUpdate(API.meals, draft.mealId, mealRequest(draft.entries))
+      await createOrUpdate(API.meals, draft.mealId, mealRequest(draft.entries, draft.recipeUses))
       setDraft(NEW_DRAFT)
       setView('list')
       await loadMeals()
@@ -1769,7 +2329,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
     // The saved amounts are the new baseline. Skip this if another meal was opened meanwhile.
     setDraft((current) =>
       current.mealId === mealId
-        ? { mealId, entries: entries.map((entry) => ({ ...entry, baseG: entry.amountG })) }
+        ? {
+            mealId,
+            entries: entries.map((entry) => ({ ...entry, baseG: entry.amountG })),
+            recipeUses: [],
+          }
         : current,
     )
   }
@@ -1874,7 +2438,16 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function openRecipe(recipe) {
     setNotice(null)
-    setRecipeEditor(recipe === null ? NEW_RECIPE : recipeDraftFrom(recipe))
+    setRecipeEditor(recipe === null ? NEW_EDITOR : editorFor(recipe))
+  }
+
+  function updateEditor(changes) {
+    setRecipeEditor((current) => ({ ...current, ...changes }))
+  }
+
+  // Switching drops unsaved changes: the editor starts over from the saved recipe.
+  function selectEditorVariation(variationId) {
+    setRecipeEditor((current) => editorFor(current.recipe, variationId))
   }
 
   function openRecipeSearch() {
@@ -1894,16 +2467,41 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function applyRecipeSearch() {
     const added = recipeSearch.entries
-    setRecipeEditor((current) => ({ ...current, items: mergeItems(current.items, added) }))
+    setRecipeEditor((current) => ({
+      ...current,
+      items: mergeEditorItems(current.items, added, current.variationId !== null),
+    }))
     setRecipeSearch(null)
   }
 
+  // A new recipe, or the variation shown in the editor.
   function saveRecipe() {
-    const recipe = recipeEditor
+    const editor = recipeEditor
+    if (editor.variationId === null) {
+      saveOriginal(false)
+      return
+    }
+    runAction(async () => {
+      await request(`${API.recipes}/${editor.id}/variations/${editor.variationId}`, {
+        method: 'PUT',
+        body: JSON.stringify(
+          variationRequest(editor.name, editor.servingsText, editor.weightText, editor.items),
+        ),
+      })
+      setRecipeEditor(null)
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
+  // Saves the original: a new recipe right away (unless it is published), an existing one only
+  // after confirming that it is overwritten.
+  function saveOriginal(overwrite) {
+    const editor = recipeEditor
     function save() {
       runAction(async () => {
         setConfirm(null)
-        await createOrUpdate(API.recipes, recipe.id, recipeRequest(recipe))
+        await createOrUpdate(API.recipes, editor.id, recipeRequest(editor))
         setRecipeEditor(null)
         reloadCatalog()
         setError(null)
@@ -1911,38 +2509,102 @@ function MealTracker({ user, onUserChange, onLogout }) {
     }
 
     // Publishing also publishes the user's private foods in it (done by the server).
-    const privateFoods = recipe.items
+    const privateFoods = editor.items
       .filter((item) => item.food.owned && !item.food.published)
       .map((item) => item.food.name)
-    if (!recipe.published || (recipe.wasPublished && privateFoods.length === 0)) {
+    const publishes = editor.published && (!editor.wasPublished || privateFoods.length > 0)
+    if (!overwrite && !publishes) {
       save()
       return
     }
+
+    const texts = []
+    if (overwrite) {
+      texts.push(
+        'Deine Änderungen ersetzen das Original' +
+          (editor.wasPublished ? ', auch für alle, die es öffentlich nutzen' : '') +
+          '. Deine Variationen übernehmen die geänderten Zutaten, soweit sie diese nicht selbst angepasst haben.',
+      )
+    }
+    if (publishes) {
+      texts.push(
+        (editor.wasPublished ? '' : 'Alle können das Rezept dann sehen und buchen, deine Variationen bleiben privat. ') +
+          (privateFoods.length > 0
+            ? `Dafür werden auch diese Lebensmittel von dir veröffentlicht: ${privateFoods.join(', ')}.`
+            : ''),
+      )
+    }
     setConfirm({
-      title: 'Rezept veröffentlichen?',
-      text:
-        'Alle können das Rezept dann sehen und buchen.' +
-        (privateFoods.length > 0
-          ? ` Dafür werden auch diese Lebensmittel von dir veröffentlicht: ${privateFoods.join(', ')}.`
-          : ''),
-      confirmLabel: 'Veröffentlichen',
-      tone: 'primary',
+      title: overwrite ? 'Original überschreiben?' : 'Rezept veröffentlichen?',
+      text: texts.join(' ').trim(),
+      confirmLabel: overwrite ? 'Überschreiben' : 'Veröffentlichen',
+      tone: overwrite ? 'danger' : 'primary',
       onConfirm: save,
     })
   }
 
+  // The changes made to the original become a new variation instead; the editor then shows it.
+  // Ingredients removed from the list are left out (0 g) in the variation.
+  function saveEditorAsVariation(name) {
+    const editor = recipeEditor
+    const { recipe } = editor
+    const shown = new Set(editor.items.map((item) => item.food.id))
+    const leftOut = recipe.items
+      .filter((item) => !shown.has(item.food.id))
+      .map((item) => ({ food: item.food, amountG: 0 }))
+    runAction(async () => {
+      const variation = await request(`${API.recipes}/${recipe.id}/variations`, {
+        method: 'POST',
+        body: JSON.stringify(
+          variationRequest(name, editor.servingsText, null, [...editor.items, ...leftOut]),
+        ),
+      })
+      setRecipeEditor(editorFor({ ...recipe, variations: [...recipe.variations, variation] }, variation.id))
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
+  // Deletes the variation shown in the editor (back to the original), or the whole recipe.
   function askDeleteRecipe() {
-    const recipe = recipeEditor
+    const editor = recipeEditor
+    if (editor.variationId !== null) {
+      setConfirm({
+        title: 'Variation löschen?',
+        text: `„${editor.recipe.variations.find((v) => v.id === editor.variationId).name}“ wird gelöscht. Das Original bleibt unverändert.`,
+        confirmLabel: 'Löschen',
+        onConfirm: () =>
+          runAction(async () => {
+            setConfirm(null)
+            await request(`${API.recipes}/${editor.id}/variations/${editor.variationId}`, {
+              method: 'DELETE',
+            })
+            const recipe = {
+              ...editor.recipe,
+              variations: editor.recipe.variations.filter((v) => v.id !== editor.variationId),
+              lastUsedVariationId:
+                editor.recipe.lastUsedVariationId === editor.variationId
+                  ? null
+                  : editor.recipe.lastUsedVariationId,
+            }
+            setRecipeEditor(editorFor(recipe))
+            reloadCatalog()
+            setError(null)
+          }),
+      })
+      return
+    }
     setConfirm({
       title: 'Rezept löschen?',
       text:
-        (recipe.wasPublished ? 'Danach kann es auch sonst niemand mehr buchen. ' : '') +
+        (editor.wasPublished ? 'Danach kann es auch sonst niemand mehr buchen. ' : '') +
+        (editor.recipe?.variations.length > 0 ? 'Alle Variationen werden mit gelöscht. ' : '') +
         'Bereits gebuchte Mahlzeiten bleiben unverändert.',
       confirmLabel: 'Löschen',
       onConfirm: () =>
         runAction(async () => {
           setConfirm(null)
-          await request(`${API.recipes}/${recipe.id}`, { method: 'DELETE' })
+          await request(`${API.recipes}/${editor.id}`, { method: 'DELETE' })
           setRecipeEditor(null)
           reloadCatalog()
           setError(null)
@@ -1977,9 +2639,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setNotice(null)
     if (confirm) setConfirm(null)
     else if (detail) setDetail(null)
+    else if (recipeBooking?.layer) updateBooking({ layer: null })
     else if (recipeBooking) setRecipeBooking(null)
     else if (recipeSearch?.previewing) setRecipeSearch({ ...recipeSearch, previewing: false })
     else if (recipeSearch) setRecipeSearch(null)
+    else if (recipeEditor?.layer) updateEditor({ layer: null })
     else if (recipeEditor) setRecipeEditor(null)
     else if (foodForm) setFoodForm(null)
     else if (view === 'preview') setView('search')
@@ -2030,11 +2694,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {(view === 'search' || view === 'preview') && (
         <FoodSearch
           visible={view === 'search' && !detail && !recipeBooking}
+          version={catalogVersion}
           draftCount={draft.entries.length}
           submitLabel={isEditing ? 'Mahlzeit speichern' : 'Mahlzeit hinzufügen'}
           onOpenFood={openFoodDetail}
           onAddFood={addToDraft}
-          onOpenRecipe={setRecipeBooking}
+          onOpenRecipe={openRecipeBooking}
           onAddRecipe={addRecipePortion}
           onPreview={() => setView('preview')}
           onSubmit={submitMeal}
@@ -2045,9 +2710,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
       {view === 'search' && recipeBooking && (
         <RecipeBooking
-          key={recipeBooking.id}
-          recipe={recipeBooking}
+          booking={recipeBooking}
+          onChange={updateBooking}
           onConfirm={confirmRecipeBooking}
+          onSaveVariation={saveBookingVariation}
+          onCopy={copyBookingRecipe}
           onClose={goBack}
         />
       )}
@@ -2092,10 +2759,13 @@ function MealTracker({ user, onUserChange, onLogout }) {
           )}
           {recipeEditor && !recipeSearch && (
             <RecipeEditor
-              draft={recipeEditor}
-              onChange={setRecipeEditor}
+              editor={recipeEditor}
+              onChange={updateEditor}
+              onSelectVariation={selectEditorVariation}
               onAddFoods={openRecipeSearch}
               onSave={saveRecipe}
+              onSaveAsVariation={saveEditorAsVariation}
+              onOverwrite={() => saveOriginal(true)}
               onDelete={askDeleteRecipe}
               onClose={goBack}
             />
