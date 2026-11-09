@@ -309,14 +309,12 @@ const iconProps = {
   'aria-hidden': true,
 }
 
-function FoodDbIcon() {
+function DatabaseIcon() {
   return (
-    <svg viewBox="0 0 48 24" width="48" {...iconProps}>
-      <path d="M12 8.2C10.8 7.2 9 6.8 7.4 7.4 5.2 8.2 4 10.3 4 12.8 4 16.6 6.6 21 9 21c1.2 0 1.8-.6 3-.6s1.8.6 3 .6c2.4 0 5-4.4 5-8.2 0-2.5-1.2-4.6-3.4-5.4-1.6-.6-3.4-.2-4.6.8z" />
-      <path d="M12 8.2C12 5.8 13 4.2 14.8 3" />
-      <ellipse cx="36" cy="6.5" rx="7" ry="2.8" />
-      <path d="M29 6.5v11c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8v-11" />
-      <path d="M29 12c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8" />
+    <svg viewBox="0 0 24 24" width="24" {...iconProps}>
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+      <path d="M4.5 5.5v13c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-13" />
+      <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
     </svg>
   )
 }
@@ -383,8 +381,9 @@ function PersonIcon() {
 function SealIcon() {
   return (
     <svg {...smallIconProps}>
-      <path d="M12 2.8l2.3 1.7 2.8-.2.9 2.7 2.3 1.6-.9 2.7.9 2.7-2.3 1.6-.9 2.7-2.8-.2L12 21.2l-2.3-1.7-2.8.2-.9-2.7-2.3-1.6.9-2.7-.9-2.7 2.3-1.6.9-2.7 2.8.2z" />
-      <path d="M8.8 12.2l2.2 2.2 4.2-4.6" />
+      {/* round seal: 12 even points around the centre */}
+      <path d="M12 2.4L14.07 4.27L16.8 3.69L17.66 6.34L20.31 7.2L19.73 9.93L21.6 12L19.73 14.07L20.31 16.8L17.66 17.66L16.8 20.31L14.07 19.73L12 21.6L9.93 19.73L7.2 20.31L6.34 17.66L3.69 16.8L4.27 14.07L2.4 12L4.27 9.93L3.69 7.2L6.34 6.34L7.2 3.69L9.93 4.27Z" />
+      <path d="M8.6 12.2l2.4 2.4 4.4-4.8" />
     </svg>
   )
 }
@@ -658,11 +657,11 @@ function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods, on
           <button
             type="button"
             className="tool-btn"
-            title="Lebensmitteldatenbank"
-            aria-label="Lebensmitteldatenbank"
+            title="Datenbank"
+            aria-label="Datenbank"
             onClick={onOpenFoods}
           >
-            <FoodDbIcon />
+            <DatabaseIcon />
           </button>
           <button
             type="button"

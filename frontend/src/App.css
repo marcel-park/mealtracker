@@ -179,14 +179,14 @@ select:focus-visible {
   width: 100%;
 }
 
-/* icon buttons in the toolbar of the main view */
+/* square icon buttons in the toolbar of the main view */
 .tool-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
+  width: 44px;
   height: 44px;
-  padding: 0 10px;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
