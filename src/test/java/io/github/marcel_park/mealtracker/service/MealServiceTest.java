@@ -4,6 +4,7 @@ import io.github.marcel_park.mealtracker.dto.MealItemRequest;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
+import io.github.marcel_park.mealtracker.dto.RecipeUseRequest;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.Meal;
@@ -46,6 +47,9 @@ class MealServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private RecipeService recipeService;
+
     private MealService service;
 
     // The logged-in user on whose behalf every call is made.
@@ -58,7 +62,7 @@ class MealServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MealService(mealRepository, foodService, userRepository);
+        service = new MealService(mealRepository, foodService, userRepository, recipeService);
     }
 
     // ---------- test data ----------
@@ -196,8 +200,8 @@ class MealServiceTest {
 
         @Test
         void create_savesNewMealWithTitleAndItemsInRequestOrder() {
-            when(foodService.getEntity(1L)).thenReturn(oats);
-            when(foodService.getEntity(2L)).thenReturn(milk);
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
+            when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(milk);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
 
             service.create(USER_ID, request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
@@ -217,7 +221,7 @@ class MealServiceTest {
             User owner = new User();
             owner.setId(USER_ID);
             when(userRepository.getReferenceById(USER_ID)).thenReturn(owner);
-            when(foodService.getEntity(1L)).thenReturn(oats);
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
 
             service.create(USER_ID, request("Haferflocken", item(1L, 150)));
@@ -228,8 +232,19 @@ class MealServiceTest {
         }
 
         @Test
+        void create_passesBookedRecipesOnForThePreselection() {
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
+            when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
+            List<RecipeUseRequest> uses = List.of(new RecipeUseRequest(5L, 9L));
+
+            service.create(USER_ID, new MealRequest("Porridge", List.of(item(1L, 150)), uses));
+
+            verify(recipeService).markUsed(USER_ID, uses);
+        }
+
+        @Test
         void create_returnsResponseWithIdFromRepositoryAndComputedKcal() {
-            when(foodService.getEntity(1L)).thenReturn(oats);
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> {
                 Meal saved = inv.getArgument(0);
                 saved.setId(42L);
@@ -245,7 +260,7 @@ class MealServiceTest {
 
         @Test
         void create_unknownFood_throwsNotFoundAndSavesNothing() {
-            when(foodService.getEntity(99L)).thenThrow(new NotFoundException("Food", 99L));
+            when(foodService.getVisibleEntity(USER_ID, 99L)).thenThrow(new NotFoundException("Food", 99L));
 
             assertThatThrownBy(() -> service.create(USER_ID, request("Unbekannt", item(99L, 50))))
                     .isInstanceOf(NotFoundException.class)
@@ -272,6 +287,17 @@ class MealServiceTest {
             existing.addItem(milk, 200);
             oatsItem = existing.getItems().get(0);
             milkItem = existing.getItems().get(1);
+        }
+
+        @Test
+        void update_passesBookedRecipesOnForThePreselection() {
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+            List<RecipeUseRequest> uses = List.of(new RecipeUseRequest(5L, null));
+
+            service.update(USER_ID, 1L,
+                    new MealRequest("Haferflocken, Milch", List.of(item(1L, 150), item(2L, 200)), uses));
+
+            verify(recipeService).markUsed(USER_ID, uses);
         }
 
         @Test
@@ -343,7 +369,7 @@ class MealServiceTest {
         @Test
         void update_newFood_appendsItemAfterKeptItems() {
             when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
-            when(foodService.getEntity(3L)).thenReturn(apple);
+            when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(apple);
 
             // the new food comes first in the request, but kept items keep their position
             service.update(USER_ID, 1L, request("Apfel, Haferflocken, Milch", item(3L, 120), item(1L, 150), item(2L, 200)));
@@ -356,8 +382,8 @@ class MealServiceTest {
         @Test
         void update_severalNewFoods_addsThemInRequestOrder() {
             when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
-            when(foodService.getEntity(4L)).thenReturn(cheese);
-            when(foodService.getEntity(3L)).thenReturn(apple);
+            when(foodService.getVisibleEntity(USER_ID, 4L)).thenReturn(cheese);
+            when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(apple);
 
             service.update(USER_ID, 1L, request("Gouda, Apfel", item(4L, 30), item(3L, 120)));
 
@@ -380,20 +406,20 @@ class MealServiceTest {
         void update_sameNewFoodTwice_addsOneItemWithSummedAmount() {
             // a meal can hold each food only once (primary key), so duplicates are merged
             when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
-            when(foodService.getEntity(3L)).thenReturn(apple);
+            when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(apple);
 
             service.update(USER_ID, 1L, request("Apfel", item(3L, 70), item(3L, 50)));
 
             assertThat(existing.getItems())
                     .extracting(MealItem::getFood, MealItem::getAmountG)
                     .containsExactly(tuple(apple, 120.0));
-            verify(foodService).getEntity(3L);
+            verify(foodService).getVisibleEntity(USER_ID, 3L);
         }
 
         @Test
         void update_unknownFood_throwsNotFound() {
             when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
-            when(foodService.getEntity(99L)).thenThrow(new NotFoundException("Food", 99L));
+            when(foodService.getVisibleEntity(USER_ID, 99L)).thenThrow(new NotFoundException("Food", 99L));
 
             assertThatThrownBy(() -> service.update(USER_ID, 1L, request("Unbekannt", item(99L, 50))))
                     .isInstanceOf(NotFoundException.class)

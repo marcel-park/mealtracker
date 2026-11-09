@@ -1,6 +1,8 @@
 package io.github.marcel_park.mealtracker.controller;
 
+import io.github.marcel_park.mealtracker.dto.CatalogScope;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
@@ -32,7 +34,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-// The food database is shared by all users, but only logged-in users may use it.
+// Only logged-in users may use the food database. Every call passes on the id of the logged-in
+// user (1, see @WithCurrentUser): what they may see and change is decided by FoodService.
 @WebMvcTest(FoodController.class)
 @Import({SecurityConfig.class, CorsConfig.class})
 @WithCurrentUser
@@ -50,13 +53,13 @@ class FoodControllerTest {
     private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
-            {"name":"Haferflocken","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":7}
+            {"name":"Haferflocken","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":7,"published":false}
             """;
 
     @Test
     void list_returnsFoodsAsJson() throws Exception {
-        when(service.find(null)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7)));
+        when(service.find(1L, null, null)).thenReturn(List.of(
+                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, true, false, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(status().isOk())
@@ -66,7 +69,7 @@ class FoodControllerTest {
 
     @Test
     void get_unknownId_returns404WithErrorBody() throws Exception {
-        when(service.get(999L)).thenThrow(new NotFoundException("Food", 999L));
+        when(service.get(1L, 999L)).thenThrow(new NotFoundException("Food", 999L));
 
         mockMvc.perform(get("/api/foods/999"))
                 .andExpect(status().isNotFound())
@@ -84,8 +87,8 @@ class FoodControllerTest {
 
     @Test
     void create_validRequest_returns201WithBody() throws Exception {
-        when(service.create(any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7));
+        when(service.create(eq(1L), any())).thenReturn(
+                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, true, false, false));
 
         mockMvc.perform(post("/api/foods")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -122,8 +125,8 @@ class FoodControllerTest {
 
     @Test
     void update_validRequest_returns200() throws Exception {
-        when(service.update(any(), any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7));
+        when(service.update(any(), any(), any())).thenReturn(
+                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, true, false, false));
 
         mockMvc.perform(put("/api/foods/1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -137,14 +140,14 @@ class FoodControllerTest {
         mockMvc.perform(delete("/api/foods/1"))
                 .andExpect(status().isNoContent());
 
-        verify(service).delete(1L);
+        verify(service).delete(1L, 1L);
     }
 
     // ---------- GET /api/foods/{id}, GET /api/foods?query= ----------
 
     @Test
     void get_existingId_returnsAllFieldsAsJson() throws Exception {
-        when(service.get(1L)).thenReturn(new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7));
+        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, true, false, false));
 
         mockMvc.perform(get("/api/foods/1"))
                 .andExpect(status().isOk())
@@ -161,7 +164,7 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("query", "hafer"))
                 .andExpect(status().isOk());
 
-        verify(service).find("hafer");
+        verify(service).find(1L, "hafer", null);
     }
 
     // ---------- PUT /api/foods/{id} ----------
@@ -169,7 +172,7 @@ class FoodControllerTest {
     @Test
     void update_invalidRequest_returns400WithFieldErrorsAndDoesNotCallService() throws Exception {
         String invalid = """
-                {"name":"   ","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":-1}
+                {"name":"   ","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":-1,"published":false}
                 """;
 
         mockMvc.perform(put("/api/foods/1")
@@ -184,7 +187,7 @@ class FoodControllerTest {
 
     @Test
     void update_unknownId_returns404WithErrorBody() throws Exception {
-        when(service.update(eq(999L), any())).thenThrow(new NotFoundException("Food", 999L));
+        when(service.update(eq(1L), eq(999L), any())).thenThrow(new NotFoundException("Food", 999L));
 
         mockMvc.perform(put("/api/foods/999")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -198,7 +201,7 @@ class FoodControllerTest {
 
     @Test
     void delete_unknownId_returns404WithErrorBody() throws Exception {
-        doThrow(new NotFoundException("Food", 999L)).when(service).delete(999L);
+        doThrow(new NotFoundException("Food", 999L)).when(service).delete(1L, 999L);
 
         mockMvc.perform(delete("/api/foods/999"))
                 .andExpect(status().isNotFound())
@@ -206,11 +209,60 @@ class FoodControllerTest {
                 .andExpect(jsonPath("$.message").value("Food with id 999 not found"));
     }
 
+    // ---------- scope filter and ownership ----------
+
+    @Test
+    void list_withScope_passesScopeToService() throws Exception {
+        mockMvc.perform(get("/api/foods").param("scope", "OWN"))
+                .andExpect(status().isOk());
+
+        verify(service).find(1L, null, CatalogScope.OWN);
+    }
+
+    @Test
+    void list_unknownScope_returns400() throws Exception {
+        mockMvc.perform(get("/api/foods").param("scope", "FRIENDS"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Invalid value for parameter 'scope'"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void list_returnsOwnershipFlags() throws Exception {
+        when(service.find(1L, null, null)).thenReturn(List.of(
+                new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, false, true, false)));
+
+        mockMvc.perform(get("/api/foods"))
+                .andExpect(jsonPath("$[0].owned").value(false))
+                .andExpect(jsonPath("$[0].published").value(true))
+                .andExpect(jsonPath("$[0].confirmed").value(false));
+    }
+
+    @Test
+    void update_foodOfOtherUser_returns403() throws Exception {
+        when(service.update(eq(1L), eq(5L), any())).thenThrow(new ForbiddenException("Food", 5L));
+
+        mockMvc.perform(put("/api/foods/5")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403));
+    }
+
+    @Test
+    void delete_foodOfOtherUser_returns403() throws Exception {
+        doThrow(new ForbiddenException("Food", 5L)).when(service).delete(1L, 5L);
+
+        mockMvc.perform(delete("/api/foods/5"))
+                .andExpect(status().isForbidden());
+    }
+
     // ---------- FoodRequest validation (POST) ----------
 
     private static String body(String name, String kcalPer100g, String protein, String carbs, String fat) {
         return """
-                {"name":%s,"kcalPer100g":%s,"protein":%s,"carbs":%s,"fat":%s}
+                {"name":%s,"kcalPer100g":%s,"protein":%s,"carbs":%s,"fat":%s,"published":false}
                 """.formatted(name, kcalPer100g, protein, carbs, fat);
     }
 
@@ -228,7 +280,10 @@ class FoodControllerTest {
                 Arguments.of("null kcalPer100g", body("\"Haferflocken\"", "null", "13.5", "58.7", "7"), "kcalPer100g"),
                 Arguments.of("null protein", body("\"Haferflocken\"", "372", "null", "58.7", "7"), "protein"),
                 Arguments.of("null carbs", body("\"Haferflocken\"", "372", "13.5", "null", "7"), "carbs"),
-                Arguments.of("null fat", body("\"Haferflocken\"", "372", "13.5", "58.7", "null"), "fat"));
+                Arguments.of("null fat", body("\"Haferflocken\"", "372", "13.5", "58.7", "null"), "fat"),
+                Arguments.of("published missing", """
+                        {"name":"Haferflocken","kcalPer100g":372,"protein":13.5,"carbs":58.7,"fat":7}
+                        """, "published"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -260,6 +315,6 @@ class FoodControllerTest {
                         .content(body))
                 .andExpect(status().isCreated());
 
-        verify(service).create(any());
+        verify(service).create(eq(1L), any());
     }
 }
