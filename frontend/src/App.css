@@ -19,6 +19,7 @@
   --radius-lg: 14px;
   --icon-button-size: 40px;
   --search-height: 48px;
+  --filter-height: 40px;
 
   color-scheme: light dark;
 }
@@ -82,7 +83,8 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
-button:disabled {
+button:disabled,
+select:disabled {
   opacity: 0.45;
 }
 
@@ -96,7 +98,8 @@ input {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -112,7 +115,7 @@ input:focus-visible {
 
 /* Headers stick to the top, so only the list below them scrolls */
 .list-head,
-.search,
+.search-head,
 .topbar {
   position: sticky;
   top: 0;
@@ -191,6 +194,13 @@ input:focus-visible {
 }
 
 .tool-btn.danger {
+  color: var(--danger);
+}
+
+/* destructive action next to a primary one: outlined only, so the primary stays the eye-catcher */
+.btn.danger-outline {
+  border-color: var(--danger);
+  background: none;
   color: var(--danger);
 }
 
@@ -320,6 +330,14 @@ input:focus-visible {
   color: var(--muted);
 }
 
+.notice {
+  margin: 16px 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
 .error {
   margin: 16px 0 12px;
   padding: 10px 14px;
@@ -328,28 +346,168 @@ input:focus-visible {
   color: var(--on-accent);
 }
 
-/* ----- Search bar ----- */
+/* ----- Search bar and filter row ----- */
+
+.search-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 .search {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .search input {
   flex: 1;
+  min-width: 0;
   height: var(--search-height);
 }
 
-/* the "+" next to the search field is a square as tall as the field */
-.search .add {
+/* the "×" left of the search field: outlined, as tall as the field */
+.frame-btn {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: var(--search-height);
   height: var(--search-height);
-  margin-left: 4px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+}
+
+.frame-btn:active {
+  border-color: var(--muted);
+  background: var(--line);
+}
+
+/* filter buttons on the left, kind select (and "+") on the right */
+.catalog-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--filter-height);
+}
+
+/* scrolls sideways when the screen is too narrow for all filters */
+.filter-pills {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* fades out at the right edge, so cut-off filters read as "scroll for more" */
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  padding-right: 20px;
+}
+
+.filter-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.pill[aria-pressed='true'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* on small phones the words matter more than the icons */
+@media (max-width: 419px) {
+  .pill svg {
+    display: none;
+  }
+
+  .pill {
+    padding: 0 10px;
+    font-size: 0.8rem;
+  }
+
+  .filter-pills {
+    gap: 5px;
+  }
+
+  .catalog-filter .select-box select {
+    padding: 0 28px 0 10px;
+    font-size: 0.85rem;
+  }
+
+  .catalog-filter .select-box svg {
+    right: 8px;
+  }
+}
+
+.filter-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-filter .add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--filter-height);
+  height: var(--filter-height);
+}
+
+/* native select with a line chevron instead of the browser's arrow */
+.select-box {
+  position: relative;
+  display: inline-flex;
+}
+
+.select-box select {
+  appearance: none;
+  height: var(--filter-height);
+  padding: 0 32px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.select-box svg {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* lock behind the name of entries only the owner can see */
+.private-mark {
+  display: inline-flex;
+  margin-left: 6px;
+  color: var(--muted);
+  vertical-align: -1px;
 }
 
 /* ----- Top bar ----- */
@@ -379,6 +537,18 @@ input:focus-visible {
 }
 
 /* ----- Form fields ----- */
+
+/* groups fields only to disable them together (read-only forms) */
+fieldset.plain {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+fieldset.plain:disabled input {
+  opacity: 0.75;
+}
 
 .field {
   display: flex;
@@ -588,4 +758,106 @@ input:focus-visible {
 
 .field .hint.warning {
   color: var(--danger);
+}
+
+/* ----- Recipes: editor and booking ----- */
+
+.read-only-hint,
+.switch-hint {
+  margin: -4px 0 16px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 24px 0 8px;
+}
+
+.section-head h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.section-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* "Lebensmittel hinzufügen" below the ingredient list */
+.btn.add-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  border-style: dashed;
+  background: none;
+}
+
+.book-amount .select-box {
+  align-self: stretch;
+}
+
+.book-amount .select-box select {
+  height: 100%;
+  font-size: 1.1rem;
+}
+
+.book-amount input {
+  min-width: 0;
+}
+
+.book-result {
+  margin: 0 0 8px;
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
+
+/* gram input inside an ingredient row of the booking view */
+.amount-input {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.amount-input input {
+  width: 84px;
+  padding: 8px 10px;
+  text-align: right;
+  appearance: textfield;
+}
+
+.amount-input input::-webkit-inner-spin-button,
+.amount-input input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.wrap-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

@@ -14,8 +14,18 @@ import {
   saveSession,
   setUnauthorizedHandler,
 } from './api.js'
+import {
+  convertQuantity,
+  kcalOf,
+  onePortion,
+  roundToOneDecimal,
+  scaleItems,
+  shareOf,
+  totalsOf,
+} from './recipes.js'
 
 const SEARCH_PARAM = 'query'
+const SCOPE_PARAM = 'scope'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
@@ -36,16 +46,53 @@ const COLOR_THEMES = [
 ]
 
 // The meal being put together; mealId is null for a new meal.
-// Entries are { food, amountG, baseG }. baseG is the amount already saved in the meal,
-// so amountG - baseG is what the preview shows as "+X g".
+// Entries are { food, amountG, baseG, labels }. baseG is the amount already saved in the meal,
+// so amountG - baseG is what the preview shows as "+X g". labels are what the entry was added as
+// (the food's own name, or the names of the recipes it came with); they make up the meal title.
 const NEW_DRAFT = { mealId: null, entries: [] }
 
-const NEW_FOOD = { id: null }
+const NEW_FOOD = { id: null, owned: true, published: false }
 
-function fetchFoods(query, signal) {
+// The recipe in the recipe editor. Items are { food, amountG }; their amounts cannot be changed
+// once added, only removed and added again.
+const NEW_RECIPE = {
+  id: null,
+  owned: true,
+  name: '',
+  servingsText: '1',
+  published: false,
+  wasPublished: false,
+  items: [],
+}
+
+// The two kinds of entries in the search, and the filters that apply to both.
+const KIND_FOODS = 'foods'
+const KIND_RECIPES = 'recipes'
+const CATALOG_KINDS = [
+  { value: KIND_FOODS, label: 'Lebensmittel' },
+  { value: KIND_RECIPES, label: 'Rezepte' },
+]
+const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes }
+
+// At most one filter is active; without one the search shows everything the user may see
+// (own entries, private ones included, and all public ones). Values as the backend expects them.
+const SCOPE_FILTERS = [
+  { value: 'PUBLIC', label: 'Öffentlich', Icon: GlobeIcon },
+  { value: 'OWN', label: 'Eigene', Icon: PersonIcon },
+  { value: 'CONFIRMED', label: 'Bestätigt', Icon: SealIcon, disabled: true }, // nobody confirms yet
+  { value: 'FRIENDS', label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
+]
+
+const UNIT_PORTION = 'portion'
+const UNIT_GRAM = 'gram'
+
+function fetchCatalog(kind, query, scope, signal) {
+  const params = new URLSearchParams()
   const search = query.trim()
-  const url = search ? `${API.foods}?${SEARCH_PARAM}=${encodeURIComponent(search)}` : API.foods
-  return request(url, { signal })
+  if (search) params.set(SEARCH_PARAM, search)
+  if (scope) params.set(SCOPE_PARAM, scope)
+  const paramText = params.toString()
+  return request(paramText ? `${KIND_URLS[kind]}?${paramText}` : KIND_URLS[kind], { signal })
 }
 
 // Records without an id yet are created (POST), existing ones are replaced (PUT /{id}).
@@ -57,15 +104,19 @@ function createOrUpdate(url, id, data) {
 }
 
 function mealRequest(entries) {
+  const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
   return {
-    title: makeTitle(entries.map((entry) => entry.food.name)),
+    title: makeTitle(labels),
     items: entries.map((entry) => ({ foodId: entry.food.id, amountG: entry.amountG })),
   }
 }
 
-const roundToOneDecimal = (n) => Math.round(n * 10) / 10
-
 const toText = (value) => String(value ?? '')
+
+const formatNumber = (n) => roundToOneDecimal(n).toLocaleString(LOCALE)
+const formatKcal = (kcal) => `${Math.round(kcal).toLocaleString(LOCALE)} kcal`
+const formatServings = (servings) =>
+  `${formatNumber(servings)} ${servings === 1 ? 'Portion' : 'Portionen'}`
 
 // e.g. "Apfel, Banane, Brot +2"
 function makeTitle(names) {
@@ -75,24 +126,75 @@ function makeTitle(names) {
   return title.slice(0, MAX_TITLE_LENGTH)
 }
 
-function addAmount(entries, food, amountG) {
+// label: what the amount is added as, see NEW_DRAFT. Defaults to the food itself.
+function addAmount(entries, food, amountG, label = food.name) {
   if (!entries.some((entry) => entry.food.id === food.id)) {
-    return [...entries, { food, amountG, baseG: 0 }]
+    return [...entries, { food, amountG, baseG: 0, labels: [label] }]
   }
   return entries.map((entry) =>
     entry.food.id === food.id
-      ? { ...entry, amountG: roundToOneDecimal(entry.amountG + amountG) }
+      ? {
+          ...entry,
+          amountG: roundToOneDecimal(entry.amountG + amountG),
+          labels: entry.labels.includes(label) ? entry.labels : [...entry.labels, label],
+        }
       : entry,
   )
 }
 
+// A booked recipe: all its (scaled) foods, labelled with the recipe name.
+function addRecipeItems(entries, items, recipeName) {
+  return items
+    .filter((item) => item.amountG > 0)
+    .reduce((result, item) => addAmount(result, item.food, item.amountG, recipeName), entries)
+}
+
 // Meal items only carry the kcal of their amount, so the value per 100 g is derived from it.
-function entryFromMealItem(item) {
-  const kcalPer100g = item.amountG > 0 ? (item.kcal / item.amountG) * 100 : 0
+// A meal whose title is not the one made from its foods was booked from a recipe (or several):
+// its items keep that title as their label, so it survives editing the meal.
+function entriesFromMeal(meal) {
+  const titleFromFoods = makeTitle(meal.items.map((item) => item.foodName))
+  const keepsTitle = meal.title !== titleFromFoods
+  return meal.items.map((item) => {
+    const kcalPer100g = item.amountG > 0 ? (item.kcal / item.amountG) * 100 : 0
+    return {
+      food: { id: item.foodId, name: item.foodName, kcalPer100g },
+      amountG: item.amountG,
+      baseG: item.amountG,
+      labels: [keepsTitle ? meal.title : item.foodName],
+    }
+  })
+}
+
+// Same food twice: the amounts are added up, like in the backend.
+function mergeItems(items, added) {
+  const merged = items.map((item) => ({ ...item }))
+  for (const { food, amountG } of added) {
+    const existing = merged.find((item) => item.food.id === food.id)
+    if (existing) existing.amountG = roundToOneDecimal(existing.amountG + amountG)
+    else merged.push({ food, amountG })
+  }
+  return merged
+}
+
+function recipeDraftFrom(recipe) {
   return {
-    food: { id: item.foodId, name: item.foodName, kcalPer100g },
-    amountG: item.amountG,
-    baseG: item.amountG,
+    id: recipe.id,
+    owned: recipe.owned,
+    name: recipe.name,
+    servingsText: String(recipe.servings),
+    published: recipe.published,
+    wasPublished: recipe.published,
+    items: recipe.items.map((item) => ({ food: item.food, amountG: item.amountG })),
+  }
+}
+
+function recipeRequest(draft) {
+  return {
+    name: draft.name.trim(),
+    servings: parseFloat(draft.servingsText),
+    published: draft.published,
+    items: draft.items.map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
   }
 }
 
@@ -137,26 +239,105 @@ function AvatarIcon() {
   )
 }
 
-function PlusIcon() {
+function PlusIcon({ size = 24 }) {
   return (
-    <svg viewBox="0 0 24 24" width="24" {...iconProps} strokeWidth={2.4}>
+    <svg viewBox="0 0 24 24" width={size} {...iconProps} height={size} strokeWidth={2.4}>
       <path d="M12 5v14" />
       <path d="M5 12h14" />
     </svg>
   )
 }
 
-// Foods matching `query`, loaded once typing pauses. Returns [foods, reload].
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" {...iconProps} height="22">
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </svg>
+  )
+}
+
+// Small monochrome line icons of the filter buttons, the unit selects and the "private" mark.
+const smallIconProps = { ...iconProps, width: 16, height: 16, viewBox: '0 0 24 24' }
+
+function GlobeIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" />
+    </svg>
+  )
+}
+
+function PersonIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 20.5c1.4-3.6 4.2-5.5 7.5-5.5s6.1 1.9 7.5 5.5" />
+    </svg>
+  )
+}
+
+function SealIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <path d="M12 2.8l2.3 1.7 2.8-.2.9 2.7 2.3 1.6-.9 2.7.9 2.7-2.3 1.6-.9 2.7-2.8-.2L12 21.2l-2.3-1.7-2.8.2-.9-2.7-2.3-1.6.9-2.7-.9-2.7 2.3-1.6.9-2.7 2.8.2z" />
+      <path d="M8.8 12.2l2.2 2.2 4.2-4.6" />
+    </svg>
+  )
+}
+
+function PeopleIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <circle cx="9" cy="8.5" r="3.5" />
+      <path d="M2.5 20c1.1-3.2 3.4-5 6.5-5s5.4 1.8 6.5 5" />
+      <path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6" />
+      <path d="M17.8 15.4c1.7.7 3 2.3 3.7 4.6" />
+    </svg>
+  )
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
+function LockIcon() {
+  return (
+    <svg {...smallIconProps} width="13" height="13" strokeWidth={2}>
+      <rect x="5" y="11" width="14" height="9.5" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+// Marks entries only the owner can see.
+function PrivateMark({ entry }) {
+  if (entry.published) return null
+  return (
+    <span className="private-mark" title="Privat" aria-label="privat">
+      <LockIcon />
+    </span>
+  )
+}
+
+// Foods or recipes (kind) matching `query` and the filter `scope`, loaded once typing pauses.
+// A change of `version` loads them again, e.g. after something was saved.
 // onError must be stable (e.g. a state setter), otherwise every render restarts the request.
-function useFoods(query, onError) {
-  const [foods, setFoods] = useState([])
-  const [reloadKey, setReloadKey] = useState(0)
+function useCatalog(kind, query, scope, version, onError) {
+  // Results remember their kind: right after switching, the old list must not be shown as the new kind.
+  const [result, setResult] = useState({ kind, entries: [] })
 
   useEffect(() => {
     const controller = new AbortController()
     const timer = setTimeout(async () => {
       try {
-        setFoods(await fetchFoods(query, controller.signal))
+        setResult({ kind, entries: await fetchCatalog(kind, query, scope, controller.signal) })
         onError(null)
       } catch (error) {
         if (!controller.signal.aborted) onError(error.message)
@@ -167,10 +348,9 @@ function useFoods(query, onError) {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [query, reloadKey, onError])
+  }, [kind, query, scope, version, onError])
 
-  const reload = () => setReloadKey((key) => key + 1)
-  return [foods, reload]
+  return result.kind === kind ? result.entries : []
 }
 
 // Runs one backend action at a time: clicks while a request is still running are ignored
@@ -203,6 +383,15 @@ function CrossButton({ label, onClick }) {
   )
 }
 
+// The "×" left of a search field: outlined square, as tall as the field.
+function FramedCloseButton({ label, onClick }) {
+  return (
+    <button type="button" className="frame-btn" title={label} aria-label={label} onClick={onClick}>
+      <CloseIcon />
+    </button>
+  )
+}
+
 function TopBar({ title, closeLabel, onClose, centered = false }) {
   return (
     <div className={centered ? 'topbar centered' : 'topbar'}>
@@ -212,25 +401,112 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
   )
 }
 
-function SearchBar({ query, onQueryChange, closeLabel, onClose, children }) {
+// Search field with the filter row below it. Both stick to the top while the list scrolls.
+// children: extra buttons right of the kind select (the "+" of the food database).
+function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked = false, children }) {
+  const { query, scope, kind } = search
+  const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
+
   return (
-    <div className="search">
-      <CrossButton label={closeLabel} onClick={onClose} />
-      <input
-        type="search"
-        placeholder="Lebensmittel suchen"
-        aria-label="Lebensmittel suchen"
-        autoComplete="off"
-        autoFocus
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-      />
-      {children}
+    <div className="search-head">
+      <div className="search">
+        <FramedCloseButton label={closeLabel} onClick={onClose} />
+        <input
+          type="search"
+          placeholder={placeholder}
+          aria-label={placeholder}
+          autoComplete="off"
+          autoFocus
+          value={query}
+          onChange={(event) => onSearchChange({ ...search, query: event.target.value })}
+        />
+      </div>
+      <div className="catalog-filter">
+        <div className="filter-pills" role="group" aria-label="Filter">
+          {SCOPE_FILTERS.map(({ value, label, Icon, disabled }) => (
+            <button
+              key={value}
+              type="button"
+              className="pill"
+              aria-pressed={scope === value}
+              disabled={disabled}
+              title={disabled ? `${label}: kommt bald` : undefined}
+              onClick={() => onSearchChange({ ...search, scope: scope === value ? null : value })}
+            >
+              <Icon />
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="filter-end">
+          <SelectBox
+            label="Art"
+            value={kindLocked ? KIND_FOODS : kind}
+            options={CATALOG_KINDS}
+            disabled={kindLocked}
+            onChange={(value) => onSearchChange({ ...search, kind: value })}
+          />
+          {children}
+        </div>
+      </div>
     </div>
   )
 }
 
-function ConfirmDialog({ title, text, confirmLabel, onConfirm, onClose }) {
+const NEW_SEARCH = { query: '', scope: null, kind: KIND_FOODS }
+
+// A native select (for the phone's own picker) with a monochrome chevron.
+function SelectBox({ label, value, options, disabled = false, className = '', onChange }) {
+  return (
+    <span className={`select-box ${className}`}>
+      <select
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDownIcon />
+    </span>
+  )
+}
+
+// Two-option switch between private and public.
+function VisibilitySwitch({ published, disabled = false, onChange }) {
+  const labelId = useId()
+  const options = [
+    { value: false, label: 'Privat' },
+    { value: true, label: 'Öffentlich' },
+  ]
+  return (
+    <div className="field">
+      <span id={labelId}>Sichtbarkeit</span>
+      <div className="segmented" role="radiogroup" aria-labelledby={labelId}>
+        {options.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            role="radio"
+            aria-checked={published === option.value}
+            className={published === option.value ? 'selected' : undefined}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// tone: 'danger' for destructive actions, 'primary' otherwise.
+function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, onClose }) {
   const titleId = useId()
   const textId = useId()
 
@@ -262,7 +538,7 @@ function ConfirmDialog({ title, text, confirmLabel, onConfirm, onClose }) {
           <button type="button" className="btn" autoFocus onClick={onClose}>
             Abbrechen
           </button>
-          <button type="button" className="btn danger" onClick={onConfirm}>
+          <button type="button" className={`btn ${tone}`} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>
@@ -351,30 +627,54 @@ function MealRow({ meal, onEdit, onDelete }) {
   )
 }
 
+// The search behind "Mahlzeit buchen", and the one that adds foods to a recipe (kindLocked:
+// recipes cannot contain recipes). Stays mounted while hidden, so search and filter survive.
 function FoodSearch({
   visible,
+  kindLocked = false,
   draftCount,
   submitLabel,
+  closeLabel = 'Abbrechen',
   onOpenFood,
   onAddFood,
+  onOpenRecipe,
+  onAddRecipe,
   onPreview,
   onSubmit,
   onClose,
   onError,
 }) {
-  const [query, setQuery] = useState('')
-  const [foods] = useFoods(query, onError)
+  const [search, setSearch] = useState(NEW_SEARCH)
+  const kind = kindLocked ? KIND_FOODS : search.kind
+  const entries = useCatalog(kind, search.query, search.scope, 0, onError)
 
   return (
     <section hidden={!visible}>
-      <SearchBar query={query} onQueryChange={setQuery} closeLabel="Abbrechen" onClose={onClose} />
-      {foods.length === 0 ? (
-        <p className="empty">Kein Lebensmittel gefunden.</p>
+      <CatalogHeader
+        search={search}
+        onSearchChange={setSearch}
+        kindLocked={kindLocked}
+        closeLabel={closeLabel}
+        onClose={onClose}
+      />
+      {entries.length === 0 ? (
+        <p className="empty">
+          {kind === KIND_RECIPES ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}
+        </p>
       ) : (
         <div className="rows">
-          {foods.map((food) => (
-            <FoodSearchRow key={food.id} food={food} onOpen={onOpenFood} onAdd={onAddFood} />
-          ))}
+          {kind === KIND_RECIPES
+            ? entries.map((recipe) => (
+                <RecipeSearchRow
+                  key={recipe.id}
+                  recipe={recipe}
+                  onOpen={onOpenRecipe}
+                  onAdd={onAddRecipe}
+                />
+              ))
+            : entries.map((food) => (
+                <FoodSearchRow key={food.id} food={food} onOpen={onOpenFood} onAdd={onAddFood} />
+              ))}
         </div>
       )}
       <div className="bar">
@@ -394,7 +694,8 @@ function FoodSearch({
   )
 }
 
-function FoodSearchRow({ food, onOpen, onAdd }) {
+// The "+" of a search row, showing ✓ for a moment after a click.
+function QuickAddButton({ label, onAdd }) {
   const [justAdded, setJustAdded] = useState(false)
 
   useEffect(() => {
@@ -404,24 +705,65 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
   }, [justAdded])
 
   function add() {
-    onAdd(food, DEFAULT_AMOUNT_G)
+    onAdd()
     setJustAdded(true)
   }
 
   return (
+    <button type="button" className="add" aria-label={label} onClick={add}>
+      {justAdded ? '✓' : '+'}
+    </button>
+  )
+}
+
+function FoodSearchRow({ food, onOpen, onAdd }) {
+  return (
     <div className="row">
       <button type="button" className="row-open wrap" onClick={() => onOpen(food)}>
         <span className="main">
-          <span className="name">{food.name}</span>
+          <span className="name">
+            {food.name}
+            <PrivateMark entry={food} />
+          </span>
           <span className="sub">
             <KcalPer100g kcal={food.kcalPer100g} />
           </span>
         </span>
         <span className="amount">{`${DEFAULT_AMOUNT_G} g`}</span>
       </button>
-      <button type="button" className="add" aria-label={`${food.name} hinzufügen`} onClick={add}>
-        {justAdded ? '✓' : '+'}
+      <QuickAddButton
+        label={`${food.name} hinzufügen`}
+        onAdd={() => onAdd(food, DEFAULT_AMOUNT_G)}
+      />
+    </div>
+  )
+}
+
+function RecipeSummary({ recipe }) {
+  return (
+    <>
+      {formatKcal(recipe.kcal / recipe.servings)} pro Portion · {formatServings(recipe.servings)}
+    </>
+  )
+}
+
+// "+" books one portion as saved in the recipe; the row itself opens the booking view.
+function RecipeSearchRow({ recipe, onOpen, onAdd }) {
+  return (
+    <div className="row">
+      <button type="button" className="row-open wrap" onClick={() => onOpen(recipe)}>
+        <span className="main">
+          <span className="name">
+            {recipe.name}
+            <PrivateMark entry={recipe} />
+          </span>
+          <span className="sub">
+            <RecipeSummary recipe={recipe} />
+          </span>
+        </span>
+        <span className="amount">1 Portion</span>
       </button>
+      <QuickAddButton label={`Eine Portion ${recipe.name} hinzufügen`} onAdd={() => onAdd(recipe)} />
     </div>
   )
 }
@@ -537,61 +879,69 @@ function FoodDetail({ food, initialAmountG, confirmLabel, onConfirm, onClose }) 
   )
 }
 
-function FoodDatabase({ formFood, onFormChange, onClose, onError }) {
-  const [query, setQuery] = useState('')
-  const [foods, reloadFoods] = useFoods(query, onError)
-  const runAction = useActionRunner(onError)
-
-  function saveFood(id, values) {
-    runAction(async () => {
-      await createOrUpdate(API.foods, id, values)
-      onFormChange(null)
-      reloadFoods()
-      onError(null)
-    })
-  }
+// Foods and recipes, to look at, add and edit. Stays mounted while a form is open (hidden),
+// so the search survives. version: reloads the list when it changes (after saving).
+function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onError }) {
+  const [search, setSearch] = useState(NEW_SEARCH)
+  const entries = useCatalog(search.kind, search.query, search.scope, version, onError)
+  const isRecipes = search.kind === KIND_RECIPES
+  const addLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
 
   return (
-    <>
-      {/* Only hidden while the form is open, so the search survives. */}
-      <section hidden={formFood !== null}>
-        <SearchBar query={query} onQueryChange={setQuery} closeLabel="Schließen" onClose={onClose}>
-          <button
-            type="button"
-            className="add"
-            title="Lebensmittel hinzufügen"
-            aria-label="Lebensmittel hinzufügen"
-            onClick={() => onFormChange(NEW_FOOD)}
-          >
-            <PlusIcon />
-          </button>
-        </SearchBar>
-        {foods.length === 0 ? (
-          <p className="empty">Kein Lebensmittel gefunden.</p>
-        ) : (
-          <div className="rows">
-            {foods.map((food) => (
-              <FoodDatabaseRow key={food.id} food={food} onOpen={onFormChange} />
-            ))}
-          </div>
-        )}
-      </section>
-      {formFood !== null && (
-        <FoodForm food={formFood} onSave={saveFood} onClose={onClose} />
+    <section hidden={hidden}>
+      <CatalogHeader
+        search={search}
+        onSearchChange={setSearch}
+        closeLabel="Schließen"
+        onClose={onClose}
+      >
+        <button
+          type="button"
+          className="add"
+          title={addLabel}
+          aria-label={addLabel}
+          onClick={() => (isRecipes ? onOpenRecipe(null) : onOpenFood(NEW_FOOD))}
+        >
+          <PlusIcon size={22} />
+        </button>
+      </CatalogHeader>
+      {entries.length === 0 ? (
+        <p className="empty">{isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}</p>
+      ) : (
+        <div className="rows">
+          {isRecipes
+            ? entries.map((recipe) => (
+                <DatabaseRow
+                  key={recipe.id}
+                  entry={recipe}
+                  sub={<RecipeSummary recipe={recipe} />}
+                  onOpen={onOpenRecipe}
+                />
+              ))
+            : entries.map((food) => (
+                <DatabaseRow
+                  key={food.id}
+                  entry={food}
+                  sub={<KcalPer100g kcal={food.kcalPer100g} />}
+                  onOpen={onOpenFood}
+                />
+              ))}
+        </div>
       )}
-    </>
+    </section>
   )
 }
 
-function FoodDatabaseRow({ food, onOpen }) {
+function DatabaseRow({ entry, sub, onOpen }) {
   return (
     <div className="row">
-      <button type="button" className="row-open" onClick={() => onOpen(food)}>
+      <button type="button" className="row-open" onClick={() => onOpen(entry)}>
         <span className="main">
-          <span className="name">{food.name}</span>
-          <span className="sub">
-            <KcalPer100g kcal={food.kcalPer100g} />
+          <span className="name">
+            {entry.name}
+            <PrivateMark entry={entry} />
           </span>
+          <span className="sub">{sub}</span>
         </span>
         <span className="chevron" aria-hidden="true">
           ›
@@ -601,13 +951,25 @@ function FoodDatabaseRow({ food, onOpen }) {
   )
 }
 
-function FoodForm({ food, onSave, onClose }) {
+// Who may change an entry, as a line above a read-only form.
+function NotOwnedHint({ what }) {
+  return (
+    <p className="hint read-only-hint">
+      Dieses {what} gehört dir nicht. Du kannst es verwenden, aber nicht ändern.
+    </p>
+  )
+}
+
+// Only the owner can edit; everybody else sees the values read-only.
+function FoodForm({ food, onSave, onDelete, onClose }) {
   const isNew = food.id === null
+  const readOnly = !food.owned
   const [name, setName] = useState(toText(food.name))
   const [kcal, setKcal] = useState(toText(food.kcalPer100g))
   const [protein, setProtein] = useState(toText(food.protein))
   const [carbs, setCarbs] = useState(toText(food.carbs))
   const [fat, setFat] = useState(toText(food.fat))
+  const [published, setPublished] = useState(food.published)
 
   // Field names as the backend expects them.
   const values = {
@@ -616,42 +978,339 @@ function FoodForm({ food, onSave, onClose }) {
     protein: parseFloat(protein),
     carbs: parseFloat(carbs),
     fat: parseFloat(fat),
+    published,
   }
   const numbers = [values.kcalPer100g, values.protein, values.carbs, values.fat]
   // An empty field parses to NaN, and NaN >= 0 is false.
   const isValid = values.name !== '' && numbers.every((n) => n >= 0)
+  const becomesPrivate = !isNew && food.published && !published
 
   function submit(event) {
     event.preventDefault()
-    if (isValid) onSave(food.id, values)
+    if (isValid && !readOnly) onSave(food.id, values)
+  }
+
+  let title = 'Lebensmittel bearbeiten'
+  if (isNew) title = 'Lebensmittel hinzufügen'
+  else if (readOnly) title = 'Lebensmittel'
+
+  return (
+    <section>
+      <TopBar title={title} closeLabel="Schließen" onClose={onClose} />
+      {readOnly && <NotOwnedHint what="Lebensmittel" />}
+      <form onSubmit={submit}>
+        <fieldset className="plain" disabled={readOnly}>
+          <label className="field">
+            <span>Name</span>
+            <input
+              type="text"
+              autoFocus={!readOnly}
+              autoComplete="off"
+              maxLength={100}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <NumberField label="Kalorien pro 100 g (kcal)" value={kcal} onChange={setKcal} />
+          <NumberField label="Protein" value={protein} onChange={setProtein} />
+          <NumberField label="Kohlenhydrate" value={carbs} onChange={setCarbs} />
+          <NumberField label="Fett" value={fat} onChange={setFat} />
+          <VisibilitySwitch published={published} disabled={readOnly} onChange={setPublished} />
+          {becomesPrivate && (
+            <p className="hint switch-hint">
+              Verwendet schon jemand anderes dieses Lebensmittel, bleibt es für alle öffentlich und
+              gehört dann niemandem mehr. Du bekommst eine private Kopie. Deine öffentlichen Rezepte
+              damit werden sonst ebenfalls privat.
+            </p>
+          )}
+        </fieldset>
+        {!readOnly && (
+          <div className="bar">
+            {!isNew && (
+              <button type="button" className="btn danger-outline" onClick={() => onDelete(food)}>
+                Löschen
+              </button>
+            )}
+            <button type="submit" className="btn primary" disabled={!isValid}>
+              Speichern
+            </button>
+          </div>
+        )}
+      </form>
+    </section>
+  )
+}
+
+// Name, portions, visibility and the foods of a recipe. Added foods can only be removed, not
+// changed: remove and add again. Recipes of others are shown read-only.
+function RecipeEditor({ draft, onChange, onAddFoods, onSave, onDelete, onClose }) {
+  const isNew = draft.id === null
+  const readOnly = !draft.owned
+  const servings = parseFloat(draft.servingsText)
+  const totals = totalsOf(draft.items)
+  const isValid = draft.name.trim() !== '' && servings > 0 && draft.items.length > 0
+
+  function update(changes) {
+    onChange({ ...draft, ...changes })
+  }
+
+  function submit(event) {
+    event.preventDefault()
+    if (isValid && !readOnly) onSave()
+  }
+
+  let title = 'Rezept bearbeiten'
+  if (isNew) title = 'Rezept anlegen'
+  else if (readOnly) title = 'Rezept'
+
+  return (
+    <section>
+      <TopBar title={title} closeLabel="Schließen" onClose={onClose} />
+      {readOnly && <NotOwnedHint what="Rezept" />}
+      <form onSubmit={submit}>
+        <fieldset className="plain" disabled={readOnly}>
+          <label className="field">
+            <span>Name</span>
+            <input
+              type="text"
+              autoFocus={isNew}
+              autoComplete="off"
+              maxLength={100}
+              value={draft.name}
+              onChange={(event) => update({ name: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Portionen</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={draft.servingsText}
+              onChange={(event) => update({ servingsText: event.target.value })}
+            />
+            <span className="hint">So viele Portionen ergeben die Mengen unten.</span>
+          </label>
+          <VisibilitySwitch published={draft.published} onChange={(published) => update({ published })} />
+          {draft.published && !draft.wasPublished && (
+            <p className="hint switch-hint">
+              Deine privaten Lebensmittel in diesem Rezept werden beim Speichern mit veröffentlicht.
+            </p>
+          )}
+        </fieldset>
+
+        <div className="section-head">
+          <h2>Zutaten</h2>
+          <span className="section-meta">
+            {draft.items.length > 0 &&
+              `${formatNumber(totals.amountG)} g · ${formatKcal(totals.kcal)}` +
+                (servings > 0 ? ` · ${formatKcal(totals.kcal / servings)} pro Portion` : '')}
+          </span>
+        </div>
+        {draft.items.length === 0 ? (
+          <p className="empty">Noch keine Lebensmittel.</p>
+        ) : (
+          <div className="rows">
+            {draft.items.map((item) => (
+              <div className="row" key={item.food.id}>
+                <div className="row-open wrap">
+                  <span className="main">
+                    <span className="name">
+                      {item.food.name}
+                      <PrivateMark entry={item.food} />
+                    </span>
+                    <span className="sub">{formatKcal(kcalOf(item.food, item.amountG))}</span>
+                  </span>
+                  <span className="amount">{formatNumber(item.amountG)} g</span>
+                </div>
+                {!readOnly && (
+                  <CrossButton
+                    label={`${item.food.name} entfernen`}
+                    onClick={() =>
+                      update({ items: draft.items.filter((other) => other.food.id !== item.food.id) })
+                    }
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!readOnly && (
+          <button type="button" className="btn add-more" onClick={onAddFoods}>
+            <PlusIcon size={18} />
+            Lebensmittel hinzufügen
+          </button>
+        )}
+
+        {!readOnly && (
+          <div className="bar">
+            {!isNew && (
+              <button type="button" className="btn danger-outline" onClick={onDelete}>
+                Löschen
+              </button>
+            )}
+            <button type="submit" className="btn primary" disabled={!isValid}>
+              Rezept speichern
+            </button>
+          </div>
+        )}
+      </form>
+    </section>
+  )
+}
+
+const BOOKING_UNITS = [
+  { value: UNIT_PORTION, label: 'Portion' },
+  { value: UNIT_GRAM, label: 'Gramm' },
+]
+
+// Books a recipe into the meal draft: as portions, or as grams of the finished dish. The amounts
+// and, depending on the unit, the number of portions or the weight of the dish can be adjusted for
+// this one booking; the recipe itself stays as it is. Only the setting that matters for the chosen
+// unit is shown. The weight follows the ingredients until it is typed in by hand (e.g. after
+// weighing the pot), and follows them again after "Aus Zutaten berechnen".
+function RecipeBooking({ recipe, onConfirm, onClose }) {
+  const [unit, setUnit] = useState(UNIT_PORTION)
+  const [quantityText, setQuantityText] = useState('1')
+  const [servingsText, setServingsText] = useState(String(recipe.servings))
+  const [items, setItems] = useState(() =>
+    recipe.items.map((item) => ({ food: item.food, amountText: String(roundToOneDecimal(item.amountG)) })),
+  )
+  const [weightText, setWeightText] = useState(null) // null: sum of the ingredients
+
+  const amounts = items.map((item) => ({ food: item.food, amountG: parseFloat(item.amountText) }))
+  const amountsValid = amounts.length > 0 && amounts.every((item) => item.amountG >= 0)
+  const totals = totalsOf(amountsValid ? amounts : [])
+  const weightG = weightText === null ? totals.amountG : parseFloat(weightText)
+  const servings = parseFloat(servingsText)
+  const quantity = parseFloat(quantityText)
+  const isValid = amountsValid && totals.amountG > 0 && servings > 0 && weightG > 0 && quantity > 0
+  const share = isValid ? shareOf({ unit, quantity, servings, weightG }) : 0
+
+  function changeUnit(newUnit) {
+    if (newUnit === unit) return
+    if (isValid) {
+      const converted = convertQuantity({ fromUnit: unit, quantity, servings, weightG })
+      setQuantityText(String(newUnit === UNIT_GRAM ? Math.round(converted) : roundToOneDecimal(converted)))
+    }
+    setUnit(newUnit)
+  }
+
+  function changeAmount(foodId, amountText) {
+    setItems((current) =>
+      current.map((item) => (item.food.id === foodId ? { ...item, amountText } : item)),
+    )
+    setWeightText(null)
+  }
+
+  function removeItem(foodId) {
+    setItems((current) => current.filter((item) => item.food.id !== foodId))
+    setWeightText(null)
+  }
+
+  function submit(event) {
+    event.preventDefault()
+    if (isValid) onConfirm(scaleItems(amounts, share), recipe.name)
   }
 
   return (
     <section>
-      <TopBar
-        title={isNew ? 'Lebensmittel hinzufügen' : 'Lebensmittel bearbeiten'}
-        closeLabel="Schließen"
-        onClose={onClose}
-      />
+      <TopBar title={recipe.name} closeLabel="Schließen" onClose={onClose} centered />
+      <p className="detail-line">
+        {!isValid && 'Bitte prüfe die Angaben unten.'}
+        {isValid &&
+          (unit === UNIT_PORTION
+            ? `${formatServings(servings)} · ${formatKcal(totals.kcal / servings)} pro Portion`
+            : `${formatNumber(weightG)} g · ${formatKcal((totals.kcal / weightG) * 100)} pro 100 g`)}
+      </p>
       <form onSubmit={submit}>
-        <label className="field">
-          <span>Name</span>
+        <div className="detail-amount book-amount">
+          <SelectBox label="Einheit" value={unit} options={BOOKING_UNITS} onChange={changeUnit} />
           <input
-            type="text"
-            autoFocus
-            autoComplete="off"
-            maxLength={100}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
+            type="number"
+            inputMode="decimal"
+            enterKeyHint="done"
+            min="0"
+            step="any"
+            value={quantityText}
+            onFocus={(event) => event.target.select()}
+            onChange={(event) => setQuantityText(event.target.value)}
+            aria-label={unit === UNIT_PORTION ? 'Anzahl Portionen' : 'Menge in Gramm'}
           />
-        </label>
-        <NumberField label="Kalorien pro 100 g (kcal)" value={kcal} onChange={setKcal} />
-        <NumberField label="Protein" value={protein} onChange={setProtein} />
-        <NumberField label="Kohlenhydrate" value={carbs} onChange={setCarbs} />
-        <NumberField label="Fett" value={fat} onChange={setFat} />
+        </div>
+        <p className="book-result" role="status">
+          {isValid ? formatKcal(totals.kcal * share) : '–'}
+        </p>
+
+        <div className="section-head">
+          <h2>Für diese Buchung anpassen</h2>
+        </div>
+        {unit === UNIT_PORTION ? (
+          <label className="field">
+            <span>Portionen gesamt</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={servingsText}
+              onChange={(event) => setServingsText(event.target.value)}
+            />
+          </label>
+        ) : (
+          <label className="field">
+            <span>Gesamtgewicht (g)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={weightText ?? String(roundToOneDecimal(totals.amountG))}
+              onChange={(event) => setWeightText(event.target.value)}
+            />
+            {weightText === null ? (
+              <span className="hint">Summe der Zutaten. Gewicht nach dem Kochen hier eintragen.</span>
+            ) : (
+              <button type="button" className="link-btn" onClick={() => setWeightText(null)}>
+                Aus Zutaten berechnen
+              </button>
+            )}
+          </label>
+        )}
+
+        <div className="rows">
+          {items.map((item) => (
+            <div className="row" key={item.food.id}>
+              <span className="main">
+                <span className="name wrap-name">{item.food.name}</span>
+                <span className="sub">
+                  {parseFloat(item.amountText) >= 0
+                    ? formatKcal(kcalOf(item.food, parseFloat(item.amountText)))
+                    : '–'}
+                </span>
+              </span>
+              <span className="amount-input">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  value={item.amountText}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => changeAmount(item.food.id, event.target.value)}
+                  aria-label={`Menge ${item.food.name} in Gramm`}
+                />
+                <span>g</span>
+              </span>
+              <CrossButton label={`${item.food.name} weglassen`} onClick={() => removeItem(item.food.id)} />
+            </div>
+          ))}
+        </div>
+
         <div className="bar">
           <button type="submit" className="btn primary" disabled={!isValid}>
-            Speichern
+            Zur Mahlzeit hinzufügen
           </button>
         </div>
       </form>
@@ -1029,9 +1688,14 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
-  const [detail, setDetail] = useState(null) // null or { food, mode: 'add' | 'set', amountG }
-  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false)
+  const [detail, setDetail] = useState(null) // null or { food, mode: 'add' | 'set' | 'recipe-add', amountG }
+  const [recipeBooking, setRecipeBooking] = useState(null) // recipe shown for booking
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
+  const [recipeEditor, setRecipeEditor] = useState(null) // recipe draft, see NEW_RECIPE
+  const [recipeSearch, setRecipeSearch] = useState(null) // null or { entries, previewing }: foods about to be added to the recipe
+  const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
+  const [confirm, setConfirm] = useState(null) // props of the open ConfirmDialog
+  const [notice, setNotice] = useState(null)
   const [error, setError] = useState(null)
   const runAction = useActionRunner(setError)
 
@@ -1046,13 +1710,17 @@ function MealTracker({ user, onUserChange, onLogout }) {
     loadMeals().catch((error) => setError(error.message))
   }, [loadMeals])
 
+  const reloadCatalog = () => setCatalogVersion((version) => version + 1)
+
+  // ----- meals -----
+
   function startNewMeal() {
     setDraft(NEW_DRAFT)
     setView('search')
   }
 
   function editMeal(meal) {
-    setDraft({ mealId: meal.id, entries: meal.items.map(entryFromMealItem) })
+    setDraft({ mealId: meal.id, entries: entriesFromMeal(meal) })
     setView('edit')
   }
 
@@ -1064,6 +1732,19 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function addToDraft(food, amountG) {
     setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, amountG) }))
+  }
+
+  function addRecipeToDraft(items, recipeName) {
+    setDraft((current) => ({ ...current, entries: addRecipeItems(current.entries, items, recipeName) }))
+  }
+
+  function addRecipePortion(recipe) {
+    addRecipeToDraft(onePortion(recipe), recipe.name)
+  }
+
+  function confirmRecipeBooking(items, recipeName) {
+    addRecipeToDraft(items, recipeName)
+    setRecipeBooking(null)
   }
 
   function removeFromDraft(foodId) {
@@ -1114,12 +1795,17 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setDetail({ food, mode: 'add', amountG: DEFAULT_AMOUNT_G })
   }
 
+  function openRecipeFoodDetail(food) {
+    setDetail({ food, mode: 'recipe-add', amountG: DEFAULT_AMOUNT_G })
+  }
+
   function openEntryDetail(entry) {
     setDetail({ food: entry.food, mode: 'set', amountG: entry.amountG })
   }
 
   function addFromDetail(food, amountG) {
-    addToDraft(food, amountG)
+    if (detail.mode === 'recipe-add') addToRecipeSearch(food, amountG)
+    else addToDraft(food, amountG)
     setDetail(null)
   }
 
@@ -1130,13 +1816,141 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
-  function deleteAllMeals() {
-    runAction(async () => {
-      setConfirmingDeleteAll(false)
-      await request(API.meals, { method: 'DELETE' })
-      await loadMeals()
+  function askDeleteAllMeals() {
+    setConfirm({
+      title: 'Alle Mahlzeiten löschen?',
+      text: `Alle ${meals.length} gebuchten Mahlzeiten werden endgültig gelöscht.`,
+      confirmLabel: 'Alle löschen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(API.meals, { method: 'DELETE' })
+          await loadMeals()
+        }),
     })
   }
+
+  // ----- food database: foods -----
+
+  function openFood(food) {
+    setNotice(null)
+    setFoodForm(food)
+  }
+
+  function saveFood(id, values) {
+    runAction(async () => {
+      const saved = await createOrUpdate(API.foods, id, values)
+      // Made private while others use it: the server kept the public food and made a copy.
+      if (id !== null && saved.id !== id) {
+        setNotice(
+          'Andere verwenden dieses Lebensmittel bereits. Für sie bleibt es öffentlich; du hast jetzt eine private Kopie.',
+        )
+      }
+      setFoodForm(null)
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
+  function askDeleteFood(food) {
+    setConfirm({
+      title: 'Lebensmittel löschen?',
+      text:
+        'Steckt es noch in einer Mahlzeit oder einem Rezept, bleibt es dort erhalten und für alle ' +
+        'öffentlich, gehört dir dann aber nicht mehr. Sonst wird es endgültig gelöscht.',
+      confirmLabel: 'Löschen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(`${API.foods}/${food.id}`, { method: 'DELETE' })
+          setFoodForm(null)
+          reloadCatalog()
+          setError(null)
+        }),
+    })
+  }
+
+  // ----- food database: recipes -----
+
+  function openRecipe(recipe) {
+    setNotice(null)
+    setRecipeEditor(recipe === null ? NEW_RECIPE : recipeDraftFrom(recipe))
+  }
+
+  function openRecipeSearch() {
+    setRecipeSearch({ entries: [], previewing: false })
+  }
+
+  function addToRecipeSearch(food, amountG) {
+    setRecipeSearch((current) => ({ ...current, entries: addAmount(current.entries, food, amountG) }))
+  }
+
+  function removeFromRecipeSearch(foodId) {
+    setRecipeSearch((current) => ({
+      ...current,
+      entries: current.entries.filter((entry) => entry.food.id !== foodId),
+    }))
+  }
+
+  function applyRecipeSearch() {
+    const added = recipeSearch.entries
+    setRecipeEditor((current) => ({ ...current, items: mergeItems(current.items, added) }))
+    setRecipeSearch(null)
+  }
+
+  function saveRecipe() {
+    const recipe = recipeEditor
+    function save() {
+      runAction(async () => {
+        setConfirm(null)
+        await createOrUpdate(API.recipes, recipe.id, recipeRequest(recipe))
+        setRecipeEditor(null)
+        reloadCatalog()
+        setError(null)
+      })
+    }
+
+    // Publishing also publishes the user's private foods in it (done by the server).
+    const privateFoods = recipe.items
+      .filter((item) => item.food.owned && !item.food.published)
+      .map((item) => item.food.name)
+    if (!recipe.published || (recipe.wasPublished && privateFoods.length === 0)) {
+      save()
+      return
+    }
+    setConfirm({
+      title: 'Rezept veröffentlichen?',
+      text:
+        'Alle können das Rezept dann sehen und buchen.' +
+        (privateFoods.length > 0
+          ? ` Dafür werden auch diese Lebensmittel von dir veröffentlicht: ${privateFoods.join(', ')}.`
+          : ''),
+      confirmLabel: 'Veröffentlichen',
+      tone: 'primary',
+      onConfirm: save,
+    })
+  }
+
+  function askDeleteRecipe() {
+    const recipe = recipeEditor
+    setConfirm({
+      title: 'Rezept löschen?',
+      text:
+        (recipe.wasPublished ? 'Danach kann es auch sonst niemand mehr buchen. ' : '') +
+        'Bereits gebuchte Mahlzeiten bleiben unverändert.',
+      confirmLabel: 'Löschen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(`${API.recipes}/${recipe.id}`, { method: 'DELETE' })
+          setRecipeEditor(null)
+          reloadCatalog()
+          setError(null)
+        }),
+    })
+  }
+
+  // ----- views -----
 
   function openFoods() {
     setError(null)
@@ -1160,8 +1974,13 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   // One handler for every "×" and for the system back button: close the topmost layer.
   function goBack() {
-    if (confirmingDeleteAll) setConfirmingDeleteAll(false)
+    setNotice(null)
+    if (confirm) setConfirm(null)
     else if (detail) setDetail(null)
+    else if (recipeBooking) setRecipeBooking(null)
+    else if (recipeSearch?.previewing) setRecipeSearch({ ...recipeSearch, previewing: false })
+    else if (recipeSearch) setRecipeSearch(null)
+    else if (recipeEditor) setRecipeEditor(null)
     else if (foodForm) setFoodForm(null)
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
@@ -1169,13 +1988,18 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'profile') closeProfile()
   }
 
-  useBackNavigation(view !== 'list' || detail !== null || confirmingDeleteAll, goBack)
+  useBackNavigation(view !== 'list' || detail !== null || confirm !== null, goBack)
 
   return (
     <main className="app">
       {error && (
         <div className="error" role="alert">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="notice" role="status">
+          {notice}
         </div>
       )}
 
@@ -1185,7 +2009,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onAdd={startNewMeal}
           onEdit={editMeal}
           onDelete={deleteMeal}
-          onDeleteAll={() => setConfirmingDeleteAll(true)}
+          onDeleteAll={askDeleteAllMeals}
           onOpenFoods={openFoods}
           onOpenProfile={openProfile}
         />
@@ -1201,19 +2025,30 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {/* Stays mounted (only hidden) under the preview and the detail view,
-          so the search text and results survive. */}
+      {/* Stays mounted (only hidden) under the preview and the detail views,
+          so the search text, filter and results survive. */}
       {(view === 'search' || view === 'preview') && (
         <FoodSearch
-          visible={view === 'search' && !detail}
+          visible={view === 'search' && !detail && !recipeBooking}
           draftCount={draft.entries.length}
           submitLabel={isEditing ? 'Mahlzeit speichern' : 'Mahlzeit hinzufügen'}
           onOpenFood={openFoodDetail}
           onAddFood={addToDraft}
+          onOpenRecipe={setRecipeBooking}
+          onAddRecipe={addRecipePortion}
           onPreview={() => setView('preview')}
           onSubmit={submitMeal}
           onClose={goBack}
           onError={setError}
+        />
+      )}
+
+      {view === 'search' && recipeBooking && (
+        <RecipeBooking
+          key={recipeBooking.id}
+          recipe={recipeBooking}
+          onConfirm={confirmRecipeBooking}
+          onClose={goBack}
         />
       )}
 
@@ -1236,34 +2071,73 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
+      {view === 'foods' && (
+        <>
+          <FoodDatabase
+            hidden={foodForm !== null || recipeEditor !== null}
+            version={catalogVersion}
+            onOpenFood={openFood}
+            onOpenRecipe={openRecipe}
+            onClose={goBack}
+            onError={setError}
+          />
+          {foodForm && (
+            <FoodForm
+              key={foodForm.id ?? 'new'}
+              food={foodForm}
+              onSave={saveFood}
+              onDelete={askDeleteFood}
+              onClose={goBack}
+            />
+          )}
+          {recipeEditor && !recipeSearch && (
+            <RecipeEditor
+              draft={recipeEditor}
+              onChange={setRecipeEditor}
+              onAddFoods={openRecipeSearch}
+              onSave={saveRecipe}
+              onDelete={askDeleteRecipe}
+              onClose={goBack}
+            />
+          )}
+          {/* Recipes cannot contain recipes, so this search only offers foods. */}
+          {recipeSearch && (
+            <FoodSearch
+              visible={!recipeSearch.previewing && !detail}
+              kindLocked
+              draftCount={recipeSearch.entries.length}
+              submitLabel="Hinzufügen"
+              closeLabel="Zurück zum Rezept"
+              onOpenFood={openRecipeFoodDetail}
+              onAddFood={addToRecipeSearch}
+              onPreview={() => setRecipeSearch({ ...recipeSearch, previewing: true })}
+              onSubmit={applyRecipeSearch}
+              onClose={goBack}
+              onError={setError}
+            />
+          )}
+          {recipeSearch?.previewing && !detail && (
+            <DraftPreview
+              entries={recipeSearch.entries}
+              showDelta={false}
+              onRemoveEntry={removeFromRecipeSearch}
+              onClose={goBack}
+            />
+          )}
+        </>
+      )}
+
       {detail && (
         <FoodDetail
           food={detail.food}
           initialAmountG={detail.amountG}
-          confirmLabel={detail.mode === 'add' ? 'Hinzufügen' : 'Übernehmen'}
-          onConfirm={detail.mode === 'add' ? addFromDetail : saveEntryAmount}
+          confirmLabel={detail.mode === 'set' ? 'Übernehmen' : 'Hinzufügen'}
+          onConfirm={detail.mode === 'set' ? saveEntryAmount : addFromDetail}
           onClose={goBack}
         />
       )}
 
-      {view === 'foods' && (
-        <FoodDatabase
-          formFood={foodForm}
-          onFormChange={setFoodForm}
-          onClose={goBack}
-          onError={setError}
-        />
-      )}
-
-      {confirmingDeleteAll && (
-        <ConfirmDialog
-          title="Alle Mahlzeiten löschen?"
-          text={`Alle ${meals.length} gebuchten Mahlzeiten werden endgültig gelöscht.`}
-          confirmLabel="Alle löschen"
-          onConfirm={deleteAllMeals}
-          onClose={goBack}
-        />
-      )}
+      {confirm && <ConfirmDialog {...confirm} onClose={goBack} />}
     </main>
   )
 }
