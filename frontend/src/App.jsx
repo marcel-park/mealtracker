@@ -1942,7 +1942,7 @@ function LoginPage({ onLoggedIn }) {
           body: JSON.stringify({ email: email.trim(), password }),
         })
       } catch (error) {
-        throw new Error(authErrorMessage(error, path))
+        throw new Error(authErrorMessage(error, path), { cause: error })
       }
       await onLoggedIn(serverUrl, response.token, response.user)
     })
@@ -2089,15 +2089,17 @@ function StartupScreen({ isOffline, onRetry }) {
 // Browser: while anything above the main view is shown, one extra history entry sits
 // on top of the app's entry; pressing back removes it and runs goBack instead.
 function useBackNavigation(isNested, goBack) {
-  const [hasEntry, setHasEntry] = useState(false)
-  const hasEntryRef = useRef(false) // hasEntry for the unmount cleanup below
+  // Whether our extra history entry exists. A ref, not state: it is changed by the effect below,
+  // and setting state there would render again for nothing. popCount (changed only in the popstate
+  // handler) makes that effect run again after the entry was used up.
+  const hasEntry = useRef(false)
+  const [popCount, setPopCount] = useState(0)
   const isRemovingEntry = useRef(false) // true while our own history.back() is in flight
   const goBackRef = useRef(goBack)
   const isNestedRef = useRef(isNested)
 
-   useEffect(() => {
+  useEffect(() => {
     goBackRef.current = goBack
-    hasEntryRef.current = hasEntry
     isNestedRef.current = isNested
   })
 
@@ -2105,7 +2107,7 @@ function useBackNavigation(isNested, goBack) {
   // browser history entry as well. In the native app there is none (hasEntry stays false).
   useEffect(() => {
     return () => {
-      if (hasEntryRef.current) history.back()
+      if (hasEntry.current) history.back()
     }
   }, [])
 
@@ -2125,7 +2127,8 @@ function useBackNavigation(isNested, goBack) {
   useEffect(() => {
     if (IS_NATIVE) return
     function onPopState() {
-      setHasEntry(false)
+      hasEntry.current = false
+      setPopCount((count) => count + 1)
       if (isRemovingEntry.current) isRemovingEntry.current = false
       else goBackRef.current()
     }
@@ -2135,15 +2138,15 @@ function useBackNavigation(isNested, goBack) {
 
   useEffect(() => {
     if (IS_NATIVE) return
-    if (isNested && !hasEntry) {
+    if (isNested && !hasEntry.current) {
       history.pushState(null, '')
-      setHasEntry(true)
-    } else if (!isNested && hasEntry && !isRemovingEntry.current) {
+      hasEntry.current = true
+    } else if (!isNested && hasEntry.current && !isRemovingEntry.current) {
       // left the nested view by other means (e.g. "×"): drop the unused entry
       isRemovingEntry.current = true
       history.back()
     }
-  }, [isNested, hasEntry])
+  }, [isNested, popCount])
 
   useEffect(() => {
     if (IS_NATIVE) return
@@ -2177,9 +2180,23 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setError(null)
   }, [])
 
+  // First load. State is only set once the request is done (not synchronously in the effect);
+  // a late answer after unmounting is ignored.
   useEffect(() => {
-    loadMeals().catch((error) => setError(error.message))
-  }, [loadMeals])
+    let isCurrent = true
+    request(API.meals)
+      .then((loaded) => {
+        if (!isCurrent) return
+        setMeals(loaded)
+        setError(null)
+      })
+      .catch((error) => {
+        if (isCurrent) setError(error.message)
+      })
+    return () => {
+      isCurrent = false
+    }
+  }, [])
 
   const reloadCatalog = () => setCatalogVersion((version) => version + 1)
 
@@ -2813,6 +2830,20 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
 const LOADING = { status: 'loading', user: null }
 const LOGGED_OUT = { status: 'loggedOut', user: null }
+const OFFLINE = { status: 'offline', user: null }
+
+// Checks the login stored on this device against the server (GET /api/users/me) and returns the
+// resulting state. null: the token was rejected (401); the unauthorized handler has already
+// removed it and shows the login page.
+async function checkStoredLogin() {
+  try {
+    if (!(await loadSession())) return LOGGED_OUT
+    return { status: 'loggedIn', user: await request(API.me) }
+  } catch (error) {
+    // Anything but 401, e.g. no network: keep the token, the user is still logged in, just offline.
+    return error.status === 401 ? null : OFFLINE
+  }
+}
 
 // Decides between login page and app. A token stored on this device keeps the user logged in
 // across app restarts: at start the token is checked once against the server (GET /api/users/me).
@@ -2825,27 +2856,19 @@ export default function App() {
     setAuth(LOGGED_OUT)
   }, [])
 
-  const restoreLogin = useCallback(async () => {
-    try {
-      if (!(await loadSession())) {
-        setAuth(LOGGED_OUT)
-        return
-      }
-      setAuth({ status: 'loggedIn', user: await request(API.me) })
-    } catch (error) {
-      // A rejected token (401) is handled by the unauthorized handler: token removed, login shown.
-      // Anything else, e.g. no network: keep the token, the user is still logged in, just offline.
-      if (error.status !== 401) setAuth({ status: 'offline', user: null })
-    }
-  }, [])
-
   useEffect(() => {
     setUnauthorizedHandler(logOutLocally)
   }, [logOutLocally])
 
   useEffect(() => {
-    restoreLogin()
-  }, [restoreLogin])
+    let isCurrent = true
+    checkStoredLogin().then((next) => {
+      if (isCurrent && next) setAuth(next)
+    })
+    return () => {
+      isCurrent = false
+    }
+  }, [])
 
   async function logIn(serverUrl, token, user) {
     await saveSession(serverUrl, token)
@@ -2864,7 +2887,9 @@ export default function App() {
 
   function retry() {
     setAuth(LOADING)
-    restoreLogin()
+    checkStoredLogin().then((next) => {
+      if (next) setAuth(next)
+    })
   }
 
   if (auth.status === 'loading' || auth.status === 'offline') {
