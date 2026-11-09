@@ -10,5 +10,6 @@ public record FoodRequest(
     @NotNull @PositiveOrZero Double kcalPer100g,
     @NotNull @PositiveOrZero Double protein,
     @NotNull @PositiveOrZero Double carbs,
-    @NotNull @PositiveOrZero Double fat
+    @NotNull @PositiveOrZero Double fat,
+    @NotNull Boolean published
 ) {}

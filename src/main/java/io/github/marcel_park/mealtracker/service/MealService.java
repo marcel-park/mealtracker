@@ -20,17 +20,23 @@ import java.util.stream.Collectors;
 
 // Every method takes the id of the logged-in user and only ever touches that user's meals.
 // A meal of another user is reported as "not found", so its existence is not revealed either.
+// Foods can only be added if the user may see them (own or public ones, see FoodService).
+// A recipe is booked by the app as its foods with scaled amounts, so meals know no recipes. The
+// request only says which recipes (and variations) were booked, for the preselection next time.
 @Service
 public class MealService {
 
     private final MealRepository mealRepository;
     private final FoodService foodService;
     private final UserRepository userRepository;
+    private final RecipeService recipeService;
 
-    public MealService(MealRepository mealRepository, FoodService foodService, UserRepository userRepository) {
+    public MealService(MealRepository mealRepository, FoodService foodService, UserRepository userRepository,
+                       RecipeService recipeService) {
         this.mealRepository = mealRepository;
         this.foodService = foodService;
         this.userRepository = userRepository;
+        this.recipeService = recipeService;
     }
 
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
@@ -48,9 +54,11 @@ public class MealService {
         meal.setUser(userRepository.getReferenceById(userId));
         meal.setTitle(request.title());
         for (MealItemRequest item : request.items()) {
-            meal.addItem(foodService.getEntity(item.foodId()), item.amountG());
+            meal.addItem(foodService.getVisibleEntity(userId, item.foodId()), item.amountG());
         }
-        return toResponse(mealRepository.save(meal));
+        MealResponse response = toResponse(mealRepository.save(meal));
+        recipeService.markUsed(userId, request.recipes());
+        return response;
     }
 
     @Transactional
@@ -72,9 +80,11 @@ public class MealService {
             if (keptItem != null) {
                 keptItem.setAmountG(amountG);
             } else {
-                meal.addItem(foodService.getEntity(foodId), amountG);
+                meal.addItem(foodService.getVisibleEntity(userId, foodId), amountG);
             }
         });
+
+        recipeService.markUsed(userId, request.recipes());
 
         // No save() needed: the meal was loaded in this transaction, so Hibernate writes all
         // changes, including added and removed items, on commit.

@@ -14,6 +14,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -180,9 +182,183 @@ class MealBookingIntegrationTest {
     }
 
     @Test
+    void foodInUseByOthers_survivesPrivatizingAndDeletingByItsOwner() throws Exception {
+        String alice = register();
+        String bob = register();
+        long oatsId = createFood(alice, "Haferflocken (IT rules)", 372, true);
+
+        // Bob may see and book Alice's public food, but not change it
+        mockMvc.perform(as(bob, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Porridge","items":[{"foodId":%d,"amountG":100}]}
+                                """.formatted(oatsId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(bob, put("/api/foods/" + oatsId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(foodJson("Gekapert", 1, true)))
+                .andExpect(status().isForbidden());
+
+        // Alice makes it private: Bob keeps the public original, Alice gets a private copy
+        MvcResult privatized = mockMvc.perform(as(alice, put("/api/foods/" + oatsId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(foodJson("Haferflocken (IT rules)", 372, false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.owned").value(true))
+                .andExpect(jsonPath("$.published").value(false))
+                .andReturn();
+        long copyId = idOf(privatized);
+        assertThat(copyId).isNotEqualTo(oatsId);
+
+        mockMvc.perform(as(bob, get("/api/foods/" + oatsId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.published").value(true))
+                .andExpect(jsonPath("$.owned").value(false));
+        mockMvc.perform(as(bob, get("/api/foods/" + copyId)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(as(alice, get("/api/foods").param("scope", "OWN")))
+                .andExpect(jsonPath("$[*].id").value(contains((int) copyId)));
+
+        // Nobody owns the original any more, so nobody can change or delete it
+        mockMvc.perform(as(alice, delete("/api/foods/" + oatsId)))
+                .andExpect(status().isForbidden());
+
+        // The unused private copy is really deleted
+        mockMvc.perform(as(alice, delete("/api/foods/" + copyId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(alice, get("/api/foods/" + copyId)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletingFoodUsedInOwnRecipe_onlyReleasesIt() throws Exception {
+        String alice = register();
+        long riceId = createFood(alice, "Reis (IT rules)", 350, false);
+        long recipeId = createRecipe(alice, "Reisbowl (IT)", false, riceId, 200);
+
+        mockMvc.perform(as(alice, delete("/api/foods/" + riceId)))
+                .andExpect(status().isNoContent());
+
+        // Gone from Alice's own foods, but the recipe still works and the food is public now
+        mockMvc.perform(as(alice, get("/api/foods").param("scope", "OWN")))
+                .andExpect(jsonPath("$[?(@.id == %d)]".formatted(riceId)).isEmpty());
+        mockMvc.perform(as(alice, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].food.id").value((int) riceId))
+                .andExpect(jsonPath("$.items[0].food.published").value(true))
+                .andExpect(jsonPath("$.kcal").value(700.0));
+    }
+
+    @Test
+    void publishingRecipe_publishesItsFoods_andMakingItPrivateHidesOnlyTheRecipe() throws Exception {
+        String alice = register();
+        String bob = register();
+        long beansId = createFood(alice, "Bohnen (IT rules)", 100, false);
+        long recipeId = createRecipe(alice, "Bohnensalat (IT)", false, beansId, 400);
+
+        mockMvc.perform(as(bob, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(as(alice, put("/api/recipes/" + recipeId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recipeJson("Bohnensalat (IT)", true, beansId, 400)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.published").value(true))
+                .andExpect(jsonPath("$.items[0].food.published").value(true));
+        mockMvc.perform(as(bob, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.owned").value(false));
+
+        mockMvc.perform(as(alice, put("/api/recipes/" + recipeId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recipeJson("Bohnensalat (IT)", false, beansId, 400)))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(bob, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(as(bob, get("/api/foods/" + beansId)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void variations_belongToTheOwnerAndTheLastBookedOneIsRemembered() throws Exception {
+        String alice = register();
+        String bob = register();
+        long beansId = createFood(alice, "Bohnen (IT variations)", 100, true);
+        long recipeId = createRecipe(alice, "Chili (IT variations)", true, beansId, 400);
+
+        // A variation stores only what differs from the original
+        MvcResult created = mockMvc.perform(as(alice, post("/api/recipes/" + recipeId + "/variations"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Mehr Bohnen","servings":2,"weightG":900,"items":[{"foodId":%d,"amountG":600}]}
+                                """.formatted(beansId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.servings").isEmpty())   // 2 = as in the original
+                .andExpect(jsonPath("$.weightG").value(900.0))
+                .andExpect(jsonPath("$.items[0].amountG").value(600.0))
+                .andReturn();
+        long variationId = idOf(created);
+
+        mockMvc.perform(as(alice, get("/api/recipes/" + recipeId)))
+                .andExpect(jsonPath("$.variations[0].id").value((int) variationId))
+                .andExpect(jsonPath("$.lastUsedVariationId").isEmpty());
+
+        // Bob sees the public recipe, but neither Alice's variations nor may he add his own
+        mockMvc.perform(as(bob, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.variations").isEmpty());
+        mockMvc.perform(as(bob, post("/api/recipes/" + recipeId + "/variations"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Bobs","items":[]}
+                                """))
+                .andExpect(status().isForbidden());
+
+        // Booking a meal from the variation makes it the preselection
+        mockMvc.perform(as(alice, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Chili","items":[{"foodId":%d,"amountG":300}],
+                                 "recipes":[{"recipeId":%d,"variationId":%d}]}
+                                """.formatted(beansId, recipeId, variationId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(alice, get("/api/recipes/" + recipeId)))
+                .andExpect(jsonPath("$.lastUsedVariationId").value((int) variationId));
+
+        // Deleting the variation falls back to the original
+        mockMvc.perform(as(alice, delete("/api/recipes/" + recipeId + "/variations/" + variationId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(alice, get("/api/recipes/" + recipeId)))
+                .andExpect(jsonPath("$.variations").isEmpty())
+                .andExpect(jsonPath("$.lastUsedVariationId").isEmpty());
+
+        // Deleting the recipe also deletes its variations, even the preselected one
+        // (recipe.last_used_variation_id references the variation that is deleted with it)
+        long secondId = idOf(mockMvc.perform(as(alice, post("/api/recipes/" + recipeId + "/variations"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Wenig Bohnen","items":[{"foodId":%d,"amountG":100}]}
+                                """.formatted(beansId)))
+                .andExpect(status().isCreated())
+                .andReturn());
+        mockMvc.perform(as(alice, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Chili","items":[{"foodId":%d,"amountG":50}],
+                                 "recipes":[{"recipeId":%d,"variationId":%d}]}
+                                """.formatted(beansId, recipeId, secondId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(alice, delete("/api/recipes/" + recipeId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(alice, get("/api/recipes/" + recipeId)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void protectedEndpoints_withoutToken_return401() throws Exception {
         mockMvc.perform(get("/api/meals")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/foods")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/recipes")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/users/me")).andExpect(status().isUnauthorized());
     }
 
@@ -218,14 +394,38 @@ class MealBookingIntegrationTest {
     }
 
     private long createFood(String token, String name, int kcalPer100g) throws Exception {
+        return createFood(token, name, kcalPer100g, false);
+    }
+
+    private long createFood(String token, String name, int kcalPer100g, boolean published) throws Exception {
         MvcResult result = mockMvc.perform(as(token, post("/api/foods"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"name":"%s","kcalPer100g":%d,"protein":10,"carbs":50,"fat":5}
-                                """.formatted(name, kcalPer100g)))
+                        .content(foodJson(name, kcalPer100g, published)))
                 .andExpect(status().isCreated())
                 .andReturn();
         return idOf(result);
+    }
+
+    private static String foodJson(String name, int kcalPer100g, boolean published) {
+        return """
+                {"name":"%s","kcalPer100g":%d,"protein":10,"carbs":50,"fat":5,"published":%b}
+                """.formatted(name, kcalPer100g, published);
+    }
+
+    private long createRecipe(String token, String name, boolean published, long foodId, int amountG)
+            throws Exception {
+        MvcResult result = mockMvc.perform(as(token, post("/api/recipes"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recipeJson(name, published, foodId, amountG)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return idOf(result);
+    }
+
+    private static String recipeJson(String name, boolean published, long foodId, int amountG) {
+        return """
+                {"name":"%s","servings":2,"published":%b,"items":[{"foodId":%d,"amountG":%d}]}
+                """.formatted(name, published, foodId, amountG);
     }
 
     private static long idOf(MvcResult result) throws Exception {
