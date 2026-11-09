@@ -15,17 +15,35 @@ import {
   setUnauthorizedHandler,
 } from './api.js'
 import {
+  addAmount,
+  addRecipeItems,
+  entriesFromMeal,
+  mealRequest,
+} from './meals.js'
+import {
+  NEW_EDITOR,
+  UNIT_GRAM,
+  UNIT_PORTION,
+  bookingFor,
+  bookingSelection,
   convertQuantity,
+  editorChanges,
+  editorFor,
+  isAdjusted,
   itemsOf,
   kcalOf,
   lastUsedVariation,
+  mergeEditorItems,
   onePortion,
+  recipeRequest,
   roundToOneDecimal,
   scaleItems,
   servingsOf,
   shareOf,
+  suggestedVariationName,
   totalsOf,
   variationOf,
+  variationRequest,
 } from './recipes.js'
 
 const SEARCH_PARAM = 'query'
@@ -35,7 +53,6 @@ const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, f
 const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
 const SEARCH_DELAY_MS = 250 // search only once typing pauses
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
-const MAX_TITLE_LENGTH = 100
 const LOCALE = 'de-DE'
 const DATE_TIME_FORMAT = { dateStyle: 'short', timeStyle: 'short' }
 
@@ -59,22 +76,6 @@ const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
 const NEW_FOOD = { id: null, owned: true, published: false }
 
-// The recipe editor: the original (variationId null) or one of its variations. Items are
-// { food, amountG, originalG }; originalG is the amount in the original, which a variation is
-// compared with. layer: the amount view of one item ({ type: 'amount', foodId }) or null.
-const NEW_EDITOR = {
-  recipe: null,
-  id: null,
-  owned: true,
-  variationId: null,
-  name: '',
-  servingsText: '1',
-  weightText: '',
-  published: false,
-  wasPublished: false,
-  items: [],
-  layer: null,
-}
 
 // The two kinds of entries in the search, and the filters that apply to both.
 const KIND_FOODS = 'foods'
@@ -94,8 +95,6 @@ const SCOPE_FILTERS = [
   { value: 'FRIENDS', label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
 ]
 
-const UNIT_PORTION = 'portion'
-const UNIT_GRAM = 'gram'
 
 function fetchCatalog(kind, query, scope, signal) {
   const params = new URLSearchParams()
@@ -114,17 +113,6 @@ function createOrUpdate(url, id, data) {
     : request(`${url}/${id}`, { method: 'PUT', body })
 }
 
-// Only recipes that still have something in the meal count as booked.
-function mealRequest(entries, recipeUses = []) {
-  const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
-  return {
-    title: makeTitle(labels),
-    items: entries.map((entry) => ({ foodId: entry.food.id, amountG: entry.amountG })),
-    recipes: recipeUses
-      .filter((use) => labels.includes(use.label))
-      .map(({ recipeId, variationId }) => ({ recipeId, variationId })),
-  }
-}
 
 const toText = (value) => String(value ?? '')
 
@@ -133,171 +121,18 @@ const formatKcal = (kcal) => `${Math.round(kcal).toLocaleString(LOCALE)} kcal`
 const formatServings = (servings) =>
   `${formatNumber(servings)} ${servings === 1 ? 'Portion' : 'Portionen'}`
 
-// e.g. "Apfel, Banane, Brot +2"
-function makeTitle(names) {
-  const shown = names.slice(0, 3).join(', ')
-  const hiddenCount = names.length - 3
-  const title = hiddenCount > 0 ? `${shown} +${hiddenCount}` : shown
-  return title.slice(0, MAX_TITLE_LENGTH)
-}
 
-// label: what the amount is added as, see NEW_DRAFT. Defaults to the food itself.
-function addAmount(entries, food, amountG, label = food.name) {
-  if (!entries.some((entry) => entry.food.id === food.id)) {
-    return [...entries, { food, amountG, baseG: 0, labels: [label] }]
-  }
-  return entries.map((entry) =>
-    entry.food.id === food.id
-      ? {
-          ...entry,
-          amountG: roundToOneDecimal(entry.amountG + amountG),
-          labels: entry.labels.includes(label) ? entry.labels : [...entry.labels, label],
-        }
-      : entry,
-  )
-}
 
-// A booked recipe: all its (scaled) foods, labelled with the recipe name.
-function addRecipeItems(entries, items, recipeName) {
-  return items
-    .filter((item) => item.amountG > 0)
-    .reduce((result, item) => addAmount(result, item.food, item.amountG, recipeName), entries)
-}
 
-// Meal items only carry the kcal of their amount, so the value per 100 g is derived from it.
-// A meal whose title is not the one made from its foods was booked from a recipe (or several):
-// its items keep that title as their label, so it survives editing the meal.
-function entriesFromMeal(meal) {
-  const titleFromFoods = makeTitle(meal.items.map((item) => item.foodName))
-  const keepsTitle = meal.title !== titleFromFoods
-  return meal.items.map((item) => {
-    const kcalPer100g = item.amountG > 0 ? (item.kcal / item.amountG) * 100 : 0
-    return {
-      food: { id: item.foodId, name: item.foodName, kcalPer100g },
-      amountG: item.amountG,
-      baseG: item.amountG,
-      labels: [keepsTitle ? meal.title : item.foodName],
-    }
-  })
-}
 
-// Foods added to the recipe editor: same food twice adds up. In a variation, a food the original
-// does not contain is compared with 0 g.
-function mergeEditorItems(items, added, isVariation) {
-  const merged = items.map((item) => ({ ...item }))
-  for (const { food, amountG } of added) {
-    const existing = merged.find((item) => item.food.id === food.id)
-    if (existing) existing.amountG = roundToOneDecimal(existing.amountG + amountG)
-    else merged.push({ food, amountG, originalG: isVariation ? 0 : amountG })
-  }
-  return merged
-}
 
-// The editor showing the original (variationId null) or a variation of `recipe`. Switching
-// starts over from the saved values, so unsaved changes are dropped.
-function editorFor(recipe, variationId = null) {
-  const variation = variationOf(recipe, variationId)
-  return {
-    ...NEW_EDITOR,
-    recipe,
-    id: recipe.id,
-    owned: recipe.owned,
-    variationId: variation?.id ?? null,
-    name: variation ? variation.name : recipe.name,
-    servingsText: String(servingsOf(recipe, variation)),
-    weightText: variation?.weightG != null ? String(variation.weightG) : '',
-    published: recipe.published,
-    wasPublished: recipe.published,
-    // savedG: amount as saved in the shown version, to tell what was changed (see editorChanges)
-    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
-  }
-}
 
-// What was changed in the editor since the shown version was loaded. items: the ingredients or
-// portions (what a variation can hold); any: anything, name and visibility included.
-function editorChanges(editor) {
-  const { recipe, variationId } = editor
-  if (recipe === null) return { items: true, any: true }
-  const variation = variationOf(recipe, variationId)
-  const savedItemCount = itemsOf(recipe, variation).length
-  const items =
-    editor.items.some((item) => item.amountG !== item.savedG) ||
-    editor.items.filter((item) => item.savedG !== undefined).length !== savedItemCount ||
-    parseFloat(editor.servingsText) !== servingsOf(recipe, variation)
-  const any =
-    items ||
-    editor.name !== (variation ? variation.name : recipe.name) ||
-    (variation === null && editor.published !== recipe.published)
-  return { items, any }
-}
 
-// What the booking view shows for the original (null) or a variation; adjustments are dropped.
-// saved: the values as saved, to tell whether something was changed since (see isAdjusted).
-// Items keep savedG (amount in the shown version) next to originalG (amount in the original).
-function bookingSelection(recipe, variationId) {
-  const variation = variationOf(recipe, variationId)
-  const servingsText = String(servingsOf(recipe, variation))
-  const weightText = variation?.weightG != null ? String(variation.weightG) : null
-  return {
-    variationId: variation?.id ?? null,
-    servingsText,
-    weightText,
-    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedG: item.amountG })),
-    saved: { servingsText, weightText },
-  }
-}
 
-// State of the booking view of a recipe, kept in MealTracker so it survives the amount view and
-// the dialogs. weightText null: the sum of the ingredients. layer: null, { type: 'amount', foodId },
-// { type: 'saveVariation' } or { type: 'copy' }.
-function bookingFor(recipe, variationId = recipe.lastUsedVariationId) {
-  return {
-    recipe,
-    unit: UNIT_PORTION,
-    quantityText: '1',
-    layer: null,
-    ...bookingSelection(recipe, variationId ?? null),
-  }
-}
 
-// Changed since the shown version (original or variation) was loaded or saved. Booking is only
-// possible once that is saved: as a (new) variation, or as an own copy of somebody else's recipe.
-function isAdjusted(booking) {
-  const { saved } = booking
-  return (
-    booking.items.some((item) => item.amountG !== item.savedG) ||
-    parseFloat(booking.servingsText) !== parseFloat(saved.servingsText) ||
-    booking.weightText !== saved.weightText
-  )
-}
 
-// e.g. "Gulasch, 09.11."
-function suggestedVariationName(recipeName) {
-  const date = new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
-  return `${recipeName}, ${date}`.slice(0, MAX_TITLE_LENGTH)
-}
 
-// weightText null or empty: the sum of the ingredients.
-function variationRequest(name, servingsText, weightText, items) {
-  const weightG = weightText === null || weightText.trim() === '' ? null : parseFloat(weightText)
-  return {
-    name: name.trim(),
-    servings: parseFloat(servingsText),
-    weightG,
-    items: items.map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
-  }
-}
 
-function recipeRequest({ name, servingsText, published, items }) {
-  return {
-    name: name.trim(),
-    servings: parseFloat(servingsText),
-    published,
-    items: items
-      .filter((item) => item.amountG > 0)
-      .map((item) => ({ foodId: item.food.id, amountG: item.amountG })),
-  }
-}
 
 const iconProps = {
   height: 24,
