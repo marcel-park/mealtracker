@@ -194,10 +194,6 @@ select:focus-visible {
   color: var(--ink);
 }
 
-.tool-btn.danger {
-  color: var(--danger);
-}
-
 /* destructive action next to a primary one: outlined only, so the primary stays the eye-catcher */
 .btn.danger-outline {
   border-color: var(--danger);
