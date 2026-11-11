@@ -22,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -190,6 +191,34 @@ class MealServiceTest {
             MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.kcal()).isEqualTo(380.0);
+        }
+    }
+
+    // ---------- findBookedOn ----------
+
+    @Nested
+    class FindBookedOn {
+
+        @Test
+        void findBookedOn_asksForTheWholeDayFromMidnightToMidnight() {
+            when(mealRepository.findAllBookedBetween(USER_ID,
+                    LocalDateTime.of(2026, 11, 11, 0, 0), LocalDateTime.of(2026, 11, 12, 0, 0)))
+                    .thenReturn(List.of(meal(2L, "Mittagessen"), meal(1L, "Frühstück")));
+
+            List<MealResponse> result = service.findBookedOn(USER_ID, LocalDate.of(2026, 11, 11));
+
+            assertThat(result).extracting(MealResponse::id).containsExactly(2L, 1L);
+        }
+
+        @Test
+        void findBookedOn_lastDayOfTheYear_endsAtNewYear() {
+            when(mealRepository.findAllBookedBetween(USER_ID,
+                    LocalDateTime.of(2026, 12, 31, 0, 0), LocalDateTime.of(2027, 1, 1, 0, 0)))
+                    .thenReturn(List.of(meal(1L, "Silvester")));
+
+            List<MealResponse> result = service.findBookedOn(USER_ID, LocalDate.of(2026, 12, 31));
+
+            assertThat(result).extracting(MealResponse::title).containsExactly("Silvester");
         }
     }
 
@@ -440,7 +469,7 @@ class MealServiceTest {
         }
     }
 
-    // ---------- delete / deleteAll ----------
+    // ---------- delete ----------
 
     @Nested
     class Delete {
@@ -464,14 +493,6 @@ class MealServiceTest {
                     .hasMessage("Meal with id 99 not found");
 
             verify(mealRepository, never()).delete(any());
-        }
-
-        @Test
-        void deleteAll_deletesOnlyTheMealsOfTheUser() {
-            service.deleteAll(USER_ID);
-
-            verify(mealRepository).deleteAllByUserId(USER_ID);
-            verify(mealRepository, never()).deleteAll();
         }
     }
 }

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,11 +16,16 @@ public interface MealRepository extends JpaRepository<Meal, Long> {
 
     List<Meal> findAllByUserIdOrderByBookedAtDesc(Long userId);
 
-    Optional<Meal> findByIdAndUserId(Long id, Long userId);
+    // Meals booked from `from` (inclusive) up to `to` (exclusive), newest first.
+    @Query("""
+            select m from Meal m
+            where m.user.id = :userId and m.bookedAt >= :from and m.bookedAt < :to
+            order by m.bookedAt desc
+            """)
+    List<Meal> findAllBookedBetween(@Param("userId") Long userId, @Param("from") LocalDateTime from,
+                                    @Param("to") LocalDateTime to);
 
-    // Derived delete: loads the meals and removes them one by one, so the cascade to meal_item
-    // applies. Needs a running transaction (MealService.deleteAll is @Transactional).
-    void deleteAllByUserId(Long userId);
+    Optional<Meal> findByIdAndUserId(Long id, Long userId);
 
     // Hands meals booked before multi-user support (no owner yet) over to the given user.
     @Modifying
