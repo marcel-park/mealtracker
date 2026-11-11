@@ -58,7 +58,7 @@ class FoodControllerTest {
 
     @Test
     void list_returnsFoodsAsJson() throws Exception {
-        when(service.find(1L, null, null)).thenReturn(List.of(
+        when(service.find(1L, null, null, false)).thenReturn(List.of(
                 new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, true, false, false)));
 
         mockMvc.perform(get("/api/foods"))
@@ -164,7 +164,7 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("query", "hafer"))
                 .andExpect(status().isOk());
 
-        verify(service).find(1L, "hafer", null);
+        verify(service).find(1L, "hafer", null, false);
     }
 
     // ---------- PUT /api/foods/{id} ----------
@@ -216,7 +216,15 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("scope", "OWN"))
                 .andExpect(status().isOk());
 
-        verify(service).find(1L, null, CatalogScope.OWN);
+        verify(service).find(1L, null, CatalogScope.OWN, false);
+    }
+
+    @Test
+    void list_confirmedOnly_passesFlagToService() throws Exception {
+        mockMvc.perform(get("/api/foods").param("scope", "PUBLIC").param("confirmed", "true"))
+                .andExpect(status().isOk());
+
+        verify(service).find(1L, null, CatalogScope.PUBLIC, true);
     }
 
     @Test
@@ -230,7 +238,7 @@ class FoodControllerTest {
 
     @Test
     void list_returnsOwnershipFlags() throws Exception {
-        when(service.find(1L, null, null)).thenReturn(List.of(
+        when(service.find(1L, null, null, false)).thenReturn(List.of(
                 new FoodResponse(1L, "Haferflocken", 372, 13.5, 58.7, 7, false, true, false)));
 
         mockMvc.perform(get("/api/foods"))

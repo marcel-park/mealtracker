@@ -63,9 +63,9 @@ class RecipeControllerTest {
 
     @Test
     void list_returnsRecipesWithItemsAsJson() throws Exception {
-        when(service.find(1L, "chili", CatalogScope.PUBLIC)).thenReturn(List.of(chili()));
+        when(service.find(1L, "chili", CatalogScope.PUBLIC, true)).thenReturn(List.of(chili()));
 
-        mockMvc.perform(get("/api/recipes").param("query", "chili").param("scope", "PUBLIC"))
+        mockMvc.perform(get("/api/recipes").param("query", "chili").param("scope", "PUBLIC").param("confirmed", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(5))
                 .andExpect(jsonPath("$[0].servings").value(4.0))

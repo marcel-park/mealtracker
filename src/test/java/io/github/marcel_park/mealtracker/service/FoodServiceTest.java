@@ -111,37 +111,44 @@ class FoodServiceTest {
             when(repository.search(USER_ID, "%50!% fett%", false, false, false))
                     .thenReturn(List.of(food(1L, "Quark 50% Fett", me, false)));
 
-            List<FoodResponse> result = service.find(USER_ID, " 50% Fett ", null);
+            List<FoodResponse> result = service.find(USER_ID, " 50% Fett ", null, false);
 
             assertThat(result).extracting(FoodResponse::name).containsExactly("Quark 50% Fett");
         }
 
         @Test
         void withoutQuery_matchesEveryName() {
-            service.find(USER_ID, "  ", null);
+            service.find(USER_ID, "  ", null, false);
 
             verify(repository).search(USER_ID, "%", false, false, false);
         }
 
         @Test
         void ownScope_setsOnlyOwnFlag() {
-            service.find(USER_ID, "hafer", CatalogScope.OWN);
+            service.find(USER_ID, "hafer", CatalogScope.OWN, false);
 
             verify(repository).search(USER_ID, "%hafer%", true, false, false);
         }
 
         @Test
         void publicScope_setsOnlyPublicFlag() {
-            service.find(USER_ID, null, CatalogScope.PUBLIC);
+            service.find(USER_ID, null, CatalogScope.PUBLIC, false);
 
             verify(repository).search(USER_ID, "%", false, true, false);
         }
 
         @Test
-        void confirmedScope_setsOnlyConfirmedFlag() {
-            service.find(USER_ID, null, CatalogScope.CONFIRMED);
+        void confirmedOnly_setsOnlyConfirmedFlag() {
+            service.find(USER_ID, null, null, true);
 
             verify(repository).search(USER_ID, "%", false, false, true);
+        }
+
+        @Test
+        void confirmedOnly_combinesWithScope() {
+            service.find(USER_ID, null, CatalogScope.OWN, true);
+
+            verify(repository).search(USER_ID, "%", true, false, true);
         }
 
         @Test
@@ -151,7 +158,7 @@ class FoodServiceTest {
                     food(2L, "Fremdes Brot", other, true),
                     food(3L, "Altes Brot", null, false)));
 
-            List<FoodResponse> result = service.find(USER_ID, null, null);
+            List<FoodResponse> result = service.find(USER_ID, null, null, false);
 
             assertThat(result)
                     .extracting(FoodResponse::owned, FoodResponse::published)

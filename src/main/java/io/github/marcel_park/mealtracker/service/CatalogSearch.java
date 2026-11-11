@@ -10,12 +10,13 @@ record CatalogSearch(String namePattern, boolean ownOnly, boolean publicOnly, bo
 
     static final char ESCAPE = '!';
 
-    static CatalogSearch of(String query, CatalogScope scope) {
+    // confirmedOnly combines with the scope, e.g. "own and confirmed".
+    static CatalogSearch of(String query, CatalogScope scope, boolean confirmedOnly) {
         return new CatalogSearch(
                 containsPattern(query),
                 scope == CatalogScope.OWN,
                 scope == CatalogScope.PUBLIC,
-                scope == CatalogScope.CONFIRMED);
+                confirmedOnly);
     }
 
     // "50% Fett" must find the text "50% Fett", so the LIKE wildcards typed by the user are escaped.
