@@ -62,8 +62,8 @@ public class RecipeService {
 
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
     @Transactional(readOnly = true)
-    public List<RecipeResponse> find(Long userId, String query, CatalogScope scope) {
-        CatalogSearch search = CatalogSearch.of(query, scope);
+    public List<RecipeResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly) {
+        CatalogSearch search = CatalogSearch.of(query, scope, confirmedOnly);
         return recipeRepository.search(userId, search.namePattern(),
                         search.ownOnly(), search.publicOnly(), search.confirmedOnly()).stream()
                 .map(recipe -> toResponse(recipe, userId))

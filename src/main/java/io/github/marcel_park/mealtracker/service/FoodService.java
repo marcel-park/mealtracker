@@ -49,8 +49,8 @@ public class FoodService {
     }
 
     @Transactional(readOnly = true)
-    public List<FoodResponse> find(Long userId, String query, CatalogScope scope) {
-        CatalogSearch search = CatalogSearch.of(query, scope);
+    public List<FoodResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly) {
+        CatalogSearch search = CatalogSearch.of(query, scope, confirmedOnly);
         return foodRepository.search(userId, search.namePattern(),
                         search.ownOnly(), search.publicOnly(), search.confirmedOnly()).stream()
                 .map(food -> FoodResponse.from(food, userId))

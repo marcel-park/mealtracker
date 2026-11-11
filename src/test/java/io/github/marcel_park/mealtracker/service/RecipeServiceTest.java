@@ -124,9 +124,9 @@ class RecipeServiceTest {
             Recipe chili = recipe(1L, me, false);
             chili.addItem(beans, 400);     // 400 kcal
             chili.addItem(tomatoes, 500);  // 100 kcal
-            when(recipeRepository.search(USER_ID, "%chili%", true, false, false)).thenReturn(List.of(chili));
+            when(recipeRepository.search(USER_ID, "%chili%", true, false, true)).thenReturn(List.of(chili));
 
-            RecipeResponse result = service.find(USER_ID, "Chili", CatalogScope.OWN).get(0);
+            RecipeResponse result = service.find(USER_ID, "Chili", CatalogScope.OWN, true).get(0);
 
             assertThat(result.name()).isEqualTo("Chili");
             assertThat(result.servings()).isEqualTo(4.0);

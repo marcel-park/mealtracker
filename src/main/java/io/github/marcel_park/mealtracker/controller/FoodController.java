@@ -32,12 +32,13 @@ public class FoodController {
         this.foodService = foodService;
     }
 
-    // ?scope=PUBLIC|OWN|CONFIRMED, without scope everything the user may see.
+    // ?scope=PUBLIC|OWN (without: everything the user may see), ?confirmed=true: confirmed ones only.
     @GetMapping
     public List<FoodResponse> list(@AuthenticationPrincipal CurrentUser user,
                                    @RequestParam(required = false) String query,
-                                   @RequestParam(required = false) CatalogScope scope) {
-        return foodService.find(user.userId(), query, scope);
+                                   @RequestParam(required = false) CatalogScope scope,
+                                   @RequestParam(defaultValue = "false") boolean confirmed) {
+        return foodService.find(user.userId(), query, scope, confirmed);
     }
 
     @GetMapping("/{id}")
