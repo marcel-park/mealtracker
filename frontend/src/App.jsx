@@ -25,6 +25,7 @@ import {
   UNIT_GRAM,
   UNIT_PORTION,
   bookingFor,
+  addToBookingItems,
   bookingSelection,
   convertQuantity,
   editorChanges,
@@ -48,6 +49,7 @@ import {
 
 const SEARCH_PARAM = 'query'
 const SCOPE_PARAM = 'scope'
+const CONFIRMED_PARAM = 'confirmed'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
@@ -87,22 +89,24 @@ const CATALOG_KINDS = [
 ]
 const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes }
 
-// At most one filter is active; without one the search shows everything the user may see
-// (own entries, private ones included, and all public ones). Values as the backend expects them.
-const SCOPE_FILTERS = [
+// Whose entries the search shows. "Alle": everything the user may see (own entries, private
+// ones included, and all public ones). Values as the backend expects them ('' = no scope).
+// "Nur bestätigte" is a separate toggle that combines with any of these.
+const SCOPE_OPTIONS = [
+  { value: '', label: 'Alle', Icon: AllIcon },
   { value: 'PUBLIC', label: 'Öffentlich', Icon: GlobeIcon },
   { value: 'OWN', label: 'Eigene', Icon: PersonIcon },
-  { value: 'CONFIRMED', label: 'Bestätigt', Icon: SealIcon, disabled: true }, // nobody confirms yet
   { value: 'FRIENDS', label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
 ]
 
 
-// GET /api/foods or /api/recipes with the search text and the filter (scope), if any.
-function fetchCatalog(kind, query, scope, signal) {
+// GET /api/foods or /api/recipes with the search text and the filters, if any.
+function fetchCatalog(kind, { query, scope, confirmedOnly }, signal) {
   const params = new URLSearchParams()
   const search = query.trim()
   if (search) params.set(SEARCH_PARAM, search)
   if (scope) params.set(SCOPE_PARAM, scope)
+  if (confirmedOnly) params.set(CONFIRMED_PARAM, 'true')
   const paramText = params.toString()
   return request(paramText ? `${KIND_URLS[kind]}?${paramText}` : KIND_URLS[kind], { signal })
 }
@@ -215,9 +219,9 @@ function PersonIcon() {
   )
 }
 
-function SealIcon() {
+function SealIcon({ size = 16 }) {
   return (
-    <svg {...smallIconProps}>
+    <svg {...smallIconProps} width={size} height={size}>
       {/* round seal: 12 even points around the centre */}
       <path d="M12 2.4L14.07 4.27L16.8 3.69L17.66 6.34L20.31 7.2L19.73 9.93L21.6 12L19.73 14.07L20.31 16.8L17.66 17.66L16.8 20.31L14.07 19.73L12 21.6L9.93 19.73L7.2 20.31L6.34 17.66L3.69 16.8L4.27 14.07L2.4 12L4.27 9.93L3.69 7.2L6.34 6.34L7.2 3.69L9.93 4.27Z" />
       <path d="M8.6 12.2l2.4 2.4 4.4-4.8" />
@@ -232,6 +236,26 @@ function PeopleIcon() {
       <path d="M2.5 20c1.1-3.2 3.4-5 6.5-5s5.4 1.8 6.5 5" />
       <path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6" />
       <path d="M17.8 15.4c1.7.7 3 2.3 3.7 4.6" />
+    </svg>
+  )
+}
+
+// "Alle" in the filter select: four squares.
+function AllIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  )
+}
+
+function MinusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" {...iconProps} height="22" strokeWidth={2.4}>
+      <path d="M5 12h14" />
     </svg>
   )
 }
@@ -263,10 +287,10 @@ function PrivateMark({ entry }) {
   )
 }
 
-// Foods or recipes (kind) matching `query` and the filter `scope`, loaded once typing pauses.
-// A change of `version` loads them again, e.g. after something was saved.
+// Foods or recipes (kind) matching the search (text and filters, see NEW_SEARCH), loaded once
+// typing pauses. A change of `version` loads them again, e.g. after something was saved.
 // onError must be stable (e.g. a state setter), otherwise every render restarts the request.
-function useCatalog(kind, query, scope, version, onError) {
+function useCatalog(kind, { query, scope, confirmedOnly }, version, onError) {
   // Results remember their kind: right after switching, the old list must not be shown as the new kind.
   const [result, setResult] = useState({ kind, entries: [] })
 
@@ -274,7 +298,8 @@ function useCatalog(kind, query, scope, version, onError) {
     const controller = new AbortController()
     const timer = setTimeout(async () => {
       try {
-        setResult({ kind, entries: await fetchCatalog(kind, query, scope, controller.signal) })
+        const entries = await fetchCatalog(kind, { query, scope, confirmedOnly }, controller.signal)
+        setResult({ kind, entries })
         onError(null)
       } catch (error) {
         if (!controller.signal.aborted) onError(error.message)
@@ -285,7 +310,7 @@ function useCatalog(kind, query, scope, version, onError) {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [kind, query, scope, version, onError])
+  }, [kind, query, scope, confirmedOnly, version, onError])
 
   return result.kind === kind ? result.entries : []
 }
@@ -339,9 +364,10 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
 }
 
 // Search field with the filter row below it. Both stick to the top while the list scrolls.
-// children: extra buttons right of the kind select (the "+" of the food database).
+// Filter row: "only confirmed" toggle, whose entries, foods or recipes; the two selects share the
+// width. children: extra buttons at the end (the "+" of the food database).
 function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked = false, children }) {
-  const { query, scope, kind } = search
+  const { query, scope, confirmedOnly, kind } = search
   const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
 
   return (
@@ -359,57 +385,166 @@ function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked
         />
       </div>
       <div className="catalog-filter">
-        <div className="filter-pills" role="group" aria-label="Filter">
-          {SCOPE_FILTERS.map(({ value, label, Icon, disabled }) => (
-            <button
-              key={value}
-              type="button"
-              className="pill"
-              aria-pressed={scope === value}
-              disabled={disabled}
-              title={disabled ? `${label}: kommt bald` : undefined}
-              onClick={() => onSearchChange({ ...search, scope: scope === value ? null : value })}
-            >
-              <Icon />
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="filter-end">
-          <SelectBox
-            label="Art"
-            value={kindLocked ? KIND_FOODS : kind}
-            options={CATALOG_KINDS}
-            disabled={kindLocked}
-            onChange={(value) => onSearchChange({ ...search, kind: value })}
-          />
-          {children}
-        </div>
+        {/* Disabled until foods and recipes can be confirmed; the backend filter exists. */}
+        <button
+          type="button"
+          className="toggle-btn"
+          aria-pressed={confirmedOnly}
+          title="Nur bestätigte: kommt bald"
+          aria-label="Nur bestätigte"
+          disabled
+          onClick={() => onSearchChange({ ...search, confirmedOnly: !confirmedOnly })}
+        >
+          <SealIcon size={22} />
+        </button>
+        <SelectBox
+          label="Filter"
+          className="fill"
+          value={scope ?? ''}
+          options={SCOPE_OPTIONS}
+          onChange={(value) => onSearchChange({ ...search, scope: value === '' ? null : value })}
+        />
+        <SelectBox
+          label="Art"
+          className="fill fill-more"
+          value={kindLocked ? KIND_FOODS : kind}
+          options={CATALOG_KINDS}
+          disabled={kindLocked}
+          onChange={(value) => onSearchChange({ ...search, kind: value })}
+        />
+        {children}
       </div>
     </div>
   )
 }
 
-// Search text, filter (null: everything the user may see) and kind of a search view.
-const NEW_SEARCH = { query: '', scope: null, kind: KIND_FOODS }
+// Search text, whose entries (scope, null: everything the user may see), "only confirmed" and
+// kind of a search view.
+const NEW_SEARCH = { query: '', scope: null, confirmedOnly: false, kind: KIND_FOODS }
 
-// A native select (for the phone's own picker) with a monochrome chevron.
+const DROPDOWN_MAX_HEIGHT = 280
+const DROPDOWN_SCREEN_MARGIN = 16 // distance the open list keeps from the screen edge
+
+// A select that opens as a list right below (or, without room there, above) itself. A native
+// <select> would open as a dialog with radio buttons in the middle of the screen on Android.
+// options: [{ value, label, Icon?, disabled? }]. Keyboard: arrows, Enter/Space, Escape.
 function SelectBox({ label, value, options, disabled = false, className = '', onChange }) {
+  const [open, setOpen] = useState(null) // null, or { up, alignEnd, maxWidth } of the open list
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const rootRef = useRef(null)
+  const listId = useId()
+  const selected = options.find((option) => option.value === value)
+
+  // A tap anywhere else closes the list.
+  useEffect(() => {
+    if (!open) return
+    function closeOnOutsideTap(event) {
+      if (!rootRef.current.contains(event.target)) setOpen(null)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideTap)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideTap)
+  }, [open])
+
+  function openList() {
+    const box = rootRef.current.getBoundingClientRect()
+    const roomBelow = window.innerHeight - box.bottom
+    // Grow towards the side with more room; long names wrap instead of leaving the screen.
+    const roomRight = window.innerWidth - box.left - DROPDOWN_SCREEN_MARGIN
+    const roomLeft = box.right - DROPDOWN_SCREEN_MARGIN
+    setOpen({
+      up: roomBelow < DROPDOWN_MAX_HEIGHT && box.top > roomBelow,
+      alignEnd: roomLeft > roomRight,
+      maxWidth: Math.max(roomLeft, roomRight),
+    })
+    setActiveIndex(options.indexOf(selected))
+  }
+
+  function choose(option) {
+    if (option.disabled) return
+    setOpen(null)
+    if (option.value !== value) onChange(option.value)
+  }
+
+  // The next option that can be chosen, from activeIndex in direction step (+1 / -1).
+  function nextEnabled(step) {
+    for (let i = activeIndex + step; i >= 0 && i < options.length; i += step) {
+      if (!options[i].disabled) return i
+    }
+    return activeIndex
+  }
+
+  function onKeyDown(event) {
+    const opening = ['ArrowDown', 'ArrowUp', 'Enter', ' ']
+    if (!open) {
+      if (opening.includes(event.key)) {
+        event.preventDefault()
+        openList()
+      }
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(null)
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveIndex(nextEnabled(event.key === 'ArrowDown' ? 1 : -1))
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (options[activeIndex]) choose(options[activeIndex])
+    } else if (event.key === 'Tab') {
+      setOpen(null)
+    }
+  }
+
+  const listClass = ['select-list', open?.up ? 'up' : '', open?.alignEnd ? 'align-end' : '']
+    .join(' ')
+    .trim()
+
   return (
-    <span className={`select-box ${className}`}>
-      <select
-        aria-label={label}
-        value={value}
+    <span className={`select-box ${className}`} ref={rootRef}>
+      <button
+        type="button"
+        className="select-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open !== null}
+        aria-controls={open ? listId : undefined}
+        aria-label={`${label}: ${selected?.label ?? ''}`}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
+        onClick={() => (open ? setOpen(null) : openList())}
+        onKeyDown={onKeyDown}
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDownIcon />
+        {selected?.Icon && <selected.Icon />}
+        <span className="select-value">{selected?.label}</span>
+        <span className="select-chevron">
+          <ChevronDownIcon />
+        </span>
+      </button>
+      {open && (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label={label}
+          className={listClass}
+          style={{ maxWidth: open.maxWidth }}
+        >
+          {options.map((option, index) => (
+            <li
+              key={String(option.value)}
+              role="option"
+              aria-selected={option.value === value}
+              aria-disabled={option.disabled || undefined}
+              className={index === activeIndex ? 'active' : undefined}
+              onPointerEnter={() => !option.disabled && setActiveIndex(index)}
+              onClick={() => choose(option)}
+            >
+              {option.Icon && <option.Icon />}
+              <span>{option.label}</span>
+              {option.disabled && <span className="soon">bald</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </span>
   )
 }
@@ -604,7 +739,7 @@ function FoodSearch({
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const kind = kindLocked ? KIND_FOODS : search.kind
-  const entries = useCatalog(kind, search.query, search.scope, version, onError)
+  const entries = useCatalog(kind, search, version, onError)
 
   return (
     <section hidden={!visible}>
@@ -845,7 +980,7 @@ function FoodDetail({ food, initialAmountG, confirmLabel, onConfirm, onClose }) 
 // so the search survives. version: reloads the list when it changes (after saving).
 function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onError }) {
   const [search, setSearch] = useState(NEW_SEARCH)
-  const entries = useCatalog(search.kind, search.query, search.scope, version, onError)
+  const entries = useCatalog(search.kind, search, version, onError)
   const isRecipes = search.kind === KIND_RECIPES
   const addLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
 
@@ -1083,8 +1218,8 @@ function SaveVariationDialog({ recipeName, onSave, onClose }) {
   const [name, setName] = useState(() => suggestedVariationName(recipeName))
   return (
     <FormDialog
-      title="Variation speichern"
-      confirmLabel="Speichern"
+      title="Variation erstellen"
+      confirmLabel="Erstellen"
       canConfirm={name.trim() !== ''}
       onConfirm={() => onSave(name)}
       onClose={onClose}
@@ -1183,6 +1318,7 @@ function RecipeEditor({
   onDelete,
   onClose,
 }) {
+  const servingsId = useId()
   const { recipe, variationId, items, layer } = editor
   const isNew = editor.id === null
   const readOnly = !editor.owned
@@ -1202,6 +1338,12 @@ function RecipeEditor({
       items: items.map((item) => (item.food.id === foodId ? { ...item, amountG } : item)),
       layer: null,
     })
+  }
+
+  // "−" / "+" next to the portions: one less or more, never 0 or below.
+  function stepServings(step) {
+    const next = roundToOneDecimal((servings > 0 ? servings : 0) + step)
+    if (next > 0) onChange({ servingsText: String(next) })
   }
 
   // In a variation, an ingredient of the original stays listed with 0 g.
@@ -1259,11 +1401,6 @@ function RecipeEditor({
               ]}
               onChange={(value) => onSelectVariation(value === '' ? null : Number(value))}
             />
-            {isVariation && (
-              <span className="hint">
-                Nur du siehst diese Variation. Was du hier nicht änderst, folgt dem Original.
-              </span>
-            )}
           </div>
         )}
         <fieldset className="plain" disabled={readOnly}>
@@ -1278,18 +1415,39 @@ function RecipeEditor({
               onChange={(event) => onChange({ name: event.target.value })}
             />
           </label>
-          <label className="field">
-            <span>Portionen</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              value={editor.servingsText}
-              onChange={(event) => onChange({ servingsText: event.target.value })}
-            />
-            <span className="hint">So viele Portionen ergeben die Mengen unten.</span>
-          </label>
+          <div className="field">
+            <label htmlFor={servingsId}>Portionen gesamt</label>
+            <div className="stepper">
+              <input
+                id={servingsId}
+                type="number"
+                inputMode="decimal"
+                enterKeyHint="done"
+                min="0"
+                step="any"
+                value={editor.servingsText}
+                onFocus={(event) => event.target.select()}
+                onChange={(event) => onChange({ servingsText: event.target.value })}
+              />
+              <button
+                type="button"
+                className="frame-btn"
+                aria-label="Eine Portion weniger"
+                disabled={!(servings - 1 > 0)}
+                onClick={() => stepServings(-1)}
+              >
+                <MinusIcon />
+              </button>
+              <button
+                type="button"
+                className="frame-btn"
+                aria-label="Eine Portion mehr"
+                onClick={() => stepServings(1)}
+              >
+                <PlusIcon size={22} />
+              </button>
+            </div>
+          </div>
           {isVariation ? (
             <label className="field">
               <span>Gesamtgewicht (g)</span>
@@ -1302,7 +1460,6 @@ function RecipeEditor({
                 value={editor.weightText}
                 onChange={(event) => onChange({ weightText: event.target.value })}
               />
-              <span className="hint">Gewicht nach dem Kochen. Leer: Summe der Zutaten.</span>
             </label>
           ) : (
             <>
@@ -1360,7 +1517,7 @@ function RecipeEditor({
                   disabled={!isValid || !changes.items}
                   onClick={() => onChange({ layer: { type: 'saveVariation' } })}
                 >
-                  Variation speichern
+                  Variation erstellen
                 </button>
                 <button
                   type="button"
@@ -1404,11 +1561,13 @@ const BOOKING_UNITS = [
 // Books a recipe into the meal draft: as portions, or as grams of the finished dish. Controlled:
 // the state (see bookingFor) lives in MealTracker, onChange merges changes into it.
 //
-// "Dieses Rezept variieren": amounts, portions and the weight of the dish can be changed. Changes
-// to the original are saved as a new variation, changes to a variation update that variation.
-// Only saved versions can be booked. Recipes of others have no variations; they can be copied
-// ("Als eigenes Rezept speichern") and then booked and varied as the user's own.
-function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, onClose }) {
+// "Dieses Rezept variieren": amounts, portions and the weight of the dish can be changed and foods
+// added, also just for this one booking. Once something is changed, a save button appears: changes
+// to the original become a new variation ("Variation erstellen"), changes to a variation update
+// that variation ("Variation speichern"). Recipes of
+// others have no variations; they can be copied ("Als eigenes Rezept speichern") and then booked
+// and varied as the user's own.
+function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariation, onCopy, onClose }) {
   const { recipe, unit, quantityText, servingsText, weightText, items, variationId, layer } = booking
   const isVariation = variationId !== null
   const totals = totalsOf(items)
@@ -1446,9 +1605,15 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
     else onChange({ layer: { type: 'saveVariation' } })
   }
 
+  // The "−" / "+" next to the portions to book: one portion less or more, never 0 or below.
+  function stepQuantity(step) {
+    const next = roundToOneDecimal((quantity > 0 ? quantity : 0) + step)
+    if (next > 0) onChange({ quantityText: String(next) })
+  }
+
   function submit(event) {
     event.preventDefault()
-    if (!isValid || adjusted) return
+    if (!isValid) return
     const booked = scaleItems(
       items.filter((item) => item.amountG > 0),
       share,
@@ -1469,6 +1634,7 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
     )
   }
 
+  // Tapping a number field selects its value, so typing replaces it right away.
   const settingInput =
     unit === UNIT_PORTION ? (
       <label className="field">
@@ -1476,9 +1642,11 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
         <input
           type="number"
           inputMode="decimal"
+          enterKeyHint="done"
           min="0"
           step="any"
           value={servingsText}
+          onFocus={(event) => event.target.select()}
           onChange={(event) => onChange({ servingsText: event.target.value })}
         />
       </label>
@@ -1490,7 +1658,9 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
           inputMode="decimal"
           min="0"
           step="any"
+          enterKeyHint="done"
           value={weightText ?? String(roundToOneDecimal(totals.amountG))}
+          onFocus={(event) => event.target.select()}
           onChange={(event) => onChange({ weightText: event.target.value })}
         />
       </label>
@@ -1520,6 +1690,27 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
             onChange={(event) => onChange({ quantityText: event.target.value })}
             aria-label={unit === UNIT_PORTION ? 'Anzahl Portionen' : 'Menge in Gramm'}
           />
+          {unit === UNIT_PORTION && (
+            <>
+              <button
+                type="button"
+                className="frame-btn"
+                aria-label="Eine Portion weniger"
+                disabled={!(quantity - 1 > 0)}
+                onClick={() => stepQuantity(-1)}
+              >
+                <MinusIcon />
+              </button>
+              <button
+                type="button"
+                className="frame-btn"
+                aria-label="Eine Portion mehr"
+                onClick={() => stepQuantity(1)}
+              >
+                <PlusIcon size={22} />
+              </button>
+            </>
+          )}
         </div>
         <p className="book-result" role="status">
           {isValid ? formatKcal(totals.kcal * share) : '–'}
@@ -1553,25 +1744,6 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
               />
             </div>
           )}
-          {recipe.owned ? (
-            <button
-              type="button"
-              className="btn save-variation"
-              disabled={!adjusted || !isValid}
-              onClick={save}
-            >
-              Variation speichern
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn save-variation"
-              disabled={!isValid}
-              onClick={() => onChange({ layer: { type: 'copy' } })}
-            >
-              Als eigenes Rezept speichern
-            </button>
-          )}
         </div>
         {unit === UNIT_GRAM && (
           <p className="variation-hint">
@@ -1582,15 +1754,6 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
                 Aus Zutaten berechnen
               </button>
             )}
-          </p>
-        )}
-        {adjusted && (
-          <p className="hint warning variation-hint">
-            {!recipe.owned
-              ? 'Geändert. Speichere das Rezept als dein eigenes, um es so zu buchen.'
-              : isVariation
-                ? 'Geändert. Speichere die Variation, um sie so zu buchen.'
-                : 'Geändert. Speichere die Änderungen als Variation, um sie zu buchen.'}
           </p>
         )}
 
@@ -1605,9 +1768,30 @@ function RecipeBooking({ booking, onChange, onConfirm, onSaveVariation, onCopy, 
             />
           ))}
         </div>
+        <button type="button" className="btn add-more" onClick={onAddFoods}>
+          <PlusIcon size={18} />
+          Lebensmittel hinzufügen
+        </button>
 
-        <div className="bar">
-          <button type="submit" className="btn primary" disabled={!isValid || adjusted}>
+        {/* Saving is offered once something was changed; booking works either way. Recipes of
+            others can always be copied. */}
+        <div className={adjusted || !recipe.owned ? 'bar stacked' : 'bar'}>
+          {recipe.owned && adjusted && (
+            <button type="button" className="btn" disabled={!isValid} onClick={save}>
+              {isVariation ? 'Variation speichern' : 'Variation erstellen'}
+            </button>
+          )}
+          {!recipe.owned && (
+            <button
+              type="button"
+              className="btn"
+              disabled={!isValid}
+              onClick={() => onChange({ layer: { type: 'copy' } })}
+            >
+              Als eigenes Rezept speichern
+            </button>
+          )}
+          <button type="submit" className="btn primary" disabled={!isValid}>
             Zur Mahlzeit hinzufügen
           </button>
         </div>
@@ -2009,7 +2193,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
   const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
-  const [recipeSearch, setRecipeSearch] = useState(null) // null or { entries, previewing }: foods about to be added to the recipe
+  // Food search on top of the recipe editor or the booking view: null or { target, entries,
+  // previewing }, target 'editor' | 'booking'; entries are the foods about to be added.
+  const [recipeSearch, setRecipeSearch] = useState(null)
   const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
   const [confirm, setConfirm] = useState(null) // props of the open ConfirmDialog
   const [notice, setNotice] = useState(null)
@@ -2307,8 +2493,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setRecipeEditor((current) => editorFor(current.recipe, variationId))
   }
 
-  function openRecipeSearch() {
-    setRecipeSearch({ entries: [], previewing: false })
+  function openRecipeSearch(target) {
+    setRecipeSearch({ target, entries: [], previewing: false })
   }
 
   function addToRecipeSearch(food, amountG) {
@@ -2322,12 +2508,21 @@ function MealTracker({ user, onUserChange, onLogout }) {
     }))
   }
 
+  // In the booking view the weight follows the ingredients again, as after changing an amount.
   function applyRecipeSearch() {
-    const added = recipeSearch.entries
-    setRecipeEditor((current) => ({
-      ...current,
-      items: mergeEditorItems(current.items, added, current.variationId !== null),
-    }))
+    const { target, entries: added } = recipeSearch
+    if (target === 'booking') {
+      setRecipeBooking((current) => ({
+        ...current,
+        items: addToBookingItems(current.items, added),
+        weightText: null,
+      }))
+    } else {
+      setRecipeEditor((current) => ({
+        ...current,
+        items: mergeEditorItems(current.items, added, current.variationId !== null),
+      }))
+    }
     setRecipeSearch(null)
   }
 
@@ -2496,10 +2691,10 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setNotice(null)
     if (confirm) setConfirm(null)
     else if (detail) setDetail(null)
-    else if (recipeBooking?.layer) updateBooking({ layer: null })
-    else if (recipeBooking) setRecipeBooking(null)
     else if (recipeSearch?.previewing) setRecipeSearch({ ...recipeSearch, previewing: false })
     else if (recipeSearch) setRecipeSearch(null)
+    else if (recipeBooking?.layer) updateBooking({ layer: null })
+    else if (recipeBooking) setRecipeBooking(null)
     else if (recipeEditor?.layer) updateEditor({ layer: null })
     else if (recipeEditor) setRecipeEditor(null)
     else if (foodForm) setFoodForm(null)
@@ -2553,7 +2748,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
           visible={view === 'search' && !detail && !recipeBooking}
           version={catalogVersion}
           draftCount={draft.entries.length}
-          submitLabel={isEditing ? 'Mahlzeit speichern' : 'Mahlzeit hinzufügen'}
+          submitLabel={isEditing ? 'Mahlzeit speichern' : 'Mahlzeit buchen'}
           onOpenFood={openFoodDetail}
           onAddFood={addToDraft}
           onOpenRecipe={openRecipeBooking}
@@ -2565,10 +2760,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {view === 'search' && recipeBooking && (
+      {view === 'search' && recipeBooking && !recipeSearch && (
         <RecipeBooking
           booking={recipeBooking}
           onChange={updateBooking}
+          onAddFoods={() => openRecipeSearch('booking')}
           onConfirm={confirmRecipeBooking}
           onSaveVariation={saveBookingVariation}
           onCopy={copyBookingRecipe}
@@ -2619,7 +2815,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
               editor={recipeEditor}
               onChange={updateEditor}
               onSelectVariation={selectEditorVariation}
-              onAddFoods={openRecipeSearch}
+              onAddFoods={() => openRecipeSearch('editor')}
               onSave={saveRecipe}
               onSaveAsVariation={saveEditorAsVariation}
               onOverwrite={() => saveOriginal(true)}
@@ -2627,31 +2823,33 @@ function MealTracker({ user, onUserChange, onLogout }) {
               onClose={goBack}
             />
           )}
-          {/* Recipes cannot contain recipes, so this search only offers foods. */}
-          {recipeSearch && (
-            <FoodSearch
-              visible={!recipeSearch.previewing && !detail}
-              kindLocked
-              draftCount={recipeSearch.entries.length}
-              submitLabel="Hinzufügen"
-              closeLabel="Zurück zum Rezept"
-              onOpenFood={openRecipeFoodDetail}
-              onAddFood={addToRecipeSearch}
-              onPreview={() => setRecipeSearch({ ...recipeSearch, previewing: true })}
-              onSubmit={applyRecipeSearch}
-              onClose={goBack}
-              onError={setError}
-            />
-          )}
-          {recipeSearch?.previewing && !detail && (
-            <DraftPreview
-              entries={recipeSearch.entries}
-              showDelta={false}
-              onRemoveEntry={removeFromRecipeSearch}
-              onClose={goBack}
-            />
-          )}
         </>
+      )}
+
+      {/* Adds foods to the recipe editor or the booking view. Recipes cannot contain recipes,
+          so this search only offers foods. */}
+      {recipeSearch && (
+        <FoodSearch
+          visible={!recipeSearch.previewing && !detail}
+          kindLocked
+          draftCount={recipeSearch.entries.length}
+          submitLabel="Hinzufügen"
+          closeLabel={recipeSearch.target === 'booking' ? 'Zurück zur Buchung' : 'Zurück zum Rezept'}
+          onOpenFood={openRecipeFoodDetail}
+          onAddFood={addToRecipeSearch}
+          onPreview={() => setRecipeSearch({ ...recipeSearch, previewing: true })}
+          onSubmit={applyRecipeSearch}
+          onClose={goBack}
+          onError={setError}
+        />
+      )}
+      {recipeSearch?.previewing && !detail && (
+        <DraftPreview
+          entries={recipeSearch.entries}
+          showDelta={false}
+          onRemoveEntry={removeFromRecipeSearch}
+          onClose={goBack}
+        />
       )}
 
       {detail && (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NEW_EDITOR,
+  addToBookingItems,
   UNIT_GRAM,
   UNIT_PORTION,
   bookingFor,
@@ -201,6 +202,21 @@ describe('booking view', () => {
       items: changed.items.map((item) => (item.food === beans ? { ...item, amountG: 400 } : item)),
     }
     expect(isAdjusted(back)).toBe(false)
+  })
+
+  it('adds foods: same food adds up, a new one counts as a change', () => {
+    const booking = bookingFor(chili, null)
+    const items = addToBookingItems(booking.items, [
+      { food: beans, amountG: 50 },
+      { food: rice, amountG: 100 },
+    ])
+    expect(items.map((item) => [item.food.name, item.amountG, item.originalG, item.savedG])).toEqual([
+      ['Kidneybohnen', 450, 400, 400],
+      ['Tomaten', 500, 500, 500],
+      ['Reis', 100, 0, 0],
+    ])
+    expect(isAdjusted({ ...booking, items })).toBe(true)
+    expect(booking.items[0].amountG).toBe(400) // the input is not changed
   })
 
   it('is adjusted after changing portions or weight; "5" and "5.0" are the same', () => {
