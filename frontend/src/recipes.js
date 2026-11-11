@@ -184,6 +184,18 @@ export function bookingFor(recipe, variationId = recipe.lastUsedVariationId) {
   }
 }
 
+// Foods added in the booking view: same food adds up, a new food was in neither the original
+// nor the shown version (originalG and savedG 0), so it counts as a change.
+export function addToBookingItems(items, added) {
+  const merged = items.map((item) => ({ ...item }))
+  for (const { food, amountG } of added) {
+    const existing = merged.find((item) => item.food.id === food.id)
+    if (existing) existing.amountG = roundToOneDecimal(existing.amountG + amountG)
+    else merged.push({ food, amountG, originalG: 0, savedG: 0 })
+  }
+  return merged
+}
+
 // Changed since the shown version (original or variation) was loaded or saved. Booking is only
 // possible once that is saved: as a (new) variation, or as an own copy of somebody else's recipe.
 export function isAdjusted(booking) {

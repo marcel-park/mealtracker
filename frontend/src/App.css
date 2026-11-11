@@ -20,6 +20,7 @@
   --icon-button-size: 40px;
   --search-height: 48px;
   --filter-height: 40px;
+  --book-amount-height: 52px;
 
   color-scheme: light dark;
 }
@@ -386,7 +387,7 @@ select:focus-visible {
   background: var(--line);
 }
 
-/* filter buttons on the left, kind select (and "+") on the right */
+/* "only confirmed" and whose entries on the left, kind select (and "+") on the right */
 .catalog-filter {
   display: flex;
   align-items: center;
@@ -394,77 +395,52 @@ select:focus-visible {
   height: var(--filter-height);
 }
 
-/* scrolls sideways when the screen is too narrow for all filters */
-.filter-pills {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-  /* fades out at the right edge, so cut-off filters read as "scroll for more" */
-  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-  padding-right: 20px;
-}
-
-.filter-pills::-webkit-scrollbar {
-  display: none;
-}
-
-.pill {
+/* square on/off button ("only confirmed"), filled while on */
+.toggle-btn {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 12px;
+  justify-content: center;
+  width: var(--filter-height);
+  height: var(--filter-height);
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--ink);
-  font-size: 0.85rem;
-  white-space: nowrap;
 }
 
-.pill[aria-pressed='true'] {
+.toggle-btn[aria-pressed='true'] {
   border-color: var(--ink);
   background: var(--ink);
   color: var(--bg);
-  font-weight: 600;
 }
 
-/* on small phones the words matter more than the icons */
-@media (max-width: 419px) {
-  .pill svg {
-    display: none;
-  }
-
-  .pill {
-    padding: 0 10px;
-    font-size: 0.8rem;
-  }
-
-  .filter-pills {
-    gap: 5px;
-  }
-
-  .catalog-filter .select-box select {
-    padding: 0 28px 0 10px;
-    font-size: 0.85rem;
-  }
-
-  .catalog-filter .select-box svg {
-    right: 8px;
-  }
-}
-
-.filter-end {
-  flex: none;
+/* the filter and kind selects share the rest of the row */
+/* number field with square "−" / "+" next to it (portions in the recipe editor) */
+.stepper {
   display: flex;
-  align-items: center;
   gap: 8px;
+}
+
+.stepper input {
+  flex: 1;
+  min-width: 0;
+  height: var(--search-height);
+}
+
+.select-box.fill {
+  flex: 1;
+  min-width: 0;
+}
+
+.select-box.fill .select-trigger {
+  width: 100%;
+}
+
+/* "Lebensmittel" is longer than the filter names */
+.select-box.fill-more {
+  flex-grow: 1.25;
 }
 
 .catalog-filter .add {
@@ -475,31 +451,167 @@ select:focus-visible {
   height: var(--filter-height);
 }
 
-/* native select with a line chevron instead of the browser's arrow */
+/* small phones: no icons in the closed selects, less padding */
+@media (max-width: 419px) {
+  .catalog-filter {
+    gap: 6px;
+  }
+
+  .catalog-filter .select-trigger {
+    padding: 0 26px 0 10px;
+    font-size: 0.85rem;
+  }
+
+  .catalog-filter .select-trigger > svg {
+    display: none;
+  }
+
+  .catalog-filter .select-chevron {
+    right: 8px;
+  }
+}
+
+/* ----- Select (SelectBox): button plus a list that drops down below it ----- */
+
 .select-box {
   position: relative;
   display: inline-flex;
 }
 
-.select-box select {
-  appearance: none;
+.select-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   height: var(--filter-height);
   padding: 0 32px 0 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
   font-size: 0.9rem;
+  text-align: left;
+  white-space: nowrap;
 }
 
-.select-box svg {
+.select-trigger[aria-expanded='true'] {
+  border-color: var(--muted);
+}
+
+.select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* not the small grey label style of spans in form fields (.field span, .detail-amount span) */
+.select-box .select-trigger span {
+  color: inherit;
+  font-size: inherit;
+}
+
+.select-box .select-trigger .select-chevron {
+  color: var(--muted);
+}
+
+.select-chevron {
   position: absolute;
   top: 50%;
   right: 10px;
-  transform: translateY(-50%);
+  display: flex;
   color: var(--muted);
-  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.select-trigger[aria-expanded='true'] .select-chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+/* above everything else on the page, as wide as its longest option (within the screen) */
+.select-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(100vw - 2 * var(--gutter)); /* narrowed further by SelectBox */
+  max-height: 280px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+  list-style: none;
+  white-space: normal; /* lists inside narrow labels inherit nowrap otherwise */
+}
+
+/* inside a form field: not the small grey label style of .field span */
+.select-box .select-list span {
+  color: inherit;
+  font-size: inherit;
+}
+
+.select-list.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.select-list.align-end {
+  right: 0;
+  left: auto;
+}
+
+.select-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: calc(var(--radius-md) - 4px);
+  color: var(--ink);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.select-list li > span {
+  min-width: 0; /* lets long names wrap */
+}
+
+.select-list li.active {
+  background: var(--bg);
+}
+
+.select-list li[aria-selected='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.select-list li[aria-disabled='true'] {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* "bald" next to options that do not work yet */
+.select-box .select-list .soon {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 0.75rem;
+}
+
+.select-box.wide {
+  display: flex;
+  width: 100%;
+}
+
+.select-box.wide .select-trigger {
+  width: 100%;
+  height: var(--search-height);
+  font-size: 1rem;
 }
 
 /* lock behind the name of entries only the owner can see */
@@ -557,7 +669,8 @@ fieldset.plain:disabled input {
   margin-bottom: 16px;
 }
 
-.field span {
+.field span,
+.field > label {
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -807,13 +920,20 @@ fieldset.plain:disabled input {
   align-self: stretch;
 }
 
-.book-amount .select-box select {
+.book-amount .select-trigger {
   height: 100%;
   font-size: 1.1rem;
 }
 
+/* unit, amount and, for portions, "−" / "+": all as tall as the amount field */
 .book-amount input {
   min-width: 0;
+  height: var(--book-amount-height);
+}
+
+.book-amount .frame-btn {
+  width: var(--book-amount-height);
+  height: var(--book-amount-height);
 }
 
 .book-result {
@@ -864,26 +984,26 @@ fieldset.plain:disabled input {
 
 /* ----- Recipe variations ----- */
 
-/* portions (an eighth), variation select (the rest), save button (as wide as its text).
+/* portions (an eighth, room for three digits), variation select (the rest).
    In gram mode the weight needs room for four digits. */
 .variation-row {
   display: grid;
-  grid-template-columns: calc(12.5% - 7px) minmax(0, 1fr) auto;
+  grid-template-columns: calc(12.5% + 3px) minmax(0, 1fr);
   align-items: end;
   gap: 8px;
 }
 
 .variation-row.gram {
-  grid-template-columns: calc(20% - 7px) minmax(0, 1fr) auto;
+  grid-template-columns: calc(20% - 7px) minmax(0, 1fr);
 }
 
-/* recipes of others have no variations: field and copy button only */
+/* recipes of others have no variations: no select */
 .variation-row.foreign {
-  grid-template-columns: calc(12.5% - 4px) minmax(0, 1fr);
+  grid-template-columns: calc(12.5% + 3px);
 }
 
 .variation-row.gram.foreign {
-  grid-template-columns: calc(20% - 4px) minmax(0, 1fr);
+  grid-template-columns: calc(20% - 7px);
 }
 
 .variation-row .field {
@@ -891,7 +1011,7 @@ fieldset.plain:disabled input {
   margin-bottom: 0;
 }
 
-/* the narrow field's label may reach over the select, which has no label of its own */
+/* the narrow field's label may reach over the select, which has none of its own */
 .variation-row .field > span {
   overflow: visible;
   white-space: nowrap;
@@ -910,32 +1030,6 @@ fieldset.plain:disabled input {
 .variation-row input::-webkit-outer-spin-button {
   margin: 0;
   -webkit-appearance: none;
-}
-
-.variation-row .btn {
-  height: var(--search-height);
-  padding: 0 12px;
-  font-size: 0.9rem;
-  line-height: 1.15;
-}
-
-/* on phones "Variation speichern" breaks into two lines, leaving room for the variation names */
-@media (max-width: 479px) {
-  .variation-row:not(.foreign) .save-variation {
-    max-width: 7.5em;
-  }
-}
-
-.select-box.wide {
-  display: flex;
-  width: 100%;
-}
-
-.select-box.wide select {
-  width: 100%;
-  min-width: 0;
-  height: var(--search-height);
-  text-overflow: ellipsis;
 }
 
 .variation-hint {
