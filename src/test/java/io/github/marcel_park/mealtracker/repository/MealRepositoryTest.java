@@ -130,18 +130,29 @@ class MealRepositoryTest {
     }
 
     @Test
-    void deleteAllByUserId_removesOnlyThatUsersMealsAndTheirItems() {
-        Long aliceMealId = saveMealWithOatsAndMilk(alice).getId();
-        Long bobMealId = saveMealWithOatsAndMilk(bob).getId();
-        flushAndClear();
+    void findAllBookedBetween_includesTheStartButNotTheEnd() {
+        saveMeal(alice, "Gestern spät", LocalDateTime.of(2026, 11, 2, 23, 59, 59));
+        saveMeal(alice, "Mitternacht", LocalDateTime.of(2026, 11, 3, 0, 0));
+        saveMeal(alice, "Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0));
+        saveMeal(alice, "Abendessen", LocalDateTime.of(2026, 11, 3, 23, 59, 59));
+        saveMeal(alice, "Morgen", LocalDateTime.of(2026, 11, 4, 0, 0));
 
-        mealRepository.deleteAllByUserId(alice.getId());
-        flushAndClear();
+        List<Meal> result = mealRepository.findAllBookedBetween(alice.getId(),
+                LocalDateTime.of(2026, 11, 3, 0, 0), LocalDateTime.of(2026, 11, 4, 0, 0));
 
-        assertThat(mealRepository.findById(aliceMealId)).isEmpty();
-        assertThat(countMealItemsOf(aliceMealId)).isZero();
-        assertThat(mealRepository.findById(bobMealId)).isPresent();
-        assertThat(countMealItemsOf(bobMealId)).isEqualTo(2);
+        assertThat(result).extracting(Meal::getTitle)
+                .containsExactly("Abendessen", "Frühstück", "Mitternacht");
+    }
+
+    @Test
+    void findAllBookedBetween_leavesOutMealsOfOtherUsers() {
+        saveMeal(alice, "Alices Frühstück", LocalDateTime.of(2026, 11, 3, 8, 0));
+        saveMeal(bob, "Bobs Frühstück", LocalDateTime.of(2026, 11, 3, 9, 0));
+
+        List<Meal> result = mealRepository.findAllBookedBetween(alice.getId(),
+                LocalDateTime.of(2026, 11, 3, 0, 0), LocalDateTime.of(2026, 11, 4, 0, 0));
+
+        assertThat(result).extracting(Meal::getTitle).containsExactly("Alices Frühstück");
     }
 
     @Test

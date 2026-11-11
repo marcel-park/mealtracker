@@ -13,6 +13,7 @@ import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,17 @@ public class MealService {
     @Transactional(readOnly = true)
     public List<MealResponse> findAll(Long userId) {
         return mealRepository.findAllByUserIdOrderByBookedAtDesc(userId).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    // The meals booked on that day, from 0:00 up to 0:00 of the next day, newest first. The main
+    // view shows only today's meals, so its list starts empty every day at midnight. The app sends
+    // its local date, and bookedAt is the server's local time: both have to be in the same zone.
+    @Transactional(readOnly = true)
+    public List<MealResponse> findBookedOn(Long userId, LocalDate day) {
+        return mealRepository.findAllBookedBetween(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay())
+                .stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -94,12 +106,6 @@ public class MealService {
     @Transactional
     public void delete(Long userId, Long id) {
         mealRepository.delete(getEntity(userId, id));
-    }
-
-    // Only the meals of this user, the "reset" button of the main view.
-    @Transactional
-    public void deleteAll(Long userId) {
-        mealRepository.deleteAllByUserId(userId);
     }
 
     private Meal getEntity(Long userId, Long id) {

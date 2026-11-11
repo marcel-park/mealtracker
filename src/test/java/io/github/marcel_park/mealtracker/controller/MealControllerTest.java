@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -30,6 +31,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -85,6 +87,26 @@ class MealControllerTest {
                 .andExpect(jsonPath("$[0].items[0].foodName").value("Haferflocken"))
                 .andExpect(jsonPath("$[0].items[0].amountG").value(150.0))
                 .andExpect(jsonPath("$[0].items[0].kcal").value(558.0));
+    }
+
+    @Test
+    void list_withDate_returnsOnlyTheMealsOfThatDay() throws Exception {
+        when(service.findBookedOn(USER_ID, LocalDate.of(2026, 11, 3))).thenReturn(List.of(meal(1L)));
+
+        mockMvc.perform(get("/api/meals").param("date", "2026-11-03"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(1));
+
+        verify(service, never()).findAll(any());
+    }
+
+    @Test
+    void list_invalidDate_returns400AndDoesNotCallService() throws Exception {
+        mockMvc.perform(get("/api/meals").param("date", "03.11.2026"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+
+        verifyNoInteractions(service);
     }
 
     // ---------- POST /api/meals ----------
@@ -229,15 +251,5 @@ class MealControllerTest {
         mockMvc.perform(delete("/api/meals/abc"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400));
-    }
-
-    // ---------- DELETE /api/meals ----------
-
-    @Test
-    void deleteAll_returns204() throws Exception {
-        mockMvc.perform(delete("/api/meals"))
-                .andExpect(status().isNoContent());
-
-        verify(service).deleteAll(USER_ID);
     }
 }

@@ -12,6 +12,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.time.LocalDate;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -117,7 +118,7 @@ class MealBookingIntegrationTest {
                 .andReturn();
         long aliceMealId = idOf(booked);
 
-        // Bob neither sees nor changes Alice's meal, and his reset leaves it alone
+        // Bob neither sees nor changes Alice's meal
         mockMvc.perform(as(bob, get("/api/meals")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
@@ -129,12 +130,17 @@ class MealBookingIntegrationTest {
                 .andExpect(status().isNotFound());
         mockMvc.perform(as(bob, delete("/api/meals/" + aliceMealId)))
                 .andExpect(status().isNotFound());
-        mockMvc.perform(as(bob, delete("/api/meals")))
-                .andExpect(status().isNoContent());
+        mockMvc.perform(as(bob, get("/api/meals").param("date", LocalDate.now().toString())))
+                .andExpect(jsonPath("$").isEmpty());
 
+        // Alice finds it among all her meals and among today's
         mockMvc.perform(as(alice, get("/api/meals")))
                 .andExpect(jsonPath("$[*].id").value(contains((int) aliceMealId)))
                 .andExpect(jsonPath("$[0].title").value("Apfel"));
+        mockMvc.perform(as(alice, get("/api/meals").param("date", LocalDate.now().toString())))
+                .andExpect(jsonPath("$[*].id").value(contains((int) aliceMealId)));
+        mockMvc.perform(as(alice, get("/api/meals").param("date", LocalDate.now().minusDays(1).toString())))
+                .andExpect(jsonPath("$").isEmpty());
     }
 
     @Test

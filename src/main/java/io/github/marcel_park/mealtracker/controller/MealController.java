@@ -5,6 +5,7 @@ import io.github.marcel_park.mealtracker.dto.MealResponse;
 import io.github.marcel_park.mealtracker.security.CurrentUser;
 import io.github.marcel_park.mealtracker.service.MealService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,9 +15,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 
 // All endpoints work on the meals of the logged-in user only.
@@ -30,9 +33,15 @@ public class MealController {
         this.mealService = mealService;
     }
 
+    // date (e.g. 2026-11-11): only the meals booked on that day, as the main view shows them.
+    // Without it all meals.
     @GetMapping
-    public List<MealResponse> list(@AuthenticationPrincipal CurrentUser user) {
-        return mealService.findAll(user.userId());
+    public List<MealResponse> list(@AuthenticationPrincipal CurrentUser user,
+                                   @RequestParam(required = false)
+                                   @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return date == null
+                ? mealService.findAll(user.userId())
+                : mealService.findBookedOn(user.userId(), date);
     }
 
     @PostMapping
@@ -52,11 +61,5 @@ public class MealController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal CurrentUser user, @PathVariable Long id) {
         mealService.delete(user.userId(), id);
-    }
-
-    @DeleteMapping
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteAll(@AuthenticationPrincipal CurrentUser user) {
-        mealService.deleteAll(user.userId());
     }
 }
