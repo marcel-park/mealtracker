@@ -1373,7 +1373,8 @@ function RecipeEditor({
       <form onSubmit={submit}>
         {!readOnly && variations.length > 0 && (
           <div className="field">
-            <span>Variation</span>
+            {/* e.g. "Variation von Bratkartoffeln": the original's name as saved */}
+            <span>{isVariation ? `Variation von ${recipe.name}` : 'Variation'}</span>
             <SelectBox
               label="Original oder Variation"
               className="wide"
