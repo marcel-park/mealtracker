@@ -74,3 +74,16 @@ export function mealRequest(entries, recipeUses = []) {
     ),
   }
 }
+
+// The day the meal list shows, as sent to GET /api/meals?date=, e.g. "2026-11-11". Local time of
+// the device: the list starts empty at midnight where the user is.
+export function localDate(now) {
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+// Milliseconds until the next local midnight (on DST days not always 24 h after the last one).
+export function msUntilMidnight(now) {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  return midnight.getTime() - now.getTime()
+}

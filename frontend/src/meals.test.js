@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { addAmount, addRecipeItems, entriesFromMeal, makeTitle, mealRequest } from './meals.js'
+import {
+  addAmount,
+  addRecipeItems,
+  entriesFromMeal,
+  localDate,
+  makeTitle,
+  mealRequest,
+  msUntilMidnight,
+} from './meals.js'
 
 const apple = { id: 1, name: 'Apfel', kcalPer100g: 52 }
 const banana = { id: 2, name: 'Banane', kcalPer100g: 89 }
@@ -111,5 +119,27 @@ describe('mealRequest', () => {
     const chiliPepper = { id: 9, name: 'Chili', kcalPer100g: 40 }
     const entries = addAmount([], chiliPepper, 5)
     expect(mealRequest(entries, [{ recipeId: 50, variationId: 7 }]).recipes).toEqual([])
+  })
+})
+
+describe('localDate', () => {
+  it('pads month and day', () => {
+    expect(localDate(new Date(2026, 0, 5, 12, 0))).toBe('2026-01-05')
+  })
+
+  it('uses local time, not UTC', () => {
+    expect(localDate(new Date(2026, 10, 11, 0, 30))).toBe('2026-11-11')
+    expect(localDate(new Date(2026, 10, 11, 23, 59))).toBe('2026-11-11')
+  })
+})
+
+describe('msUntilMidnight', () => {
+  it('counts to the next local midnight', () => {
+    expect(msUntilMidnight(new Date(2026, 10, 11, 23, 59, 30))).toBe(30_000)
+  })
+
+  it('is a whole day right at midnight', () => {
+    const now = new Date(2026, 10, 11, 0, 0)
+    expect(msUntilMidnight(now)).toBe(new Date(2026, 10, 12).getTime() - now.getTime())
   })
 })

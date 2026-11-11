@@ -18,7 +18,9 @@ import {
   addAmount,
   addRecipeItems,
   entriesFromMeal,
+  localDate,
   mealRequest,
+  msUntilMidnight,
 } from './meals.js'
 import {
   NEW_EDITOR,
@@ -156,15 +158,6 @@ function DatabaseIcon() {
       <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
       <path d="M4.5 5.5v13c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-13" />
       <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
-    </svg>
-  )
-}
-
-function ResetIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="24" {...iconProps}>
-      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" />
-      <path d="M3.5 3.5v5h5" />
     </svg>
   )
 }
@@ -639,7 +632,7 @@ function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, 
   )
 }
 
-function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods, onOpenProfile }) {
+function MealList({ meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }) {
   const totalKcal = meals.reduce((sum, meal) => sum + meal.kcal, 0)
 
   return (
@@ -654,16 +647,6 @@ function MealList({ meals, onAdd, onEdit, onDelete, onDeleteAll, onOpenFoods, on
             onClick={onOpenFoods}
           >
             <DatabaseIcon />
-          </button>
-          <button
-            type="button"
-            className="tool-btn danger"
-            title="Alle Mahlzeiten löschen"
-            aria-label="Alle Mahlzeiten löschen"
-            disabled={meals.length === 0}
-            onClick={onDeleteAll}
-          >
-            <ResetIcon />
           </button>
           <button
             type="button"
@@ -714,7 +697,7 @@ function MealRow({ meal, onEdit, onDelete }) {
         </span>
         <span className="kcal">{Math.round(meal.kcal)} kcal</span>
       </button>
-      <CrossButton label="Mahlzeit stornieren" onClick={() => onDelete(meal.id)} />
+      <CrossButton label="Mahlzeit löschen" onClick={() => onDelete(meal)} />
     </div>
   )
 }
@@ -2184,6 +2167,30 @@ function useBackNavigation(isNested, goBack) {
   }, [])
 }
 
+// Today's local date, e.g. "2026-11-11". Changes at midnight, and when the app comes back to the
+// foreground on another day: timers do not run while the device sleeps or the app is paused.
+function useToday() {
+  const [today, setToday] = useState(() => localDate(new Date()))
+
+  useEffect(() => {
+    const update = () => setToday(localDate(new Date())) // same string: no new render
+    // setTimeout never fires early; the extra second only keeps clear of the exact midnight
+    const timer = setTimeout(update, msUntilMidnight(new Date()) + 1000)
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') update()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    const resume = IS_NATIVE ? CapacitorApp.addListener('resume', update) : null
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      resume?.then((handle) => handle.remove())
+    }
+  }, [today])
+
+  return today
+}
+
 // The app after login. Keyed by the user id in App, so nothing carries over to another account.
 function MealTracker({ user, onUserChange, onLogout }) {
   const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
@@ -2204,16 +2211,21 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   const isEditing = draft.mealId !== null
 
-  const loadMeals = useCallback(async () => {
-    setMeals(await request(API.meals))
-    setError(null)
-  }, [])
+  // The list only shows the meals booked today, so it starts empty every day at midnight. Older
+  // meals stay in the database.
+  const today = useToday()
+  const mealsUrl = `${API.meals}?date=${today}`
 
-  // First load. State is only set once the request is done (not synchronously in the effect);
-  // a late answer after unmounting is ignored.
+  const loadMeals = useCallback(async () => {
+    setMeals(await request(mealsUrl))
+    setError(null)
+  }, [mealsUrl])
+
+  // First load, and again on a new day. State is only set once the request is done (not
+  // synchronously in the effect); a late answer after unmounting or for another day is ignored.
   useEffect(() => {
     let isCurrent = true
-    request(API.meals)
+    request(mealsUrl)
       .then((loaded) => {
         if (!isCurrent) return
         setMeals(loaded)
@@ -2225,7 +2237,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     return () => {
       isCurrent = false
     }
-  }, [])
+  }, [mealsUrl])
 
   const reloadCatalog = () => setCatalogVersion((version) => version + 1)
 
@@ -2416,22 +2428,15 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setDetail(null)
   }
 
-  function deleteMeal(id) {
-    runAction(async () => {
-      await request(`${API.meals}/${id}`, { method: 'DELETE' })
-      await loadMeals()
-    })
-  }
-
-  function askDeleteAllMeals() {
+  function askDeleteMeal(meal) {
     setConfirm({
-      title: 'Alle Mahlzeiten löschen?',
-      text: `Alle ${meals.length} gebuchten Mahlzeiten werden endgültig gelöscht.`,
-      confirmLabel: 'Alle löschen',
+      title: 'Mahlzeit löschen?',
+      text: `„${meal.title}“ (${Math.round(meal.kcal)} kcal) wird endgültig gelöscht.`,
+      confirmLabel: 'Löschen',
       onConfirm: () =>
         runAction(async () => {
           setConfirm(null)
-          await request(API.meals, { method: 'DELETE' })
+          await request(`${API.meals}/${meal.id}`, { method: 'DELETE' })
           await loadMeals()
         }),
     })
@@ -2724,8 +2729,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
           meals={meals}
           onAdd={startNewMeal}
           onEdit={editMeal}
-          onDelete={deleteMeal}
-          onDeleteAll={askDeleteAllMeals}
+          onDelete={askDeleteMeal}
           onOpenFoods={openFoods}
           onOpenProfile={openProfile}
         />
