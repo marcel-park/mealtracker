@@ -116,14 +116,17 @@ select:focus-visible {
   padding: 0 var(--gutter) calc(96px + env(safe-area-inset-bottom, 0px));
 }
 
-/* Headers stick to the top, so only the list below them scrolls */
+/* Headers stick to the top, so only the list below them scrolls. They reach over the side padding
+   of .app to the screen edges, so nothing that scrolls underneath shows next to them (e.g. focus
+   outlines and borders of form fields, which stick out a few pixels into the side padding). */
 .list-head,
 .search-head,
 .topbar {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: 16px 0 12px;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 16px var(--gutter) 12px;
   background: var(--bg);
 }
 
