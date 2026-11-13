@@ -45,7 +45,7 @@ class AuthControllerTest {
     private AuthTokenService authTokenService;
 
     private static final AuthResponse AUTH_RESPONSE = new AuthResponse("the-token",
-            new UserResponse(1L, "max@example.com", 2000, ColorTheme.LIGHT, false));
+            new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, ColorTheme.LIGHT, false));
 
     private static final String CREDENTIALS = """
             {"email":"max@example.com","password":"geheim123"}

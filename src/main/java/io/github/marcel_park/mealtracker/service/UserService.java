@@ -95,6 +95,9 @@ public class UserService {
     public UserResponse updateSettings(Long userId, UserSettingsRequest request) {
         User user = getEntity(userId);
         user.setCalorieTarget(request.calorieTarget());
+        user.setCarbsPercent(request.carbsPercent());
+        user.setProteinPercent(request.proteinPercent());
+        user.setFatPercent(request.fatPercent());
         user.setColorTheme(request.colorTheme());
         return UserResponse.from(user);
     }
