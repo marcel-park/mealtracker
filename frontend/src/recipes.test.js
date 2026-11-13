@@ -27,10 +27,10 @@ import {
 
 // ---------- test data ----------
 
-const beans = { id: 1, name: 'Kidneybohnen', kcalPer100g: 100 }
-const tomatoes = { id: 2, name: 'Tomaten', kcalPer100g: 20 }
-const mince = { id: 3, name: 'Rinderhack', kcalPer100g: 250 }
-const rice = { id: 4, name: 'Reis', kcalPer100g: 350 }
+const beans = { id: 1, name: 'Kidneybohnen', kcalPer100: 100 }
+const tomatoes = { id: 2, name: 'Tomaten', kcalPer100: 20 }
+const mince = { id: 3, name: 'Rinderhack', kcalPer100: 250 }
+const rice = { id: 4, name: 'Reis', kcalPer100: 350 }
 
 // Original: 400 g beans, 500 g tomatoes, 4 portions. Variation 7: 600 g beans, no tomatoes,
 // 200 g mince added, 5 portions, 1200 g after cooking. Variation 7 was booked last.
@@ -40,9 +40,9 @@ const moreBeans = {
   servings: 5,
   weightG: 1200,
   items: [
-    { food: beans, amountG: 600 },
-    { food: tomatoes, amountG: 0 },
-    { food: mince, amountG: 200 },
+    { food: beans, amount: 600 },
+    { food: tomatoes, amount: 0 },
+    { food: mince, amount: 200 },
   ],
 }
 const chili = {
@@ -52,14 +52,14 @@ const chili = {
   owned: true,
   published: false,
   items: [
-    { food: beans, amountG: 400 },
-    { food: tomatoes, amountG: 500 },
+    { food: beans, amount: 400 },
+    { food: tomatoes, amount: 500 },
   ],
   variations: [moreBeans],
   lastUsedVariationId: 7,
 }
 
-const amounts = (items) => items.map((item) => [item.food.name, item.amountG])
+const amounts = (items) => items.map((item) => [item.food.name, item.amount])
 
 // ---------- arithmetic ----------
 
@@ -74,8 +74,8 @@ describe('arithmetic', () => {
   })
 
   it('adds up weight and kcal', () => {
-    expect(totalsOf(chili.items)).toEqual({ amountG: 900, kcal: 500 })
-    expect(totalsOf([])).toEqual({ amountG: 0, kcal: 0 })
+    expect(totalsOf(chili.items)).toEqual({ amount: 900, kcal: 500 })
+    expect(totalsOf([])).toEqual({ amount: 0, kcal: 0 })
   })
 
   it('books a share by portions or by grams of the finished dish', () => {
@@ -112,21 +112,21 @@ describe('variations', () => {
 
   it('lists the original with its own amounts as reference', () => {
     expect(itemsOf(chili, null)).toEqual([
-      { food: beans, originalG: 400, amountG: 400 },
-      { food: tomatoes, originalG: 500, amountG: 500 },
+      { food: beans, originalAmount: 400, amount: 400 },
+      { food: tomatoes, originalAmount: 500, amount: 500 },
     ])
   })
 
   it('applies a variation: changed, left out (0 g, still listed) and added ingredients', () => {
     expect(itemsOf(chili, moreBeans)).toEqual([
-      { food: beans, originalG: 400, amountG: 600 },
-      { food: tomatoes, originalG: 500, amountG: 0 },
-      { food: mince, originalG: 0, amountG: 200 },
+      { food: beans, originalAmount: 400, amount: 600 },
+      { food: tomatoes, originalAmount: 500, amount: 0 },
+      { food: mince, originalAmount: 0, amount: 200 },
     ])
   })
 
   it('follows the original where the variation changes nothing', () => {
-    const onlyMince = { id: 8, name: 'Mit Hack', items: [{ food: mince, amountG: 100 }] }
+    const onlyMince = { id: 8, name: 'Mit Hack', items: [{ food: mince, amount: 100 }] }
     expect(amounts(itemsOf(chili, onlyMince))).toEqual([
       ['Kidneybohnen', 400],
       ['Tomaten', 500],
@@ -170,7 +170,7 @@ describe('booking view', () => {
       layer: null,
       saved: { servingsText: '5', weightText: '1200' },
     })
-    expect(booking.items.map((item) => item.savedG)).toEqual([600, 0, 200])
+    expect(booking.items.map((item) => item.savedAmount)).toEqual([600, 0, 200])
   })
 
   it('falls back to the original when the variation booked last is gone', () => {
@@ -193,13 +193,13 @@ describe('booking view', () => {
     const booking = bookingFor(chili, null)
     const changed = {
       ...booking,
-      items: booking.items.map((item) => (item.food === beans ? { ...item, amountG: 500 } : item)),
+      items: booking.items.map((item) => (item.food === beans ? { ...item, amount: 500 } : item)),
     }
     expect(isAdjusted(changed)).toBe(true)
 
     const back = {
       ...changed,
-      items: changed.items.map((item) => (item.food === beans ? { ...item, amountG: 400 } : item)),
+      items: changed.items.map((item) => (item.food === beans ? { ...item, amount: 400 } : item)),
     }
     expect(isAdjusted(back)).toBe(false)
   })
@@ -207,16 +207,16 @@ describe('booking view', () => {
   it('adds foods: same food adds up, a new one counts as a change', () => {
     const booking = bookingFor(chili, null)
     const items = addToBookingItems(booking.items, [
-      { food: beans, amountG: 50 },
-      { food: rice, amountG: 100 },
+      { food: beans, amount: 50 },
+      { food: rice, amount: 100 },
     ])
-    expect(items.map((item) => [item.food.name, item.amountG, item.originalG, item.savedG])).toEqual([
+    expect(items.map((item) => [item.food.name, item.amount, item.originalAmount, item.savedAmount])).toEqual([
       ['Kidneybohnen', 450, 400, 400],
       ['Tomaten', 500, 500, 500],
       ['Reis', 100, 0, 0],
     ])
     expect(isAdjusted({ ...booking, items })).toBe(true)
-    expect(booking.items[0].amountG).toBe(400) // the input is not changed
+    expect(booking.items[0].amount).toBe(400) // the input is not changed
   })
 
   it('is adjusted after changing portions or weight; "5" and "5.0" are the same', () => {
@@ -262,10 +262,10 @@ describe('recipe editor', () => {
 
   it('counts changed amounts, removed and added ingredients and portions as item changes', () => {
     const editor = editorFor(chili)
-    const changedAmount = editor.items.map((item) => (item.food === beans ? { ...item, amountG: 450 } : item))
+    const changedAmount = editor.items.map((item) => (item.food === beans ? { ...item, amount: 450 } : item))
     expect(editorChanges({ ...editor, items: changedAmount }).items).toBe(true)
     expect(editorChanges({ ...editor, items: editor.items.slice(1) }).items).toBe(true)
-    const added = mergeEditorItems(editor.items, [{ food: rice, amountG: 100 }], false)
+    const added = mergeEditorItems(editor.items, [{ food: rice, amount: 100 }], false)
     expect(editorChanges({ ...editor, items: added }).items).toBe(true)
     expect(editorChanges({ ...editor, servingsText: '6' }).items).toBe(true)
   })
@@ -277,16 +277,16 @@ describe('recipe editor', () => {
   it('adds foods from the search: same food adds up, new foods count from 0 g in a variation', () => {
     const items = itemsOf(chili, null)
     const added = [
-      { food: beans, amountG: 50 },
-      { food: rice, amountG: 100 },
+      { food: beans, amount: 50 },
+      { food: rice, amount: 100 },
     ]
     expect(mergeEditorItems(items, added, true)).toEqual([
-      { food: beans, originalG: 400, amountG: 450 },
-      { food: tomatoes, originalG: 500, amountG: 500 },
-      { food: rice, originalG: 0, amountG: 100 },
+      { food: beans, originalAmount: 400, amount: 450 },
+      { food: tomatoes, originalAmount: 500, amount: 500 },
+      { food: rice, originalAmount: 0, amount: 100 },
     ])
-    expect(mergeEditorItems(items, added, false).at(-1)).toEqual({ food: rice, originalG: 100, amountG: 100 })
-    expect(items[0].amountG).toBe(400) // the input is not changed
+    expect(mergeEditorItems(items, added, false).at(-1)).toEqual({ food: rice, originalAmount: 100, amount: 100 })
+    expect(items[0].amount).toBe(400) // the input is not changed
   })
 })
 
@@ -305,9 +305,9 @@ describe('requests', () => {
       servings: 5,
       weightG: 1300,
       items: [
-        { foodId: 1, amountG: 600 },
-        { foodId: 2, amountG: 0 },
-        { foodId: 3, amountG: 200 },
+        { foodId: 1, amount: 600 },
+        { foodId: 2, amount: 0 },
+        { foodId: 3, amount: 200 },
       ],
     })
     expect(variationRequest('X', '5', null, items).weightG).toBeNull()
@@ -321,10 +321,10 @@ describe('requests', () => {
         servingsText: '4',
         published: true,
         items: [
-          { food: beans, amountG: 400 },
-          { food: tomatoes, amountG: 0 },
+          { food: beans, amount: 400 },
+          { food: tomatoes, amount: 0 },
         ],
       }),
-    ).toEqual({ name: 'Chili', servings: 4, published: true, items: [{ foodId: 1, amountG: 400 }] })
+    ).toEqual({ name: 'Chili', servings: 4, published: true, items: [{ foodId: 1, amount: 400 }] })
   })
 })

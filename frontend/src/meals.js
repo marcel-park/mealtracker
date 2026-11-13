@@ -14,15 +14,15 @@ export function makeTitle(names) {
 }
 
 // label: what the amount is added as (see NEW_DRAFT in App.jsx). Defaults to the food itself.
-export function addAmount(entries, food, amountG, label = food.name) {
+export function addAmount(entries, food, amount, label = food.name) {
   if (!entries.some((entry) => entry.food.id === food.id)) {
-    return [...entries, { food, amountG, baseG: 0, labels: [label] }]
+    return [...entries, { food, amount, baseAmount: 0, labels: [label] }]
   }
   return entries.map((entry) =>
     entry.food.id === food.id
       ? {
           ...entry,
-          amountG: roundToOneDecimal(entry.amountG + amountG),
+          amount: roundToOneDecimal(entry.amount + amount),
           labels: entry.labels.includes(label) ? entry.labels : [...entry.labels, label],
         }
       : entry,
@@ -33,10 +33,10 @@ export function addAmount(entries, food, amountG, label = food.name) {
 // marked with the recipe id in recipeIds (to know which recipes are still in the meal, see
 // mealRequest; names are not unique, a food may be called like a recipe).
 export function addRecipeItems(entries, items, recipeName, recipeId) {
-  const booked = items.filter((item) => item.amountG > 0)
+  const booked = items.filter((item) => item.amount > 0)
   const bookedFoodIds = new Set(booked.map((item) => item.food.id))
   return booked
-    .reduce((result, item) => addAmount(result, item.food, item.amountG, recipeName), entries)
+    .reduce((result, item) => addAmount(result, item.food, item.amount, recipeName), entries)
     .map((entry) => {
       const recipeIds = entry.recipeIds ?? []
       return bookedFoodIds.has(entry.food.id) && !recipeIds.includes(recipeId)
@@ -45,21 +45,19 @@ export function addRecipeItems(entries, items, recipeName, recipeId) {
     })
 }
 
-// Meal items only carry the kcal of their amount, so the value per 100 g is derived from it.
-// A meal whose title is not the one made from its foods was booked from a recipe (or several):
-// its items keep that title as their label, so it survives editing the meal.
+// Meal items carry their whole food (unit and portions included), so an amount can be changed
+// the same way as when booking. A meal whose title is not the one made from its foods was booked
+// from a recipe (or several): its items keep that title as their label, so it survives editing
+// the meal.
 export function entriesFromMeal(meal) {
-  const titleFromFoods = makeTitle(meal.items.map((item) => item.foodName))
+  const titleFromFoods = makeTitle(meal.items.map((item) => item.food.name))
   const keepsTitle = meal.title !== titleFromFoods
-  return meal.items.map((item) => {
-    const kcalPer100g = item.amountG > 0 ? (item.kcal / item.amountG) * 100 : 0
-    return {
-      food: { id: item.foodId, name: item.foodName, kcalPer100g },
-      amountG: item.amountG,
-      baseG: item.amountG,
-      labels: [keepsTitle ? meal.title : item.foodName],
-    }
-  })
+  return meal.items.map((item) => ({
+    food: item.food,
+    amount: item.amount,
+    baseAmount: item.amount,
+    labels: [keepsTitle ? meal.title : item.food.name],
+  }))
 }
 
 // recipeUses: [{ recipeId, variationId }] of the recipes added to the draft. Only recipes that
@@ -68,7 +66,7 @@ export function mealRequest(entries, recipeUses = []) {
   const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
   return {
     title: makeTitle(labels),
-    items: entries.map((entry) => ({ foodId: entry.food.id, amountG: entry.amountG })),
+    items: entries.map((entry) => ({ foodId: entry.food.id, amount: entry.amount })),
     recipes: recipeUses.filter((use) =>
       entries.some((entry) => (entry.recipeIds ?? []).includes(use.recipeId)),
     ),

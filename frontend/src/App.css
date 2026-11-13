@@ -12,6 +12,7 @@
   --on-accent: #ffffff;
   --danger: #b3382c;
   --ok: #1e7a3c;
+  --favorite: #c98a00; /* the star of the default portion */
 
   --gutter: 16px; /* side padding of the app, the bottom bar and the dialog backdrop */
   --radius-sm: 10px;
@@ -36,6 +37,7 @@
     --on-accent: #0f1522;
     --danger: #ff8d80;
     --ok: #6fd08c;
+    --favorite: #f2c14e;
   }
 }
 
@@ -1072,4 +1074,89 @@ fieldset.plain:disabled input {
 /* the stacked bar is taller, so the end of the list needs more room */
 .app:has(.bar.stacked) {
   padding-bottom: calc(200px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ----- Units and portions ----- */
+
+/* buttons at the right end of a row: "+" and scale in the search, edit and star in the portions */
+.row-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* the scale next to "+": opens the amount view with g / ml preselected. Looks like "+" (.add). */
+.weigh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* "Packung (250 g) · 430 kcal": two pieces that never break inside. If they do not fit in one line
+   together, the kcal moves to the next line instead of being cut off (see FoodSearchRow). */
+.booking-part {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* the amount view of a food: number (one third), portion or unit (two thirds) */
+.portion-amount {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+.portion-amount input {
+  min-width: 0;
+  height: var(--book-amount-height);
+}
+
+.portion-amount .select-box {
+  min-width: 0;
+}
+
+.portion-amount .select-trigger {
+  width: 100%;
+  height: var(--book-amount-height);
+  font-size: 1.1rem;
+}
+
+/* what the typed amount means: "400 g · 1.488 kcal" */
+.amount-result {
+  margin: 0 0 16px;
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* food form: calories and unit side by side, half and half */
+.unit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.unit-row .field {
+  min-width: 0;
+}
+
+.unit-row input {
+  min-width: 0;
+  height: var(--search-height);
+}
+
+.icon-btn.star.favorite {
+  color: var(--favorite);
 }
