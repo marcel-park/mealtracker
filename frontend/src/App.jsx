@@ -15,6 +15,27 @@ import {
   setUnauthorizedHandler,
 } from './api.js'
 import {
+  CHOICE_UNIT,
+  DEFAULT_AMOUNT,
+  FOOD_UNIT_G,
+  FOOD_UNIT_ML,
+  MAX_PORTION_NAME_LENGTH,
+  amountChoices,
+  amountOf,
+  draftPortions,
+  formatAmount,
+  initialAmountInput,
+  isPortionNameTaken,
+  portionRequests,
+  quantityFor,
+  quickAdd,
+  removePortion,
+  savePortion,
+  setFavoritePortion,
+  unitName,
+  unitSymbol,
+} from './foods.js'
+import {
   addAmount,
   addRecipeItems,
   entriesFromMeal,
@@ -54,7 +75,6 @@ const SCOPE_PARAM = 'scope'
 const CONFIRMED_PARAM = 'confirmed'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
-const DEFAULT_AMOUNT_G = 100 // added by the + button, preset in the detail view
 const SEARCH_DELAY_MS = 250 // search only once typing pauses
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
 const LOCALE = 'de-DE'
@@ -71,15 +91,16 @@ const COLOR_THEMES = [
 ]
 
 // The meal being put together; mealId is null for a new meal.
-// Entries are { food, amountG, baseG, labels }. baseG is the amount already saved in the meal,
-// so amountG - baseG is what the preview shows as "+X g". labels are what the entry was added as
+// Entries are { food, amount, baseAmount, labels }, amounts in the unit of the food. baseAmount is
+// the amount already saved in the meal, so amount - baseAmount is what the preview shows as
+// "+X g". labels are what the entry was added as
 // (the food's own name, or the names of the recipes it came with); they make up the meal title.
 // recipeUses: which recipes were added, in which variation ({ recipeId, variationId }); sent
 // with the meal so the variation is preselected next time. Entries added from a recipe also carry
 // recipeIds, see addRecipeItems.
 const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
-const NEW_FOOD = { id: null, owned: true, published: false }
+const NEW_FOOD = { id: null, owned: true, published: false, unit: FOOD_UNIT_G, portions: [] }
 
 
 // The two kinds of entries in the search, and the filters that apply to both.
@@ -186,6 +207,24 @@ function CloseIcon() {
     <svg viewBox="0 0 24 24" width="22" {...iconProps} height="22">
       <path d="M6 6l12 12" />
       <path d="M18 6L6 18" />
+    </svg>
+  )
+}
+
+// Favorite portion. filled: the favorite, outlined: the others.
+function StarIcon({ filled }) {
+  return (
+    <svg viewBox="0 0 24 24" width="22" {...iconProps} height="22" fill={filled ? 'currentColor' : 'none'}>
+      <path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.7l5.9-.9z" />
+    </svg>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" {...iconProps} height="20">
+      <path d="M4 20h4L19 9l-4-4L4 16z" />
+      <path d="M13.5 6.5l4 4" />
     </svg>
   )
 }
@@ -326,8 +365,12 @@ function useActionRunner(onError) {
   }
 }
 
-function KcalPer100g({ kcal }) {
-  return <>{Math.round(kcal)} kcal pro 100 g</>
+function KcalPer100({ kcal, unit }) {
+  return (
+    <>
+      {Math.round(kcal)} kcal pro 100 {unitSymbol(unit)}
+    </>
+  )
 }
 
 function CrossButton({ label, onClick }) {
@@ -684,7 +727,7 @@ function MealList({ meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }
 function MealRow({ meal, onEdit, onDelete }) {
   const bookedAt = new Date(meal.bookedAt).toLocaleString(LOCALE, DATE_TIME_FORMAT)
   const items = meal.items
-    .map((item) => `${item.foodName} ${Math.round(item.amountG)} g`)
+    .map((item) => `${item.food.name} ${Math.round(item.amount)} ${unitSymbol(item.food.unit)}`)
     .join(', ')
 
   return (
@@ -704,6 +747,8 @@ function MealRow({ meal, onEdit, onDelete }) {
 
 // The search behind "Mahlzeit buchen", and the one that adds foods to a recipe (kindLocked:
 // recipes cannot contain recipes). Stays mounted while hidden, so search and filter survive.
+// onOpenFood(food, { asUnit }): the amount view of a food, with its default portion preselected,
+// or (asUnit, the scale button) its unit.
 function FoodSearch({
   visible,
   version = 0,
@@ -792,7 +837,30 @@ function QuickAddButton({ label, onAdd }) {
   )
 }
 
+// Scale: type the amount in g or ml (see FoodSearchRow).
+function ScaleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" {...iconProps} height="22">
+      <path d="M12 4v16" />
+      <path d="M8 20h8" />
+      <path d="M5 7h14" />
+      <path d="M5 7l-3 7a3.5 3.5 0 0 0 6 0z" />
+      <path d="M19 7l-3 7a3.5 3.5 0 0 0 6 0z" />
+    </svg>
+  )
+}
+
+// One food in the search. The second line says what "+" books: one default portion (or 100 g / ml
+// without portions) and its kcal. The row opens the amount view with that portion preselected,
+// the scale button with g / ml preselected, for those who mostly book exact amounts.
+//
+// Room: on a 360 px wide phone about 200 px are left for the text next to the two buttons, and
+// "(1000 ml) · 1234 kcal" alone takes about 160 px at the size of the second line. So the line is
+// two pieces that never break inside: the portion, and the kcal. If both do not fit, the kcal moves
+// to a line of its own instead of being cut off. MAX_PORTION_NAME_LENGTH keeps the first piece
+// within one line.
 function FoodSearchRow({ food, onOpen, onAdd }) {
+  const booked = quickAdd(food)
   return (
     <div className="row">
       <button type="button" className="row-open wrap" onClick={() => onOpen(food)}>
@@ -801,16 +869,25 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
             {food.name}
             <PrivateMark entry={food} />
           </span>
-          <span className="sub">
-            <KcalPer100g kcal={food.kcalPer100g} />
+          <span className="sub booking-sub">
+            <span className="booking-part">{booked.label}</span>
+            <span className="booking-separator"> · </span>
+            <span className="booking-part">{formatKcal(kcalOf(food, booked.amount))}</span>
           </span>
         </span>
-        <span className="amount">{`${DEFAULT_AMOUNT_G} g`}</span>
       </button>
-      <QuickAddButton
-        label={`${food.name} hinzufügen`}
-        onAdd={() => onAdd(food, DEFAULT_AMOUNT_G)}
-      />
+      <div className="row-actions">
+        <QuickAddButton label={`${booked.label} ${food.name} hinzufügen`} onAdd={() => onAdd(food, booked.amount)} />
+        <button
+          type="button"
+          className="weigh-btn"
+          title={`Menge in ${unitName(food.unit)} eingeben`}
+          aria-label={`Menge von ${food.name} eingeben`}
+          onClick={() => onOpen(food, { asUnit: true })}
+        >
+          <ScaleIcon />
+        </button>
+      </div>
     </div>
   )
 }
@@ -893,15 +970,17 @@ function EntryList({ entries, showDelta = false, onOpen, onRemove }) {
 }
 
 function EntryRow({ entry, showDelta, onOpen, onRemove }) {
-  const { food, amountG, baseG } = entry
-  const addedG = roundToOneDecimal(amountG - baseG)
+  const { food, amount, baseAmount } = entry
+  const addedAmount = roundToOneDecimal(amount - baseAmount)
   const content = (
     <>
       <span className="main">
         <span className="name">{food.name}</span>
       </span>
-      {showDelta && addedG > 0 && <span className="delta">+{addedG} g</span>}
-      <span className="amount">{roundToOneDecimal(amountG)} g</span>
+      {showDelta && addedAmount > 0 && (
+        <span className="delta">+{formatAmount(addedAmount, food.unit)}</span>
+      )}
+      <span className="amount">{formatAmount(amount, food.unit)}</span>
     </>
   )
 
@@ -919,38 +998,74 @@ function EntryRow({ entry, showDelta, onOpen, onRemove }) {
   )
 }
 
-function FoodDetail({ food, initialAmountG, confirmLabel, onConfirm, onClose }) {
-  const [amountText, setAmountText] = useState(String(initialAmountG))
-  const amountG = parseFloat(amountText)
-  const isValid = amountG > 0
+// The amount of a food to add, or to change an amount to. It is typed as a number of one of the
+// food's portions or in its unit (g / ml), chosen next to the number (one third / two thirds);
+// switching converts the number. Whatever was chosen, onConfirm gets the amount in g or ml:
+// portions are only a help for typing.
+// initial: { choice, quantityText }, see initialAmountInput.
+function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
+  const [choice, setChoice] = useState(initial.choice)
+  const [quantityText, setQuantityText] = useState(initial.quantityText)
+  // The amount in g / ml the shown number was converted from, or null once something was typed.
+  // The shown number is rounded, so converting it back would drift: 100 g -> 3,33 × 30 g -> 99,9 g.
+  const [exactAmount, setExactAmount] = useState(null)
+  const inputRef = useRef(null)
+  // Rounded as it is sent, so a tiny amount that rounds to 0 cannot be confirmed.
+  const amount = roundToOneDecimal(exactAmount ?? amountOf(food, choice, parseFloat(quantityText)))
+  const isValid = amount > 0
+
+  // At the start and after every switch the number is focused and selected, so typing replaces it.
+  // An effect, because the converted number is only in the field after rendering.
+  useEffect(() => {
+    inputRef.current.focus()
+    inputRef.current.select()
+  }, [choice])
+
+  function changeChoice(newChoice) {
+    if (isValid) {
+      setQuantityText(String(quantityFor(food, newChoice, amount)))
+      setExactAmount(amount)
+    }
+    setChoice(newChoice)
+  }
+
+  function changeQuantity(text) {
+    setQuantityText(text)
+    setExactAmount(null)
+  }
 
   function submit(event) {
     event.preventDefault()
-    if (isValid) onConfirm(food, amountG)
+    if (isValid) onConfirm(food, amount)
   }
 
   return (
     <section>
       <TopBar title={food.name} closeLabel="Schließen" onClose={onClose} centered />
       <p className="detail-line">
-        <KcalPer100g kcal={food.kcalPer100g} />
+        <KcalPer100 kcal={food.kcalPer100} unit={food.unit} />
       </p>
       <form onSubmit={submit}>
-        <div className="detail-amount">
+        <div className="detail-amount portion-amount">
           <input
+            ref={inputRef}
             type="number"
             inputMode="decimal"
             enterKeyHint="done"
-            min="1"
+            min="0"
             step="any"
-            autoFocus
-            value={amountText}
+            value={quantityText}
             onFocus={(event) => event.target.select()}
-            onChange={(event) => setAmountText(event.target.value)}
-            aria-label="Menge in Gramm"
+            onChange={(event) => changeQuantity(event.target.value)}
+            aria-label={choice === CHOICE_UNIT ? `Menge in ${unitName(food.unit)}` : 'Anzahl Portionen'}
           />
-          <span>g</span>
+          <SelectBox label="Portion" value={choice} options={amountChoices(food)} onChange={changeChoice} />
         </div>
+        <p className="amount-result" role="status">
+          {isValid
+            ? `${formatAmount(amount, food.unit)} · ${formatKcal(kcalOf(food, amount))}`
+            : 'Bitte eine Menge eingeben.'}
+        </p>
         <button type="submit" className="btn primary wide" disabled={!isValid}>
           {confirmLabel}
         </button>
@@ -1002,7 +1117,7 @@ function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onEr
                 <DatabaseRow
                   key={food.id}
                   entry={food}
-                  sub={<KcalPer100g kcal={food.kcalPer100g} />}
+                  sub={<KcalPer100 kcal={food.kcalPer100} unit={food.unit} />}
                   onOpen={onOpenFood}
                 />
               ))}
@@ -1041,34 +1156,86 @@ function NotOwnedHint({ what }) {
   )
 }
 
+const FOOD_UNIT_OPTIONS = [
+  { value: FOOD_UNIT_G, label: 'Gramm' },
+  { value: FOOD_UNIT_ML, label: 'Milliliter' },
+]
+
 // Only the owner can edit; everybody else sees the values read-only.
-function FoodForm({ food, onSave, onDelete, onClose }) {
+//
+// Nutrition values are per 100 g or 100 ml, as the unit select next to the calories says. The unit
+// may change even when the food is used (booked, or in a recipe): the amounts there keep their
+// numbers, 100 g become 100 ml.
+//
+// Portions are listed at the bottom, favorite first. Each has an edit button (opens the portion
+// view, layer { type: 'portion', key }, key null for a new one) and a star that makes it the
+// favorite. They are saved together with the food. The layer lives in MealTracker, so the back
+// button closes the portion view; everything else stays in this component, which stays mounted
+// meanwhile, so nothing typed is lost.
+function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   const isNew = food.id === null
   const readOnly = !food.owned
   const [name, setName] = useState(toText(food.name))
-  const [kcal, setKcal] = useState(toText(food.kcalPer100g))
+  const [unit, setUnit] = useState(food.unit)
+  const [kcal, setKcal] = useState(toText(food.kcalPer100))
   const [protein, setProtein] = useState(toText(food.protein))
   const [carbs, setCarbs] = useState(toText(food.carbs))
   const [fat, setFat] = useState(toText(food.fat))
   const [published, setPublished] = useState(food.published)
+  const [portions, setPortions] = useState(() => draftPortions(food))
+  const newPortionCount = useRef(0) // for the keys of new portions, see foods.js
+  // The name of a new food is focused when the form opens, but not again when it comes back from
+  // the portion view: autoFocus would jump to the top and open the keyboard once more.
+  const [focusName, setFocusName] = useState(!readOnly && isNew)
 
   // Field names as the backend expects them.
   const values = {
     name: name.trim(),
-    kcalPer100g: parseFloat(kcal),
+    unit,
+    kcalPer100: parseFloat(kcal),
     protein: parseFloat(protein),
     carbs: parseFloat(carbs),
     fat: parseFloat(fat),
     published,
+    portions: portionRequests(portions),
   }
-  const numbers = [values.kcalPer100g, values.protein, values.carbs, values.fat]
+  const numbers = [values.kcalPer100, values.protein, values.carbs, values.fat]
   // An empty field parses to NaN, and NaN >= 0 is false.
   const isValid = values.name !== '' && numbers.every((n) => n >= 0)
   const becomesPrivate = !isNew && food.published && !published
+  const symbol = unitSymbol(unit)
 
   function submit(event) {
     event.preventDefault()
     if (isValid && !readOnly) onSave(food.id, values)
+  }
+
+  // key null: a new portion
+  function openPortion(key) {
+    setFocusName(false)
+    onLayerChange({ type: 'portion', key })
+  }
+
+  if (layer?.type === 'portion') {
+    const portion = portions.find((other) => other.key === layer.key) ?? null
+    const key = portion?.key ?? null
+    return (
+      <PortionEditor
+        portion={portion}
+        unit={unit}
+        isNameTaken={(portionName) => isPortionNameTaken(portions, portionName, key)}
+        onSave={({ name: portionName, amount }) => {
+          const savedKey = key ?? `new-${newPortionCount.current++}`
+          setPortions((current) => savePortion(current, { key: savedKey, name: portionName, amount }))
+          onLayerChange(null)
+        }}
+        onDelete={() => {
+          setPortions((current) => removePortion(current, key))
+          onLayerChange(null)
+        }}
+        onClose={() => onLayerChange(null)}
+      />
+    )
   }
 
   let title = 'Lebensmittel bearbeiten'
@@ -1085,17 +1252,31 @@ function FoodForm({ food, onSave, onDelete, onClose }) {
             <span>Name</span>
             <input
               type="text"
-              autoFocus={!readOnly}
+              autoFocus={focusName}
               autoComplete="off"
               maxLength={100}
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
           </label>
-          <NumberField label="Kalorien pro 100 g (kcal)" value={kcal} onChange={setKcal} />
-          <NumberField label="Protein" value={protein} onChange={setProtein} />
-          <NumberField label="Kohlenhydrate" value={carbs} onChange={setCarbs} />
-          <NumberField label="Fett" value={fat} onChange={setFat} />
+          {/* calories and unit share the row half and half */}
+          <div className="unit-row">
+            <NumberField label={`Kalorien pro 100 ${symbol} (kcal)`} value={kcal} onChange={setKcal} />
+            <div className="field">
+              <span>Einheit</span>
+              <SelectBox
+                label="Einheit"
+                className="wide"
+                value={unit}
+                options={FOOD_UNIT_OPTIONS}
+                disabled={readOnly}
+                onChange={setUnit}
+              />
+            </div>
+          </div>
+          <NumberField label={`Protein pro 100 ${symbol}`} value={protein} onChange={setProtein} />
+          <NumberField label={`Kohlenhydrate pro 100 ${symbol}`} value={carbs} onChange={setCarbs} />
+          <NumberField label={`Fett pro 100 ${symbol}`} value={fat} onChange={setFat} />
           <VisibilitySwitch published={published} disabled={readOnly} onChange={setPublished} />
           {becomesPrivate && (
             <p className="hint switch-hint">
@@ -1105,6 +1286,39 @@ function FoodForm({ food, onSave, onDelete, onClose }) {
             </p>
           )}
         </fieldset>
+
+        <div className="section-head">
+          <h2>Portionen</h2>
+        </div>
+        {/* Without portions the owner sees just "Portion hinzufügen" below. */}
+        {portions.length === 0 ? (
+          readOnly && <p className="empty">Keine Portionen.</p>
+        ) : (
+          <div className="rows">
+            {portions.map((portion) => (
+              <PortionRow
+                key={portion.key}
+                portion={portion}
+                unit={unit}
+                onEdit={readOnly ? undefined : () => openPortion(portion.key)}
+                onFavorite={
+                  readOnly ? undefined : () => setPortions((current) => setFavoritePortion(current, portion.key))
+                }
+              />
+            ))}
+          </div>
+        )}
+        {!readOnly && (
+          <button
+            type="button"
+            className="btn add-more"
+            onClick={() => openPortion(null)}
+          >
+            <PlusIcon size={18} />
+            Portion hinzufügen
+          </button>
+        )}
+
         {!readOnly && (
           <div className="bar">
             {!isNew && (
@@ -1122,22 +1336,126 @@ function FoodForm({ food, onSave, onDelete, onClose }) {
   )
 }
 
-// Difference to the original recipe: green "+100 g", red "−100 g", nothing when equal.
-function Deviation({ amountG, originalG }) {
-  const difference = roundToOneDecimal(amountG - originalG)
+// One portion in the food form: name and amount; for the owner an edit button and, at the far
+// right, the star. Tapping the star of the favorite changes nothing, it is the favorite already.
+function PortionRow({ portion, unit, onEdit, onFavorite }) {
+  return (
+    <div className="row">
+      <div className="row-open">
+        <span className="main">
+          <span className="name">{portion.name}</span>
+          <span className="sub">{formatAmount(portion.amount, unit)}</span>
+        </span>
+      </div>
+      {onEdit && (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={`${portion.name} bearbeiten`}
+            onClick={onEdit}
+          >
+            <PencilIcon />
+          </button>
+          <button
+            type="button"
+            className={portion.favorite ? 'icon-btn star favorite' : 'icon-btn star'}
+            aria-label={`${portion.name} als Standardportion`}
+            aria-pressed={portion.favorite}
+            title={portion.favorite ? 'Standardportion beim Buchen' : 'Als Standardportion festlegen'}
+            onClick={onFavorite}
+          >
+            <StarIcon filled={portion.favorite} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Name and amount of one portion (portion null: a new one), in the unit of the food. "Übernehmen"
+// puts it into the food form, which saves it with the food. Deleting is only possible here, the
+// list has no room for it.
+function PortionEditor({ portion, unit, isNameTaken, onSave, onDelete, onClose }) {
+  const isNew = portion === null
+  const [name, setName] = useState(portion?.name ?? '')
+  const [amountText, setAmountText] = useState(portion ? String(portion.amount) : '')
+  const amount = parseFloat(amountText)
+  const nameTaken = name.trim() !== '' && isNameTaken(name)
+  const isValid = name.trim() !== '' && !nameTaken && amount > 0
+
+  function submit(event) {
+    event.preventDefault()
+    if (isValid) onSave({ name: name.trim(), amount })
+  }
+
+  return (
+    <section>
+      <TopBar
+        title={isNew ? 'Portion hinzufügen' : 'Portion bearbeiten'}
+        closeLabel="Zurück zum Lebensmittel"
+        onClose={onClose}
+      />
+      <form onSubmit={submit}>
+        <label className="field">
+          <span>Name</span>
+          <input
+            type="text"
+            autoFocus
+            autoComplete="off"
+            maxLength={MAX_PORTION_NAME_LENGTH}
+            placeholder="z. B. Packung"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          {nameTaken && <span className="hint warning">Diesen Namen gibt es bei diesem Lebensmittel schon.</span>}
+        </label>
+        <label className="field">
+          <span>Menge ({unitSymbol(unit)})</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            enterKeyHint="done"
+            min="0"
+            step="any"
+            value={amountText}
+            onFocus={(event) => event.target.select()}
+            onChange={(event) => setAmountText(event.target.value)}
+          />
+        </label>
+        <p className="hint">Gespeichert wird die Portion mit dem Lebensmittel.</p>
+        <div className={isNew ? 'bar' : 'bar stacked'}>
+          <button type="submit" className="btn primary" disabled={!isValid}>
+            Übernehmen
+          </button>
+          {!isNew && (
+            <button type="button" className="btn danger" onClick={onDelete}>
+              Portion löschen
+            </button>
+          )}
+        </div>
+      </form>
+    </section>
+  )
+}
+
+// Difference to the original recipe: green "+100 g", red "−100 g" (or ml), nothing when equal.
+function Deviation({ amount, originalAmount, unit }) {
+  const difference = roundToOneDecimal(amount - originalAmount)
   if (difference === 0) return null
   return (
     <span className={difference > 0 ? 'delta' : 'delta minus'}>
       {difference > 0 ? '+' : '−'}
-      {formatNumber(Math.abs(difference))} g
+      {formatAmount(Math.abs(difference), unit)}
     </span>
   )
 }
 
-// One ingredient of a recipe or variation. Without onOpen the row is read-only; without
-// onRemove there is no "×". A left-out ingredient (0 g) stays listed, greyed.
+// One ingredient of a recipe or variation, its amount in the unit of the food. Without onOpen the
+// row is read-only; without onRemove there is no "×". A left-out ingredient (0 g) stays listed,
+// greyed.
 function IngredientRow({ item, showDeviation, onOpen, onRemove }) {
-  const isLeftOut = item.amountG === 0
+  const isLeftOut = item.amount === 0
   const content = (
     <>
       <span className="main">
@@ -1145,10 +1463,12 @@ function IngredientRow({ item, showDeviation, onOpen, onRemove }) {
           {item.food.name}
           <PrivateMark entry={item.food} />
         </span>
-        <span className="sub">{formatKcal(kcalOf(item.food, item.amountG))}</span>
+        <span className="sub">{formatKcal(kcalOf(item.food, item.amount))}</span>
       </span>
-      {showDeviation && <Deviation amountG={item.amountG} originalG={item.originalG} />}
-      <span className="amount">{formatNumber(item.amountG)} g</span>
+      {showDeviation && (
+        <Deviation amount={item.amount} originalAmount={item.originalAmount} unit={item.food.unit} />
+      )}
+      <span className="amount">{formatAmount(item.amount, item.food.unit)}</span>
     </>
   )
 
@@ -1314,11 +1634,11 @@ function RecipeEditor({
     editor.name.trim() !== '' &&
     servings > 0 &&
     (weightG === null || weightG > 0) &&
-    items.some((item) => item.amountG > 0)
+    items.some((item) => item.amount > 0)
 
-  function setAmount(foodId, amountG) {
+  function setAmount(foodId, amount) {
     onChange({
-      items: items.map((item) => (item.food.id === foodId ? { ...item, amountG } : item)),
+      items: items.map((item) => (item.food.id === foodId ? { ...item, amount } : item)),
       layer: null,
     })
   }
@@ -1333,8 +1653,8 @@ function RecipeEditor({
   function remove(item) {
     onChange({
       items:
-        isVariation && item.originalG > 0
-          ? items.map((other) => (other === item ? { ...other, amountG: 0 } : other))
+        isVariation && item.originalAmount > 0
+          ? items.map((other) => (other === item ? { ...other, amount: 0 } : other))
           : items.filter((other) => other !== item),
     })
   }
@@ -1353,9 +1673,12 @@ function RecipeEditor({
     return (
       <FoodDetail
         food={item.food}
-        initialAmountG={item.amountG || item.originalG || DEFAULT_AMOUNT_G}
+        initial={initialAmountInput(item.food, {
+          asUnit: true,
+          amount: item.amount || item.originalAmount || DEFAULT_AMOUNT,
+        })}
         confirmLabel="Übernehmen"
-        onConfirm={(food, amountG) => setAmount(food.id, amountG)}
+        onConfirm={(food, amount) => setAmount(food.id, amount)}
         onClose={() => onChange({ layer: null })}
       />
     )
@@ -1440,7 +1763,7 @@ function RecipeEditor({
                 inputMode="decimal"
                 min="0"
                 step="any"
-                placeholder={formatNumber(totals.amountG)}
+                placeholder={formatNumber(totals.amount)}
                 value={editor.weightText}
                 onChange={(event) => onChange({ weightText: event.target.value })}
               />
@@ -1465,7 +1788,7 @@ function RecipeEditor({
           <h2>Zutaten</h2>
           <span className="section-meta">
             {items.length > 0 &&
-              `${formatNumber(totals.amountG)} g · ${formatKcal(totals.kcal)}` +
+              `${formatNumber(totals.amount)} g · ${formatKcal(totals.kcal)}` +
                 (servings > 0 ? ` · ${formatKcal(totals.kcal / servings)} pro Portion` : '')}
           </span>
         </div>
@@ -1555,10 +1878,10 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
   const { recipe, unit, quantityText, servingsText, weightText, items, variationId, layer } = booking
   const isVariation = variationId !== null
   const totals = totalsOf(items)
-  const weightG = weightText === null ? totals.amountG : parseFloat(weightText)
+  const weightG = weightText === null ? totals.amount : parseFloat(weightText)
   const servings = parseFloat(servingsText)
   const quantity = parseFloat(quantityText)
-  const isValid = totals.amountG > 0 && servings > 0 && weightG > 0 && quantity > 0
+  const isValid = totals.amount > 0 && servings > 0 && weightG > 0 && quantity > 0
   const share = isValid ? shareOf({ unit, quantity, servings, weightG }) : 0
   const adjusted = isAdjusted(booking)
 
@@ -1575,9 +1898,9 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
   }
 
   // Changing an ingredient makes the weight follow the ingredients again.
-  function setAmount(foodId, amountG) {
+  function setAmount(foodId, amount) {
     onChange({
-      items: items.map((item) => (item.food.id === foodId ? { ...item, amountG } : item)),
+      items: items.map((item) => (item.food.id === foodId ? { ...item, amount } : item)),
       weightText: null,
       layer: null,
     })
@@ -1599,7 +1922,7 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
     event.preventDefault()
     if (!isValid) return
     const booked = scaleItems(
-      items.filter((item) => item.amountG > 0),
+      items.filter((item) => item.amount > 0),
       share,
     )
     onConfirm(booked, recipe.name, { recipeId: recipe.id, variationId })
@@ -1610,9 +1933,12 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
     return (
       <FoodDetail
         food={item.food}
-        initialAmountG={item.amountG || item.originalG}
+        initial={initialAmountInput(item.food, {
+          asUnit: true,
+          amount: item.amount || item.originalAmount || DEFAULT_AMOUNT,
+        })}
         confirmLabel="Übernehmen"
-        onConfirm={(food, amountG) => setAmount(food.id, amountG)}
+        onConfirm={(food, amount) => setAmount(food.id, amount)}
         onClose={() => onChange({ layer: null })}
       />
     )
@@ -1643,7 +1969,7 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
           min="0"
           step="any"
           enterKeyHint="done"
-          value={weightText ?? String(roundToOneDecimal(totals.amountG))}
+          value={weightText ?? String(roundToOneDecimal(totals.amount))}
           onFocus={(event) => event.target.select()}
           onChange={(event) => onChange({ weightText: event.target.value })}
         />
@@ -2197,9 +2523,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
-  const [detail, setDetail] = useState(null) // null or { food, mode: 'add' | 'set' | 'recipe-add', amountG }
+  // Amount view of a food: null or { food, mode: 'add' | 'set' | 'recipe-add', initial }, initial
+  // see initialAmountInput.
+  const [detail, setDetail] = useState(null)
   const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
+  const [foodFormLayer, setFoodFormLayer] = useState(null) // portion view on top of it, see FoodForm
   const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
   // Food search on top of the recipe editor or the booking view: null or { target, entries,
   // previewing }, target 'editor' | 'booking'; entries are the foods about to be added.
@@ -2260,8 +2589,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setView('list')
   }
 
-  function addToDraft(food, amountG) {
-    setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, amountG) }))
+  function addToDraft(food, amount) {
+    setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, amount) }))
   }
 
   // use: { recipeId, variationId }, remembered for the preselection next time.
@@ -2387,7 +2716,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       current.mealId === mealId
         ? {
             mealId,
-            entries: entries.map((entry) => ({ ...entry, baseG: entry.amountG })),
+            entries: entries.map((entry) => ({ ...entry, baseAmount: entry.amount })),
             recipeUses: [],
           }
         : current,
@@ -2401,31 +2730,37 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
-  function saveEntryAmount(food, amountG) {
+  function saveEntryAmount(food, amount) {
     runAction(async () => {
       await saveEditedEntries(
-        draft.entries.map((entry) => (entry.food.id === food.id ? { ...entry, amountG } : entry)),
+        draft.entries.map((entry) => (entry.food.id === food.id ? { ...entry, amount } : entry)),
       )
       setDetail(null)
       await loadMeals()
     })
   }
 
-  function openFoodDetail(food) {
-    setDetail({ food, mode: 'add', amountG: DEFAULT_AMOUNT_G })
+  // From the search: the default portion preselected, or (asUnit, the scale button) g / ml.
+  function openFoodDetail(food, { asUnit = false } = {}) {
+    setDetail({ food, mode: 'add', initial: initialAmountInput(food, { asUnit }) })
   }
 
-  function openRecipeFoodDetail(food) {
-    setDetail({ food, mode: 'recipe-add', amountG: DEFAULT_AMOUNT_G })
+  function openRecipeFoodDetail(food, { asUnit = false } = {}) {
+    setDetail({ food, mode: 'recipe-add', initial: initialAmountInput(food, { asUnit }) })
   }
 
+  // An amount already in the meal is shown as it is, in g / ml.
   function openEntryDetail(entry) {
-    setDetail({ food: entry.food, mode: 'set', amountG: entry.amountG })
+    setDetail({
+      food: entry.food,
+      mode: 'set',
+      initial: initialAmountInput(entry.food, { asUnit: true, amount: entry.amount }),
+    })
   }
 
-  function addFromDetail(food, amountG) {
-    if (detail.mode === 'recipe-add') addToRecipeSearch(food, amountG)
-    else addToDraft(food, amountG)
+  function addFromDetail(food, amount) {
+    if (detail.mode === 'recipe-add') addToRecipeSearch(food, amount)
+    else addToDraft(food, amount)
     setDetail(null)
   }
 
@@ -2447,6 +2782,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function openFood(food) {
     setNotice(null)
+    setFoodFormLayer(null)
     setFoodForm(food)
   }
 
@@ -2503,8 +2839,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setRecipeSearch({ target, entries: [], previewing: false })
   }
 
-  function addToRecipeSearch(food, amountG) {
-    setRecipeSearch((current) => ({ ...current, entries: addAmount(current.entries, food, amountG) }))
+  function addToRecipeSearch(food, amount) {
+    setRecipeSearch((current) => ({ ...current, entries: addAmount(current.entries, food, amount) }))
   }
 
   function removeFromRecipeSearch(foodId) {
@@ -2609,7 +2945,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     const shown = new Set(editor.items.map((item) => item.food.id))
     const leftOut = recipe.items
       .filter((item) => !shown.has(item.food.id))
-      .map((item) => ({ food: item.food, amountG: 0 }))
+      .map((item) => ({ food: item.food, amount: 0 }))
     runAction(async () => {
       const variation = await request(`${API.recipes}/${recipe.id}/variations`, {
         method: 'POST',
@@ -2703,6 +3039,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (recipeBooking) setRecipeBooking(null)
     else if (recipeEditor?.layer) updateEditor({ layer: null })
     else if (recipeEditor) setRecipeEditor(null)
+    else if (foodFormLayer) setFoodFormLayer(null)
     else if (foodForm) setFoodForm(null)
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
@@ -2810,6 +3147,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
             <FoodForm
               key={foodForm.id ?? 'new'}
               food={foodForm}
+              layer={foodFormLayer}
+              onLayerChange={setFoodFormLayer}
               onSave={saveFood}
               onDelete={askDeleteFood}
               onClose={goBack}
@@ -2860,7 +3199,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {detail && (
         <FoodDetail
           food={detail.food}
-          initialAmountG={detail.amountG}
+          initial={detail.initial}
           confirmLabel={detail.mode === 'set' ? 'Übernehmen' : 'Hinzufügen'}
           onConfirm={detail.mode === 'set' ? saveEntryAmount : addFromDetail}
           onClose={goBack}
