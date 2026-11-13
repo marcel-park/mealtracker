@@ -43,6 +43,7 @@ import {
   mealRequest,
   msUntilMidnight,
 } from './meals.js'
+import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
 import {
   NEW_EDITOR,
   UNIT_GRAM,
@@ -675,9 +676,64 @@ function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, 
   )
 }
 
-function MealList({ meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }) {
-  const totalKcal = meals.reduce((sum, meal) => sum + meal.kcal, 0)
+// Today at a glance, half and half: on the left the calories left of the target (red with
+// "zu viel" once it is exceeded), on the right one bar each for carbs, protein and fat, filled by
+// what is booked of their target (red above 100 %). meals: today's meals.
+function DaySummary({ user, meals }) {
+  const remaining = Math.round(remainingKcal(user.calorieTarget, meals))
+  const isOver = remaining < 0
+  const targets = macroTargets(user)
+  const booked = bookedMacros(meals)
 
+  return (
+    <div className="day-summary">
+      <div className="kcal-left" role="status" aria-label="Kalorien heute">
+        <span className={isOver ? 'kcal-left-value over' : 'kcal-left-value'}>
+          {Math.abs(remaining).toLocaleString(LOCALE)}
+        </span>
+        <span className="kcal-left-label">{isOver ? 'kcal zu viel' : 'kcal übrig'}</span>
+      </div>
+      <div className="macro-bars">
+        {MACROS.map(({ key, label }) => (
+          <MacroBar key={key} label={label} booked={booked[key]} target={targets[key]} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// One nutrient: its name with "30 / 200 g" right-aligned in the same line, and below a bar filled
+// by the share of the target that is booked. With a target of 0 g any booked amount counts as too
+// much.
+function MacroBar({ label, booked, target }) {
+  const bookedGrams = Math.round(booked)
+  const targetGrams = Math.round(target)
+  const share = target > 0 ? booked / target : booked > 0 ? Infinity : 0
+  const isOver = share > 1
+  return (
+    <div className={isOver ? 'macro over' : 'macro'}>
+      <span className="macro-head">
+        <span className="macro-label">{label}</span>
+        <span className="macro-value">
+          {bookedGrams.toLocaleString(LOCALE)} / {targetGrams.toLocaleString(LOCALE)} g
+        </span>
+      </span>
+      <span
+        className="macro-track"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={targetGrams}
+        aria-valuenow={bookedGrams}
+        aria-valuetext={`${bookedGrams} von ${targetGrams} g`}
+      >
+        <span className="macro-fill" style={{ width: `${Math.min(share, 1) * 100}%` }} />
+      </span>
+    </div>
+  )
+}
+
+function MealList({ user, meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }) {
   return (
     <section>
       <div className="list-head">
@@ -701,10 +757,7 @@ function MealList({ meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }
             <AvatarIcon />
           </button>
         </div>
-        <div className="total" role="status" aria-label="Gesamtkalorien">
-          <span className="total-value">{Math.round(totalKcal).toLocaleString(LOCALE)}</span>
-          <span className="total-unit">kcal</span>
-        </div>
+        <DaySummary user={user} meals={meals} />
       </div>
 
       {meals.length > 0 && (
@@ -2142,14 +2195,32 @@ function NumberField({ label, value, onChange }) {
   )
 }
 
+// A whole number from min to max typed into a field, or NaN.
+function wholeNumberIn(text, min, max) {
+  const value = Number(text)
+  return text.trim() !== '' && Number.isInteger(value) && value >= min && value <= max ? value : NaN
+}
+
+// Calorie target and, below it, how it splits into carbs, protein and fat (whole percent, together
+// 100). One "Speichern" saves all of it. The grams are shown in the main view.
 function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
   const [targetText, setTargetText] = useState(String(user.calorieTarget))
+  // { carbsPercent, proteinPercent, fatPercent } as typed
+  const [percentTexts, setPercentTexts] = useState(() =>
+    Object.fromEntries(MACROS.map(({ percentField }) => [percentField, String(user[percentField])])),
+  )
   const runAction = useActionRunner(onError)
   const themeLabelId = useId()
 
-  const target = Number(targetText)
-  const isValid = targetText !== '' && Number.isInteger(target) && target >= 1 && target <= MAX_CALORIE_TARGET
-  const isChanged = target !== user.calorieTarget
+  const settings = {
+    calorieTarget: wholeNumberIn(targetText, 1, MAX_CALORIE_TARGET),
+    ...Object.fromEntries(
+      MACROS.map(({ percentField }) => [percentField, wholeNumberIn(percentTexts[percentField], 0, 100)]),
+    ),
+  }
+  const percentSum = MACROS.reduce((sum, { percentField }) => sum + settings[percentField], 0)
+  const isValid = Object.values(settings).every((value) => !Number.isNaN(value)) && percentSum === 100
+  const isChanged = Object.keys(settings).some((field) => settings[field] !== user[field])
 
   function save(event) {
     event.preventDefault()
@@ -2158,7 +2229,7 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
       // The color theme cannot be changed yet, so the current value is sent back unchanged.
       const updated = await request(API.me, {
         method: 'PUT',
-        body: JSON.stringify({ calorieTarget: target, colorTheme: user.colorTheme }),
+        body: JSON.stringify({ ...settings, colorTheme: user.colorTheme }),
       })
       onUserChange(updated)
       onError(null)
@@ -2188,6 +2259,29 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
             onChange={(event) => setTargetText(event.target.value)}
           />
         </label>
+        <div className="macro-fields">
+          {MACROS.map(({ key, label, percentField }) => (
+            <label key={key} className="field">
+              <span>{label} (%)</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                enterKeyHint="done"
+                min="0"
+                max="100"
+                step="1"
+                value={percentTexts[percentField]}
+                onFocus={(event) => event.target.select()}
+                onChange={(event) =>
+                  setPercentTexts((current) => ({ ...current, [percentField]: event.target.value }))
+                }
+              />
+            </label>
+          ))}
+        </div>
+        {!Number.isNaN(percentSum) && percentSum !== 100 && (
+          <p className="hint warning macro-sum">Zusammen müssen es 100 % sein, gerade sind es {percentSum} %.</p>
+        )}
         <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
           Speichern
         </button>
@@ -3064,6 +3158,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
       {view === 'list' && (
         <MealList
+          user={user}
           meals={meals}
           onAdd={startNewMeal}
           onEdit={editMeal}

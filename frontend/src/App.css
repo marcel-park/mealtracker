@@ -727,28 +727,123 @@ fieldset.plain:disabled input {
   margin-bottom: 12px;
 }
 
-.total {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
+/* profile: carbs, protein and fat side by side, each a third of the row */
+.macro-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
   gap: 8px;
+}
+
+.macro-fields .field {
+  min-width: 0;
+}
+
+.macro-fields input {
+  min-width: 0;
+}
+
+.macro-sum {
+  margin: -8px 0 16px;
+}
+
+/* today at a glance: calories left (left half), carbs / protein / fat bars (right half) */
+.day-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
 
-.total-value {
-  font-size: 3rem;
+.kcal-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.kcal-left-value {
+  font-size: 2.75rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
-.total-unit {
+.kcal-left-value.over {
+  color: var(--danger);
+}
+
+.kcal-left-label {
   color: var(--muted);
-  font-size: 1.25rem;
+  font-size: 0.95rem;
+}
+
+.macro-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.macro {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.8rem;
+}
+
+/* name left, "30 / 200 g" right. On narrow phones "Kohlenhydrate" and "120 / 200 g" do not fit
+   next to each other in half the box; then the grams move below, still right-aligned, instead of
+   the name being cut off. */
+.macro-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+}
+
+.macro-label {
+  font-weight: 600;
+}
+
+.macro-head .macro-value {
+  margin-left: auto;
+}
+
+.macro-track {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.macro-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.macro-value {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.macro.over .macro-fill {
+  background: var(--danger);
+}
+
+.macro.over .macro-value {
+  color: var(--danger);
 }
 
 /* ----- Detail view: amount of one food ----- */
