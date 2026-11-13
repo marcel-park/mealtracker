@@ -57,10 +57,11 @@ export function quickAdd(food) {
     : { amount: DEFAULT_AMOUNT, label: formatAmount(DEFAULT_AMOUNT, food.unit) }
 }
 
-// The options next to the amount field: the portions of the food, then the unit itself.
+// The options next to the amount field: the portions of the food, then the unit itself. Portions
+// by name only, the select is narrow; whoever needs the amount there puts it into the name.
 export function amountChoices(food) {
   return [
-    ...(food.portions ?? []).map((portion) => ({ value: portion.id, label: portionLabel(portion, food.unit) })),
+    ...(food.portions ?? []).map((portion) => ({ value: portion.id, label: portion.name })),
     { value: CHOICE_UNIT, label: unitName(food.unit) },
   ]
 }

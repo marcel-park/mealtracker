@@ -999,8 +999,8 @@ function EntryRow({ entry, showDelta, onOpen, onRemove }) {
 }
 
 // The amount of a food to add, or to change an amount to. It is typed as a number of one of the
-// food's portions or in its unit (g / ml), chosen next to the number (one third / two thirds);
-// switching converts the number. Whatever was chosen, onConfirm gets the amount in g or ml:
+// food's portions or in its unit (g / ml), chosen next to the number (a field for "9999.9", the
+// select takes the rest); switching converts the number. Whatever was chosen, onConfirm gets the amount in g or ml:
 // portions are only a help for typing.
 // initial: { choice, quantityText }, see initialAmountInput.
 function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
