@@ -16,15 +16,16 @@ public class RecipeItem {
     @MapsId("foodId")
     private Food food;
 
-    @Column(name = "amount_g", nullable = false)
-    private double amountG;
+    // In the unit of the food (g or ml).
+    @Column(nullable = false)
+    private double amount;
 
     public RecipeItem() {}
 
-    public RecipeItem(Recipe recipe, Food food, double amountG) {
+    public RecipeItem(Recipe recipe, Food food, double amount) {
         this.recipe = recipe;
         this.food = food;
-        this.amountG = amountG;
+        this.amount = amount;
     }
 
     public RecipeItemId getId() { return id; }
@@ -32,6 +33,6 @@ public class RecipeItem {
     public void setRecipe(Recipe recipe) { this.recipe = recipe; }
     public Food getFood() { return food; }
     public void setFood(Food food) { this.food = food; }
-    public double getAmountG() { return amountG; }
-    public void setAmountG(double amountG) { this.amountG = amountG; }
+    public double getAmount() { return amount; }
+    public void setAmount(double amount) { this.amount = amount; }
 }

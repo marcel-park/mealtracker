@@ -1,6 +1,8 @@
 package io.github.marcel_park.mealtracker.repository;
 
 import io.github.marcel_park.mealtracker.model.Food;
+import io.github.marcel_park.mealtracker.model.FoodPortion;
+import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.User;
@@ -15,6 +17,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest
 class FoodRepositoryTest {
@@ -63,7 +66,7 @@ class FoodRepositoryTest {
         f.setName(name);
         f.setOwner(owner);
         f.setPublished(published);
-        f.setKcalPer100g(100);
+        f.setKcalPer100(100);
         f.setProtein(5);
         f.setCarbs(10);
         f.setFat(2);
@@ -182,6 +185,77 @@ class FoodRepositoryTest {
         assertThat(recipeItemRepository.existsByFoodIdAndRecipeOwnerIdNot(apple.getId(), alice.getId())).isTrue();
         assertThat(recipeItemRepository.existsByFoodIdAndRecipeOwnerIdNot(apple.getId(), bob.getId())).isFalse();
         assertThat(recipeItemRepository.existsByFoodId(oats.getId())).isFalse();
+
+        // The same in one query for a whole list (FoodService.find)
+        List<Long> all = List.of(oats.getId(), milk.getId(), apple.getId());
+        assertThat(mealItemRepository.findUsedFoodIds(all)).containsExactlyInAnyOrder(oats.getId(), milk.getId());
+        assertThat(recipeItemRepository.findUsedFoodIds(all)).containsExactly(apple.getId());
+    }
+
+    // ---------- portions ----------
+
+    @Test
+    void portions_areSavedWithTheFood_andLoadedFavoriteFirstThenInTheOrderAdded() {
+        Food quark = save("Magerquark", alice, false);
+        quark.addPortion("Löffel", 15, false);
+        quark.addPortion("Packung", 250, false);
+        quark.addPortion("Becher", 500, true);
+        repository.saveAndFlush(quark);
+        entityManager.clear();
+
+        Food loaded = repository.findById(quark.getId()).orElseThrow();
+
+        assertThat(loaded.getPortions())
+                .extracting(FoodPortion::getName, FoodPortion::getAmount, FoodPortion::isFavorite)
+                .containsExactly(
+                        tuple("Becher", 500.0, true),
+                        tuple("Löffel", 15.0, false),
+                        tuple("Packung", 250.0, false));
+    }
+
+    @Test
+    void portions_nameIsUniquePerFood() {
+        Food quark = save("Magerquark", alice, false);
+        Food skyr = save("Skyr", alice, false);
+        quark.addPortion("Packung", 250, true);
+        skyr.addPortion("Packung", 450, true);
+        repository.saveAndFlush(quark);
+        repository.saveAndFlush(skyr);
+
+        quark.addPortion("Packung", 500, false);
+
+        assertThatThrownBy(repository::flush).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void portions_goWithTheirFood() {
+        Food quark = save("Magerquark", alice, false);
+        quark.addPortion("Packung", 250, true);
+        repository.saveAndFlush(quark);
+        entityManager.clear();
+
+        repository.delete(repository.findById(quark.getId()).orElseThrow());
+        repository.flush();
+
+        Long remaining = entityManager
+                .createQuery("select count(p) from FoodPortion p", Long.class)
+                .getSingleResult();
+        assertThat(remaining).isZero();
+    }
+
+    @Test
+    void unit_isStoredAsItsName() {
+        Food beer = save("Bier", alice, false);
+        beer.setUnit(FoodUnit.ML);
+        repository.saveAndFlush(beer);
+        entityManager.clear();
+
+        assertThat(repository.findById(beer.getId()).orElseThrow().getUnit()).isEqualTo(FoodUnit.ML);
+        Object stored = entityManager
+                .createNativeQuery("select unit from food where id = :id")
+                .setParameter("id", beer.getId())
+                .getSingleResult();
+        assertThat(stored).isEqualTo("ML");
     }
 
     // ---------- basics ----------

@@ -39,13 +39,13 @@ public class Meal {
     public void setBookedAt(LocalDateTime bookedAt) { this.bookedAt = bookedAt; }
     public List<MealItem> getItems() { return items; }
 
-    public void addItem(Food food, double amountG) {
+    public void addItem(Food food, double amount) {
         for (MealItem item : items) {
             if (item.getFood().getId().equals(food.getId())) {
-                item.setAmountG(item.getAmountG() + amountG);
+                item.setAmount(item.getAmount() + amount);
                 return;
             }
         }
-        items.add(new MealItem(this, food, amountG));
+        items.add(new MealItem(this, food, amount));
     }
 }

@@ -68,11 +68,11 @@ class MealServiceTest {
 
     // ---------- test data ----------
 
-    private static Food food(Long id, String name, double kcalPer100g) {
+    private static Food food(Long id, String name, double kcalPer100) {
         Food food = new Food();
         food.setId(id);
         food.setName(name);
-        food.setKcalPer100g(kcalPer100g);
+        food.setKcalPer100(kcalPer100);
         return food;
     }
 
@@ -83,8 +83,8 @@ class MealServiceTest {
         return meal;
     }
 
-    private static MealItemRequest item(Long foodId, double amountG) {
-        return new MealItemRequest(foodId, amountG);
+    private static MealItemRequest item(Long foodId, double amount) {
+        return new MealItemRequest(foodId, amount);
     }
 
     private static MealRequest request(String title, MealItemRequest... items) {
@@ -121,7 +121,7 @@ class MealServiceTest {
         }
 
         @Test
-        void findAll_mapsItemsWithFoodIdNameAndAmount() {
+        void findAll_mapsItemsWithTheirFoodAndAmount() {
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(oats, 150);
             meal.addItem(milk, 200);
@@ -130,10 +130,12 @@ class MealServiceTest {
             MealResponse result = service.findAll(USER_ID).get(0);
 
             assertThat(result.items())
-                    .extracting(MealItemResponse::foodId, MealItemResponse::foodName, MealItemResponse::amountG)
+                    .extracting(item -> item.food().id(), item -> item.food().name(), MealItemResponse::amount)
                     .containsExactly(
                             tuple(1L, "Haferflocken", 150.0),
                             tuple(2L, "Milch", 200.0));
+            // a booked food is used, so the app shows its unit as fixed
+            assertThat(result.items()).allSatisfy(item -> assertThat(item.food().used()).isTrue());
         }
     }
 
@@ -149,9 +151,9 @@ class MealServiceTest {
                 "33,  372, 122.76",  // the service does not round, rounding is left to the client
                 "0.5, 64,  0.32"
         })
-        void itemKcal_isAmountTimesKcalPer100gDividedBy100(double amountG, double kcalPer100g, double expectedKcal) {
+        void itemKcal_isAmountTimesKcalPer100DividedBy100(double amount, double kcalPer100, double expectedKcal) {
             Meal meal = meal(1L, "Frühstück");
-            meal.addItem(food(1L, "Haferflocken", kcalPer100g), amountG);
+            meal.addItem(food(1L, "Haferflocken", kcalPer100), amount);
             when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
             MealItemResponse item = service.findAll(USER_ID).get(0).items().get(0);
@@ -181,11 +183,11 @@ class MealServiceTest {
         }
 
         @Test
-        void mealKcal_foodCorrectedAfterBooking_usesCurrentKcalPer100g() {
+        void mealKcal_foodCorrectedAfterBooking_usesCurrentKcalPer100() {
             // Calories are never stored, so correcting a food also corrects every meal that contains it.
             Meal meal = meal(1L, "Frühstück");
             meal.addItem(oats, 100);
-            oats.setKcalPer100g(380.0);
+            oats.setKcalPer100(380.0);
             when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID)).thenReturn(List.of(meal));
 
             MealResponse result = service.findAll(USER_ID).get(0);
@@ -241,7 +243,7 @@ class MealServiceTest {
             assertThat(saved.getId()).isNull();
             assertThat(saved.getTitle()).isEqualTo("Haferflocken, Milch");
             assertThat(saved.getItems())
-                    .extracting(MealItem::getFood, MealItem::getAmountG)
+                    .extracting(MealItem::getFood, MealItem::getAmount)
                     .containsExactly(tuple(oats, 150.0), tuple(milk, 200.0));
         }
 
@@ -382,7 +384,7 @@ class MealServiceTest {
             service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 80), item(2L, 200)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
-            assertThat(oatsItem.getAmountG()).isEqualTo(80.0);
+            assertThat(oatsItem.getAmount()).isEqualTo(80.0);
             verifyNoInteractions(foodService);
         }
 
@@ -404,7 +406,7 @@ class MealServiceTest {
             service.update(USER_ID, 1L, request("Apfel, Haferflocken, Milch", item(3L, 120), item(1L, 150), item(2L, 200)));
 
             assertThat(existing.getItems())
-                    .extracting(MealItem::getFood, MealItem::getAmountG)
+                    .extracting(MealItem::getFood, MealItem::getAmount)
                     .containsExactly(tuple(oats, 150.0), tuple(milk, 200.0), tuple(apple, 120.0));
         }
 
@@ -428,7 +430,7 @@ class MealServiceTest {
             service.update(USER_ID, 1L, request("Haferflocken, Milch", item(1L, 100), item(1L, 50), item(2L, 200)));
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
-            assertThat(oatsItem.getAmountG()).isEqualTo(150.0);
+            assertThat(oatsItem.getAmount()).isEqualTo(150.0);
         }
 
         @Test
@@ -440,7 +442,7 @@ class MealServiceTest {
             service.update(USER_ID, 1L, request("Apfel", item(3L, 70), item(3L, 50)));
 
             assertThat(existing.getItems())
-                    .extracting(MealItem::getFood, MealItem::getAmountG)
+                    .extracting(MealItem::getFood, MealItem::getAmount)
                     .containsExactly(tuple(apple, 120.0));
             verify(foodService).getVisibleEntity(USER_ID, 3L);
         }
@@ -463,7 +465,7 @@ class MealServiceTest {
 
             assertThat(result.id()).isEqualTo(1L);
             assertThat(result.items())
-                    .extracting(MealItemResponse::amountG, MealItemResponse::kcal)
+                    .extracting(MealItemResponse::amount, MealItemResponse::kcal)
                     .containsExactly(tuple(100.0, 372.0), tuple(200.0, 128.0));
             assertThat(result.kcal()).isEqualTo(500.0);
         }

@@ -56,7 +56,7 @@ class RecipeRepositoryTest {
         food.setName(name);
         food.setOwner(owner);
         food.setPublished(true);
-        food.setKcalPer100g(100);
+        food.setKcalPer100(100);
         return foodRepository.save(food);
     }
 
