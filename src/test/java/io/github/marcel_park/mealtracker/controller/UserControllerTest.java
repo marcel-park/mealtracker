@@ -45,7 +45,7 @@ class UserControllerTest {
     private AuthTokenService authTokenService;
 
     private static final UserResponse PROFILE =
-            new UserResponse(USER_ID, "max@example.com", 1800, ColorTheme.LIGHT, false);
+            new UserResponse(USER_ID, "max@example.com", 1800, 40, 30, 30, ColorTheme.LIGHT, false);
 
     @Test
     void get_returnsProfileOfTheLoggedInUser() throws Exception {
@@ -68,20 +68,26 @@ class UserControllerTest {
         mockMvc.perform(put("/api/users/me")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"calorieTarget":1800,"colorTheme":"DARK"}
+                                {"calorieTarget":1800,"colorTheme":"DARK",
+                                 "carbsPercent":50,"proteinPercent":25,"fatPercent":25}
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.calorieTarget").value(1800));
+                .andExpect(jsonPath("$.calorieTarget").value(1800))
+                .andExpect(jsonPath("$.carbsPercent").value(40));
 
-        verify(userService).updateSettings(USER_ID, new UserSettingsRequest(1800, ColorTheme.DARK));
+        verify(userService).updateSettings(USER_ID, new UserSettingsRequest(1800, ColorTheme.DARK, 50, 25, 25));
     }
 
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', textBlock = """
-            calorieTarget 0       | {"calorieTarget":0,"colorTheme":"LIGHT"}     | calorieTarget
-            calorieTarget too big | {"calorieTarget":20001,"colorTheme":"LIGHT"} | calorieTarget
-            missing calorieTarget | {"colorTheme":"LIGHT"}                       | calorieTarget
-            missing colorTheme    | {"calorieTarget":1800}                       | colorTheme
+            calorieTarget 0       | {"calorieTarget":0,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30}     | calorieTarget
+            calorieTarget too big | {"calorieTarget":20001,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30} | calorieTarget
+            missing calorieTarget | {"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30}                       | calorieTarget
+            missing colorTheme    | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30}                       | colorTheme
+            missing fatPercent    | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30}                  | fatPercent
+            negative percent      | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":-10,"proteinPercent":80,"fatPercent":30} | carbsPercent
+            percent above 100     | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":110,"proteinPercent":0,"fatPercent":0}   | carbsPercent
+            sum not 100           | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":20}  | macroPercentSum
             """)
     void updateSettings_invalidRequest_returns400AndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {
@@ -99,7 +105,8 @@ class UserControllerTest {
         mockMvc.perform(put("/api/users/me")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"calorieTarget":1800,"colorTheme":"PINK"}
+                                {"calorieTarget":1800,"colorTheme":"PINK",
+                                 "carbsPercent":40,"proteinPercent":30,"fatPercent":30}
                                 """))
                 .andExpect(status().isBadRequest());
 

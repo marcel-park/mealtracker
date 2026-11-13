@@ -107,6 +107,9 @@ class UserServiceTest {
             UserResponse user = service.register(new RegisterRequest("max@example.com", "geheim123")).user();
 
             assertThat(user.calorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
+            assertThat(user)
+                    .extracting(UserResponse::carbsPercent, UserResponse::proteinPercent, UserResponse::fatPercent)
+                    .containsExactly(40, 30, 30);
             assertThat(user.colorTheme()).isEqualTo(ColorTheme.LIGHT);
             assertThat(user.admin()).isFalse();
         }
@@ -226,7 +229,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, ColorTheme.LIGHT, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, ColorTheme.LIGHT, false));
     }
 
     @Test
@@ -239,15 +242,20 @@ class UserServiceTest {
     }
 
     @Test
-    void updateSettings_setsCalorieTargetAndColorTheme() {
+    void updateSettings_setsCalorieTargetMacroSplitAndColorTheme() {
         User user = existingUser("max@example.com", "geheim123");
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
-        UserResponse result = service.updateSettings(1L, new UserSettingsRequest(1800, ColorTheme.DARK));
+        UserResponse result = service.updateSettings(1L,
+                new UserSettingsRequest(1800, ColorTheme.DARK, 50, 25, 25));
 
-        assertThat(user.getCalorieTarget()).isEqualTo(1800);
-        assertThat(user.getColorTheme()).isEqualTo(ColorTheme.DARK);
-        assertThat(result.calorieTarget()).isEqualTo(1800);
-        assertThat(result.colorTheme()).isEqualTo(ColorTheme.DARK);
+        assertThat(user)
+                .extracting(User::getCalorieTarget, User::getCarbsPercent, User::getProteinPercent,
+                        User::getFatPercent, User::getColorTheme)
+                .containsExactly(1800, 50, 25, 25, ColorTheme.DARK);
+        assertThat(result)
+                .extracting(UserResponse::calorieTarget, UserResponse::carbsPercent,
+                        UserResponse::proteinPercent, UserResponse::fatPercent, UserResponse::colorTheme)
+                .containsExactly(1800, 50, 25, 25, ColorTheme.DARK);
     }
 }

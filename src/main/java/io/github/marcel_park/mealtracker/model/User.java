@@ -10,6 +10,11 @@ public class User {
 
     public static final int DEFAULT_CALORIE_TARGET = 2000;
 
+    // Default split of the calorie target, in percent of the calories (see the V7 migration).
+    public static final int DEFAULT_CARBS_PERCENT = 40;
+    public static final int DEFAULT_PROTEIN_PERCENT = 30;
+    public static final int DEFAULT_FAT_PERCENT = 30;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -24,6 +29,18 @@ public class User {
 
     @Column(name = "calorie_target", nullable = false)
     private int calorieTarget = DEFAULT_CALORIE_TARGET;
+
+    // How the calorie target splits into carbs, protein and fat, in whole percent of the calories;
+    // together always 100 (checked by UserSettingsRequest and a CHECK constraint). The grams are
+    // not stored: the app computes them from the calorie target.
+    @Column(name = "carbs_percent", nullable = false)
+    private int carbsPercent = DEFAULT_CARBS_PERCENT;
+
+    @Column(name = "protein_percent", nullable = false)
+    private int proteinPercent = DEFAULT_PROTEIN_PERCENT;
+
+    @Column(name = "fat_percent", nullable = false)
+    private int fatPercent = DEFAULT_FAT_PERCENT;
 
     // Stored as plain VARCHAR "LIGHT" / "DARK", see ColorThemeConverter.
     @Convert(converter = ColorThemeConverter.class)
@@ -45,6 +62,12 @@ public class User {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public int getCalorieTarget() { return calorieTarget; }
     public void setCalorieTarget(int calorieTarget) { this.calorieTarget = calorieTarget; }
+    public int getCarbsPercent() { return carbsPercent; }
+    public void setCarbsPercent(int carbsPercent) { this.carbsPercent = carbsPercent; }
+    public int getProteinPercent() { return proteinPercent; }
+    public void setProteinPercent(int proteinPercent) { this.proteinPercent = proteinPercent; }
+    public int getFatPercent() { return fatPercent; }
+    public void setFatPercent(int fatPercent) { this.fatPercent = fatPercent; }
     public ColorTheme getColorTheme() { return colorTheme; }
     public void setColorTheme(ColorTheme colorTheme) { this.colorTheme = colorTheme; }
     public boolean isActive() { return active; }

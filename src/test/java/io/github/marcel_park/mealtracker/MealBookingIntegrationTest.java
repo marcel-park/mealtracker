@@ -272,13 +272,17 @@ class MealBookingIntegrationTest {
         mockMvc.perform(as(token, put("/api/users/me"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"calorieTarget":1800,"colorTheme":"DARK"}
+                                {"calorieTarget":1800,"colorTheme":"DARK",
+                                 "carbsPercent":50,"proteinPercent":25,"fatPercent":25}
                                 """))
                 .andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/users/me")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value(email))
                 .andExpect(jsonPath("$.calorieTarget").value(1800))
+                .andExpect(jsonPath("$.carbsPercent").value(50))
+                .andExpect(jsonPath("$.proteinPercent").value(25))
+                .andExpect(jsonPath("$.fatPercent").value(25))
                 .andExpect(jsonPath("$.colorTheme").value("DARK"));
 
         // The same email cannot be registered twice
