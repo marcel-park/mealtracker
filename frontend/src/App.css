@@ -1114,18 +1114,23 @@ fieldset.plain:disabled input {
   vertical-align: bottom;
 }
 
-/* the amount view of a food: number (one third), portion or unit (two thirds) */
-.portion-amount {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+/* the amount view of a food: the number, wide enough for "9999.9" (nobody books more than 9999 g
+   of anything), and the portion or unit select taking the rest of the row */
+.portion-amount input {
+  flex: none;
+  width: calc(6ch + 30px); /* 4 digits, separator and decimal plus padding and border */
+  height: var(--book-amount-height);
+  appearance: textfield; /* no spin buttons taking room from the digits */
 }
 
-.portion-amount input {
-  min-width: 0;
-  height: var(--book-amount-height);
+.portion-amount input::-webkit-inner-spin-button,
+.portion-amount input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 .portion-amount .select-box {
+  flex: 1;
   min-width: 0;
 }
 

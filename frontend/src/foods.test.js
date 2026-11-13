@@ -48,11 +48,11 @@ describe('quickAdd', () => {
 })
 
 describe('amountChoices', () => {
-  it('offers the portions in their order, then the unit itself', () => {
+  it('offers the portions by name in their order, then the unit itself', () => {
     expect(amountChoices(quark).map((choice) => choice.label)).toEqual([
-      'Packung (250 g)',
-      'Löffel (15 g)',
-      'Becher (500 g)',
+      'Packung',
+      'Löffel',
+      'Becher',
       'Gramm',
     ])
     expect(amountChoices(beer)).toEqual([{ value: CHOICE_UNIT, label: 'Milliliter' }])
