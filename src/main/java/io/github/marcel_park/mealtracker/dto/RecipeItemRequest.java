@@ -5,4 +5,4 @@ import jakarta.validation.constraints.Positive;
 
 public record RecipeItemRequest(
         @NotNull Long foodId,
-        @Positive double amountG) {}
+        @Positive double amount) {}

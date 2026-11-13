@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -49,7 +51,7 @@ class MealBookingIntegrationTest {
         MvcResult booked = mockMvc.perform(as(token, post("/api/meals"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Breakfast","items":[{"foodId":%d,"amountG":150},{"foodId":%d,"amountG":200}]}
+                                {"title":"Breakfast","items":[{"foodId":%d,"amount":150},{"foodId":%d,"amount":200}]}
                                 """.formatted(oatsId, milkId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bookedAt").isNotEmpty())
@@ -63,31 +65,31 @@ class MealBookingIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath(thisMeal + ".title").value(contains("Breakfast")))
                 .andExpect(jsonPath(thisMeal + ".kcal").value(contains(686.0)))
-                .andExpect(jsonPath(thisMeal + ".items[*].foodName")
+                .andExpect(jsonPath(thisMeal + ".items[*].food.name")
                         .value(containsInAnyOrder("Haferflocken (IT)", "Milch (IT)")));
 
         // Change the oats amount: 100 g oats = 372 kcal, milk unchanged = 128 kcal
         mockMvc.perform(as(token, put("/api/meals/" + mealId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Breakfast","items":[{"foodId":%d,"amountG":100},{"foodId":%d,"amountG":200}]}
+                                {"title":"Breakfast","items":[{"foodId":%d,"amount":100},{"foodId":%d,"amount":200}]}
                                 """.formatted(oatsId, milkId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.items[?(@.foodId == %d)].amountG".formatted(oatsId)).value(contains(100.0)))
+                .andExpect(jsonPath("$.items[?(@.food.id == %d)].amount".formatted(oatsId)).value(contains(100.0)))
                 .andExpect(jsonPath("$.kcal").value(500.0));
 
         // Remove the milk item by leaving it out of the request
         mockMvc.perform(as(token, put("/api/meals/" + mealId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Breakfast","items":[{"foodId":%d,"amountG":100}]}
+                                {"title":"Breakfast","items":[{"foodId":%d,"amount":100}]}
                                 """.formatted(oatsId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kcal").value(372.0));
 
         // The removal was committed, not only reflected in the response
         mockMvc.perform(as(token, get("/api/meals")))
-                .andExpect(jsonPath(thisMeal + ".items[*].foodId").value(contains((int) oatsId)))
+                .andExpect(jsonPath(thisMeal + ".items[*].food.id").value(contains((int) oatsId)))
                 .andExpect(jsonPath(thisMeal + ".kcal").value(contains(372.0)));
 
         // Delete, then the meal is gone
@@ -108,6 +110,106 @@ class MealBookingIntegrationTest {
                 .andExpect(status().isNoContent());
     }
 
+    // Portions against the real schema (Flyway V6): the unique name per food (case- and
+    // accent-insensitive by collation), the flush order in FoodService.applyPortions, and the unit
+    // change of a booked food.
+    @Test
+    void portionsAndUnit_areSavedWithTheFood_andTheUnitCanChangeEvenOnceBooked() throws Exception {
+        String token = register();
+        MvcResult created = mockMvc.perform(as(token, post("/api/foods"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
+                                 "published":false,"portions":[
+                                   {"name":"Flasche","amount":500},
+                                   {"name":"kleine Flasche","amount":330}]}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.unit").value("ML"))
+                .andExpect(jsonPath("$.used").value(false))
+                .andExpect(jsonPath("$.portions[*].name").value(contains("Flasche", "kleine Flasche")))
+                .andExpect(jsonPath("$.portions[*].favorite").value(contains(true, false)))
+                .andReturn();
+        long beerId = idOf(created);
+        Number bottleId = JsonPath.read(created.getResponse().getContentAsString(), "$.portions[0].id");
+        Number smallId = JsonPath.read(created.getResponse().getContentAsString(), "$.portions[1].id");
+
+        // Delete "Flasche" and add a new "flasche" in the same request, rename the other one and
+        // make it the favorite. Without the flushes in between, the INSERT would come first and
+        // break the unique key on (food_id, name).
+        mockMvc.perform(as(token, put("/api/foods/" + beerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
+                                 "published":false,"portions":[
+                                   {"id":%d,"name":"Dose","amount":330,"favorite":true},
+                                   {"name":"flasche","amount":500}]}
+                                """.formatted(smallId.longValue())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.portions[*].name").value(contains("Dose", "flasche")))
+                .andExpect(jsonPath("$.portions[0].id").value(smallId.intValue()))
+                .andExpect(jsonPath("$.portions[*].id", not(hasItem(bottleId.intValue()))));
+
+        // Two portions swap their names in one request (FoodService renames through temporary names).
+        Number canId = smallId;
+        MvcResult afterChain = mockMvc.perform(as(token, get("/api/foods/" + beerId))).andReturn();
+        Number newBottleId = JsonPath.read(afterChain.getResponse().getContentAsString(), "$.portions[1].id");
+        mockMvc.perform(as(token, put("/api/foods/" + beerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
+                                 "published":false,"portions":[
+                                   {"id":%d,"name":"flasche","amount":330,"favorite":true},
+                                   {"id":%d,"name":"Dose","amount":500}]}
+                                """.formatted(canId.longValue(), newBottleId.longValue())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.portions[*].name").value(contains("flasche", "Dose")));
+
+        // Names differing only in case or accents count as equal, as in the database.
+        mockMvc.perform(as(token, put("/api/foods/" + beerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
+                                 "published":false,"portions":[{"name":"Glas","amount":200},{"name":"GLÄS","amount":300}]}
+                                """))
+                .andExpect(status().isBadRequest());
+
+        // The unit can change.
+        mockMvc.perform(as(token, put("/api/foods/" + beerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(beerJson("G")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unit").value("G"));
+
+        // Also once booked: the booked amount keeps its number (330 g become 330 ml), and its kcal.
+        MvcResult meal = mockMvc.perform(as(token, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Bier","items":[{"foodId":%d,"amount":330}]}
+                                """.formatted(beerId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].food.used").value(true))
+                .andReturn();
+        mockMvc.perform(as(token, put("/api/foods/" + beerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(beerJson("ML")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unit").value("ML"))
+                .andExpect(jsonPath("$.used").value(true));
+        String thisMeal = "$[?(@.id == %d)]".formatted(idOf(meal));
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath(thisMeal + ".items[0].food.unit").value(contains("ML")))
+                .andExpect(jsonPath(thisMeal + ".items[0].amount").value(contains(330.0)))
+                .andExpect(jsonPath(thisMeal + ".kcal").value(contains(138.6)));
+    }
+
+    private static String beerJson(String unit) {
+        return """
+                {"name":"Bier (IT)","unit":"%s","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
+                 "published":false,"portions":[]}
+                """.formatted(unit);
+    }
+
     @Test
     void meals_areSeparatedByUser() throws Exception {
         String alice = register();
@@ -117,7 +219,7 @@ class MealBookingIntegrationTest {
         MvcResult booked = mockMvc.perform(as(alice, post("/api/meals"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Apfel","items":[{"foodId":%d,"amountG":150}]}
+                                {"title":"Apfel","items":[{"foodId":%d,"amount":150}]}
                                 """.formatted(appleId)))
                 .andExpect(status().isCreated())
                 .andReturn();
@@ -130,7 +232,7 @@ class MealBookingIntegrationTest {
         mockMvc.perform(as(bob, put("/api/meals/" + aliceMealId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Gekapert","items":[{"foodId":%d,"amountG":1}]}
+                                {"title":"Gekapert","items":[{"foodId":%d,"amount":1}]}
                                 """.formatted(appleId)))
                 .andExpect(status().isNotFound());
         mockMvc.perform(as(bob, delete("/api/meals/" + aliceMealId)))
@@ -202,7 +304,7 @@ class MealBookingIntegrationTest {
         mockMvc.perform(as(bob, post("/api/meals"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Porridge","items":[{"foodId":%d,"amountG":100}]}
+                                {"title":"Porridge","items":[{"foodId":%d,"amount":100}]}
                                 """.formatted(oatsId)))
                 .andExpect(status().isCreated());
         mockMvc.perform(as(bob, put("/api/foods/" + oatsId))
@@ -301,12 +403,12 @@ class MealBookingIntegrationTest {
         MvcResult created = mockMvc.perform(as(alice, post("/api/recipes/" + recipeId + "/variations"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"name":"Mehr Bohnen","servings":2,"weightG":900,"items":[{"foodId":%d,"amountG":600}]}
+                                {"name":"Mehr Bohnen","servings":2,"weightG":900,"items":[{"foodId":%d,"amount":600}]}
                                 """.formatted(beansId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.servings").isEmpty())   // 2 = as in the original
                 .andExpect(jsonPath("$.weightG").value(900.0))
-                .andExpect(jsonPath("$.items[0].amountG").value(600.0))
+                .andExpect(jsonPath("$.items[0].amount").value(600.0))
                 .andReturn();
         long variationId = idOf(created);
 
@@ -329,7 +431,7 @@ class MealBookingIntegrationTest {
         mockMvc.perform(as(alice, post("/api/meals"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Chili","items":[{"foodId":%d,"amountG":300}],
+                                {"title":"Chili","items":[{"foodId":%d,"amount":300}],
                                  "recipes":[{"recipeId":%d,"variationId":%d}]}
                                 """.formatted(beansId, recipeId, variationId)))
                 .andExpect(status().isCreated());
@@ -348,14 +450,14 @@ class MealBookingIntegrationTest {
         long secondId = idOf(mockMvc.perform(as(alice, post("/api/recipes/" + recipeId + "/variations"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"name":"Wenig Bohnen","items":[{"foodId":%d,"amountG":100}]}
+                                {"name":"Wenig Bohnen","items":[{"foodId":%d,"amount":100}]}
                                 """.formatted(beansId)))
                 .andExpect(status().isCreated())
                 .andReturn());
         mockMvc.perform(as(alice, post("/api/meals"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"Chili","items":[{"foodId":%d,"amountG":50}],
+                                {"title":"Chili","items":[{"foodId":%d,"amount":50}],
                                  "recipes":[{"recipeId":%d,"variationId":%d}]}
                                 """.formatted(beansId, recipeId, secondId)))
                 .andExpect(status().isCreated());
@@ -404,39 +506,40 @@ class MealBookingIntegrationTest {
         return JsonPath.read(result.getResponse().getContentAsString(), "$.token");
     }
 
-    private long createFood(String token, String name, int kcalPer100g) throws Exception {
-        return createFood(token, name, kcalPer100g, false);
+    private long createFood(String token, String name, int kcalPer100) throws Exception {
+        return createFood(token, name, kcalPer100, false);
     }
 
-    private long createFood(String token, String name, int kcalPer100g, boolean published) throws Exception {
+    private long createFood(String token, String name, int kcalPer100, boolean published) throws Exception {
         MvcResult result = mockMvc.perform(as(token, post("/api/foods"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(foodJson(name, kcalPer100g, published)))
+                        .content(foodJson(name, kcalPer100, published)))
                 .andExpect(status().isCreated())
                 .andReturn();
         return idOf(result);
     }
 
-    private static String foodJson(String name, int kcalPer100g, boolean published) {
+    private static String foodJson(String name, int kcalPer100, boolean published) {
         return """
-                {"name":"%s","kcalPer100g":%d,"protein":10,"carbs":50,"fat":5,"published":%b}
-                """.formatted(name, kcalPer100g, published);
+                {"name":"%s","unit":"G","kcalPer100":%d,"protein":10,"carbs":50,"fat":5,"published":%b,
+                 "portions":[]}
+                """.formatted(name, kcalPer100, published);
     }
 
-    private long createRecipe(String token, String name, boolean published, long foodId, int amountG)
+    private long createRecipe(String token, String name, boolean published, long foodId, int amount)
             throws Exception {
         MvcResult result = mockMvc.perform(as(token, post("/api/recipes"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(recipeJson(name, published, foodId, amountG)))
+                        .content(recipeJson(name, published, foodId, amount)))
                 .andExpect(status().isCreated())
                 .andReturn();
         return idOf(result);
     }
 
-    private static String recipeJson(String name, boolean published, long foodId, int amountG) {
+    private static String recipeJson(String name, boolean published, long foodId, int amount) {
         return """
-                {"name":"%s","servings":2,"published":%b,"items":[{"foodId":%d,"amountG":%d}]}
-                """.formatted(name, published, foodId, amountG);
+                {"name":"%s","servings":2,"published":%b,"items":[{"foodId":%d,"amount":%d}]}
+                """.formatted(name, published, foodId, amount);
     }
 
     private static long idOf(MvcResult result) throws Exception {

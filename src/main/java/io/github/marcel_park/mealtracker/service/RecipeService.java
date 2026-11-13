@@ -80,9 +80,9 @@ public class RecipeService {
         Recipe recipe = new Recipe();
         recipe.setOwner(userRepository.getReferenceById(userId));
         applyFields(request, recipe);
-        sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amountG)
-                .forEach((foodId, amountG) ->
-                        recipe.addItem(foodService.getVisibleEntity(userId, foodId), amountG));
+        sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amount)
+                .forEach((foodId, amount) ->
+                        recipe.addItem(foodService.getVisibleEntity(userId, foodId), amount));
         publishFoodsIfPublic(userId, recipe);
         return toResponse(recipeRepository.save(recipe), userId);
     }
@@ -96,17 +96,17 @@ public class RecipeService {
         // Updated in place for the same reason as in MealService.update: the primary key is
         // (recipe_id, food_id) and Hibernate flushes INSERTs before DELETEs.
         Map<Long, Double> requestedAmounts =
-                sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amountG);
+                sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amount);
         recipe.getItems().removeIf(item -> !requestedAmounts.containsKey(item.getFood().getId()));
 
         Map<Long, RecipeItem> keptItems = recipe.getItems().stream()
                 .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        requestedAmounts.forEach((foodId, amountG) -> {
+        requestedAmounts.forEach((foodId, amount) -> {
             RecipeItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmountG(amountG);
+                keptItem.setAmount(amount);
             } else {
-                recipe.addItem(foodService.getVisibleEntity(userId, foodId), amountG);
+                recipe.addItem(foodService.getVisibleEntity(userId, foodId), amount);
             }
         });
 
@@ -204,13 +204,13 @@ public class RecipeService {
         variation.setWeightG(request.weightG());
 
         Map<Long, Double> originalAmounts = recipe.getItems().stream()
-                .collect(Collectors.toMap(item -> item.getFood().getId(), RecipeItem::getAmountG));
+                .collect(Collectors.toMap(item -> item.getFood().getId(), RecipeItem::getAmount));
         Map<Long, Double> changedAmounts = new LinkedHashMap<>();
-        sumAmountsByFoodId(request.items(), VariationItemRequest::foodId, VariationItemRequest::amountG)
-                .forEach((foodId, amountG) -> {
-                    double originalG = originalAmounts.getOrDefault(foodId, 0.0);
-                    if (Double.compare(amountG, originalG) != 0) {
-                        changedAmounts.put(foodId, amountG);
+        sumAmountsByFoodId(request.items(), VariationItemRequest::foodId, VariationItemRequest::amount)
+                .forEach((foodId, amount) -> {
+                    double originalAmount = originalAmounts.getOrDefault(foodId, 0.0);
+                    if (Double.compare(amount, originalAmount) != 0) {
+                        changedAmounts.put(foodId, amount);
                     }
                 });
 
@@ -218,12 +218,12 @@ public class RecipeService {
         variation.getItems().removeIf(item -> !changedAmounts.containsKey(item.getFood().getId()));
         Map<Long, RecipeVariationItem> keptItems = variation.getItems().stream()
                 .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        changedAmounts.forEach((foodId, amountG) -> {
+        changedAmounts.forEach((foodId, amount) -> {
             RecipeVariationItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmountG(amountG);
+                keptItem.setAmount(amount);
             } else {
-                variation.addItem(foodService.getVisibleEntity(userId, foodId), amountG);
+                variation.addItem(foodService.getVisibleEntity(userId, foodId), amount);
             }
         });
     }
@@ -237,10 +237,10 @@ public class RecipeService {
     // Same food listed twice: the amounts are added up. LinkedHashMap keeps the request order.
     // Used for recipe items and variation items, which are different request types.
     private static <T> Map<Long, Double> sumAmountsByFoodId(List<T> items, Function<T, Long> foodId,
-                                                            ToDoubleFunction<T> amountG) {
+                                                            ToDoubleFunction<T> amount) {
         Map<Long, Double> amounts = new LinkedHashMap<>();
         for (T item : items) {
-            amounts.merge(foodId.apply(item), amountG.applyAsDouble(item), Double::sum);
+            amounts.merge(foodId.apply(item), amount.applyAsDouble(item), Double::sum);
         }
         return amounts;
     }
@@ -250,9 +250,9 @@ public class RecipeService {
     private RecipeResponse toResponse(Recipe recipe, Long userId) {
         List<RecipeItemResponse> items = recipe.getItems().stream()
                 .map(item -> new RecipeItemResponse(
-                        FoodResponse.from(item.getFood(), userId),
-                        item.getAmountG(),
-                        item.getAmountG() * item.getFood().getKcalPer100g() / 100))
+                        FoodResponse.ofUsed(item.getFood(), userId),
+                        item.getAmount(),
+                        item.getAmount() * item.getFood().getKcalPer100() / 100))
                 .toList();
         boolean owned = recipe.isOwnedBy(userId);
         return new RecipeResponse(
@@ -262,7 +262,7 @@ public class RecipeService {
                 owned,
                 recipe.isPublished(),
                 recipe.isConfirmed(),
-                items.stream().mapToDouble(RecipeItemResponse::amountG).sum(),
+                items.stream().mapToDouble(RecipeItemResponse::amount).sum(),
                 items.stream().mapToDouble(RecipeItemResponse::kcal).sum(),
                 items,
                 owned
@@ -279,7 +279,7 @@ public class RecipeService {
                 variation.getWeightG(),
                 variation.getItems().stream()
                         .map(item -> new VariationItemResponse(
-                                FoodResponse.from(item.getFood(), userId), item.getAmountG()))
+                                FoodResponse.ofUsed(item.getFood(), userId), item.getAmount()))
                         .toList());
     }
 }

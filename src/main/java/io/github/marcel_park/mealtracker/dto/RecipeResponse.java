@@ -2,7 +2,8 @@ package io.github.marcel_park.mealtracker.dto;
 
 import java.util.List;
 
-// amountG and kcal are the totals of all items, i.e. of all servings together.
+// amount and kcal are the totals of all items, i.e. of all servings together. In amount, 100 ml of
+// a food measured in millilitres count as 100 g.
 // variations and lastUsedVariationId are only filled for the owner; everybody else gets an empty
 // list and null, so variations are never shared.
 public record RecipeResponse(
@@ -12,7 +13,7 @@ public record RecipeResponse(
         boolean owned,
         boolean published,
         boolean confirmed,
-        double amountG,
+        double amount,
         double kcal,
         List<RecipeItemResponse> items,
         List<VariationResponse> variations,

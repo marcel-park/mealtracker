@@ -28,15 +28,16 @@ public class RecipeVariation {
     // null: as many as the original
     private Double servings;
 
-    // Weight of the finished dish. null: the sum of the ingredients.
+    // Weight of the finished dish in g. null: the sum of the ingredients, where 100 ml of a food
+    // measured in millilitres count as 100 g.
     @Column(name = "weight_g")
     private Double weightG;
 
     @OneToMany(mappedBy = "variation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<RecipeVariationItem> items = new ArrayList<>();
 
-    public void addItem(Food food, double amountG) {
-        items.add(new RecipeVariationItem(this, food, amountG));
+    public void addItem(Food food, double amount) {
+        items.add(new RecipeVariationItem(this, food, amount));
     }
 
     public Long getId() { return id; }

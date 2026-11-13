@@ -1,6 +1,10 @@
 package io.github.marcel_park.mealtracker.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.BatchSize;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 public class Food {
@@ -18,8 +22,15 @@ public class Food {
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(nullable = false)
-    private double kcalPer100g;
+    // Stored as plain VARCHAR "G" / "ML", see FoodUnitConverter. Every amount of the food is in
+    // this unit: changing it turns 100 g into 100 ml everywhere the food is used.
+    @Convert(converter = FoodUnitConverter.class)
+    @Column(nullable = false, length = 2)
+    private FoodUnit unit = FoodUnit.G;
+
+    // Per 100 g or 100 ml, depending on the unit. Protein, carbs and fat likewise.
+    @Column(name = "kcal_per100", nullable = false)
+    private double kcalPer100;
 
     @Column(nullable = false)
     private double protein;
@@ -37,6 +48,13 @@ public class Food {
     // Checked by an official source. Nobody can set this yet.
     @Column(name = "is_confirmed", nullable = false)
     private boolean confirmed;
+
+    // The favorite first, then in the order they were added. Loaded in batches, so a list of foods
+    // does not need one query per food for its portions.
+    @OneToMany(mappedBy = "food", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("favorite DESC, id ASC")
+    @BatchSize(size = 50)
+    private List<FoodPortion> portions = new ArrayList<>();
 
     public boolean isOwnedBy(Long userId) {
         // getId() on a lazy proxy does not load the user
@@ -64,8 +82,10 @@ public class Food {
     public void setOwner(User owner) { this.owner = owner; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
-    public double getKcalPer100g() { return kcalPer100g; }
-    public void setKcalPer100g(double kcalPer100g) { this.kcalPer100g = kcalPer100g; }
+    public FoodUnit getUnit() { return unit; }
+    public void setUnit(FoodUnit unit) { this.unit = unit; }
+    public double getKcalPer100() { return kcalPer100; }
+    public void setKcalPer100(double kcalPer100) { this.kcalPer100 = kcalPer100; }
     public double getProtein() { return protein; }
     public void setProtein(double protein) { this.protein = protein; }
     public double getCarbs() { return carbs; }
@@ -76,4 +96,12 @@ public class Food {
     public void setPublished(boolean published) { this.published = published; }
     public boolean isConfirmed() { return confirmed; }
     public void setConfirmed(boolean confirmed) { this.confirmed = confirmed; }
+    // Changed through addPortion() and by removing from this list (orphan removal deletes).
+    public List<FoodPortion> getPortions() { return portions; }
+
+    public FoodPortion addPortion(String name, double amount, boolean favorite) {
+        FoodPortion portion = new FoodPortion(this, name, amount, favorite);
+        portions.add(portion);
+        return portion;
+    }
 }

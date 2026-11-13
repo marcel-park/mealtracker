@@ -16,15 +16,16 @@ public class MealItem {
     @MapsId("foodId")
     private Food food;
 
-    @Column(name = "amount_g", nullable = false)
-    private double amountG;
+    // In the unit of the food (g or ml).
+    @Column(nullable = false)
+    private double amount;
 
     public MealItem() {}
 
-    public MealItem(Meal meal, Food food, double amountG) {
+    public MealItem(Meal meal, Food food, double amount) {
         this.meal = meal;
         this.food = food;
-        this.amountG = amountG;
+        this.amount = amount;
     }
 
     public MealItemId getId() { return id; }
@@ -32,6 +33,6 @@ public class MealItem {
     public void setMeal(Meal meal) { this.meal = meal; }
     public Food getFood() { return food; }
     public void setFood(Food food) { this.food = food; }
-    public double getAmountG() { return amountG; }
-    public void setAmountG(double amountG) { this.amountG = amountG; }
+    public double getAmount() { return amount; }
+    public void setAmount(double amount) { this.amount = amount; }
 }

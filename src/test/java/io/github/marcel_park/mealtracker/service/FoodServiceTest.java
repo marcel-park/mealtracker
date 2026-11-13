@@ -1,11 +1,16 @@
 package io.github.marcel_park.mealtracker.service;
 
 import io.github.marcel_park.mealtracker.dto.CatalogScope;
+import io.github.marcel_park.mealtracker.dto.FoodPortionRequest;
+import io.github.marcel_park.mealtracker.dto.FoodPortionResponse;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
+import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
+import io.github.marcel_park.mealtracker.model.FoodPortion;
+import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
@@ -21,14 +26,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -82,7 +93,7 @@ class FoodServiceTest {
         f.setName(name);
         f.setOwner(owner);
         f.setPublished(published);
-        f.setKcalPer100g(372);
+        f.setKcalPer100(372);
         f.setProtein(13.5);
         f.setCarbs(58.7);
         f.setFat(7);
@@ -90,7 +101,22 @@ class FoodServiceTest {
     }
 
     private static FoodRequest request(String name, boolean published) {
-        return new FoodRequest(name, 372.0, 13.5, 58.7, 7.0, published);
+        return new FoodRequest(name, FoodUnit.G, 372.0, 13.5, 58.7, 7.0, published, List.of());
+    }
+
+    private static FoodRequest request(FoodUnit unit, List<FoodPortionRequest> portions) {
+        return new FoodRequest("Haferflocken", unit, 372.0, 13.5, 58.7, 7.0, false, portions);
+    }
+
+    // A portion as already saved, with the id the database would have given it.
+    private static FoodPortion savedPortion(Food food, Long id, String name, double amount, boolean favorite) {
+        FoodPortion portion = food.addPortion(name, amount, favorite);
+        ReflectionTestUtils.setField(portion, "id", id);
+        return portion;
+    }
+
+    private static FoodPortionRequest newPortion(String name, double amount, boolean favorite) {
+        return new FoodPortionRequest(null, name, amount, favorite);
     }
 
     private void stubFind(Food food) {
@@ -98,7 +124,7 @@ class FoodServiceTest {
     }
 
     private void stubSaveReturnsArgument() {
-        when(repository.save(any(Food.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.saveAndFlush(any(Food.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     // ---------- find ----------
@@ -168,6 +194,33 @@ class FoodServiceTest {
                             // without owner a food is always public
                             tuple(false, true));
         }
+
+        @Test
+        void marksFoodsUsedInAMealRecipeOrVariation_withOneQueryPerKindForTheWholeList() {
+            when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of(
+                    food(1L, "Brot", me, false),
+                    food(2L, "Milch", me, false),
+                    food(3L, "Quark", me, false),
+                    food(4L, "Butter", me, false)));
+            List<Long> ids = List.of(1L, 2L, 3L, 4L);
+            when(mealItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(1L));
+            when(recipeItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(2L));
+            when(variationItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(3L));
+
+            List<FoodResponse> result = service.find(USER_ID, null, null, false);
+
+            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, false);
+            verify(mealItemRepository, never()).existsByFoodId(anyLong());
+        }
+
+        @Test
+        void emptyResult_doesNotAskWhichFoodsAreUsed() {
+            when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of());
+
+            assertThat(service.find(USER_ID, null, null, false)).isEmpty();
+
+            verifyNoInteractions(mealItemRepository, recipeItemRepository, variationItemRepository);
+        }
     }
 
     // ---------- get ----------
@@ -227,12 +280,12 @@ class FoodServiceTest {
             service.create(USER_ID, request("Haferflocken", true));
 
             ArgumentCaptor<Food> captor = ArgumentCaptor.forClass(Food.class);
-            verify(repository).save(captor.capture());
+            verify(repository).saveAndFlush(captor.capture());
             Food passed = captor.getValue();
             assertThat(passed.getId()).isNull();
             assertThat(passed.getOwner()).isSameAs(me);
             assertThat(passed)
-                    .extracting(Food::getName, Food::getKcalPer100g, Food::getProtein, Food::getCarbs,
+                    .extracting(Food::getName, Food::getKcalPer100, Food::getProtein, Food::getCarbs,
                             Food::getFat, Food::isPublished, Food::isConfirmed)
                     .containsExactly("Haferflocken", 372.0, 13.5, 58.7, 7.0, true, false);
         }
@@ -240,7 +293,7 @@ class FoodServiceTest {
         @Test
         void returnsResponseWithIdFromRepository() {
             when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
-            when(repository.save(any(Food.class))).thenAnswer(inv -> {
+            when(repository.saveAndFlush(any(Food.class))).thenAnswer(inv -> {
                 Food saved = inv.getArgument(0);
                 saved.setId(42L);
                 return saved;
@@ -266,18 +319,18 @@ class FoodServiceTest {
             stubSaveReturnsArgument();
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken zart", 370.0, 13.0, 59.0, 6.5, false));
+                    new FoodRequest("Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, false, List.of()));
 
             assertThat(existing)
-                    .extracting(Food::getName, Food::getKcalPer100g, Food::getProtein, Food::getCarbs, Food::getFat)
+                    .extracting(Food::getName, Food::getKcalPer100, Food::getProtein, Food::getCarbs, Food::getFat)
                     .containsExactly("Haferflocken zart", 370.0, 13.0, 59.0, 6.5);
             assertThat(result).isEqualTo(
-                    new FoodResponse(1L, "Haferflocken zart", 370.0, 13.0, 59.0, 6.5, true, false, false));
+                    new FoodResponse(1L, "Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, List.of(), true, false, false, false));
         }
 
         @Test
         void ownPublicFoodStayingPublic_isChangedInPlaceEvenIfOthersUseIt() {
-            // Changes to public foods reach everybody who uses them: no usage check at all.
+            // Changes to public foods reach everybody who uses them: no check for use by others.
             Food existing = food(1L, "Haferflocken", me, true);
             stubFind(existing);
             stubSaveReturnsArgument();
@@ -286,7 +339,8 @@ class FoodServiceTest {
 
             assertThat(result.id()).isEqualTo(1L);
             assertThat(existing.getName()).isEqualTo("Haferflocken grob");
-            verifyNoInteractions(mealItemRepository, recipeItemRepository);
+            verify(mealItemRepository, never()).existsByFoodIdAndMealUserIdNot(anyLong(), anyLong());
+            verify(recipeItemRepository, never()).existsByFoodIdAndRecipeOwnerIdNot(anyLong(), anyLong());
         }
 
         @Test
@@ -322,28 +376,28 @@ class FoodServiceTest {
             Food existing = food(1L, "Haferflocken", me, true);
             stubFind(existing);
             when(mealItemRepository.existsByFoodIdAndMealUserIdNot(1L, USER_ID)).thenReturn(true);
-            when(repository.save(any(Food.class))).thenAnswer(inv -> {
+            when(repository.saveAndFlush(any(Food.class))).thenAnswer(inv -> {
                 Food saved = inv.getArgument(0);
                 saved.setId(2L);
                 return saved;
             });
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken", 380.0, 13.5, 58.7, 7.0, false));
+                    new FoodRequest("Haferflocken", FoodUnit.G, 380.0, 13.5, 58.7, 7.0, false, List.of()));
 
             // The original stays exactly as the others know it, public and without owner
             assertThat(existing.getOwner()).isNull();
             assertThat(existing.isPublic()).isTrue();
-            assertThat(existing.getKcalPer100g()).isEqualTo(372.0);
+            assertThat(existing.getKcalPer100()).isEqualTo(372.0);
 
             // The owner continues with a private copy carrying the requested values
             ArgumentCaptor<Food> captor = ArgumentCaptor.forClass(Food.class);
-            verify(repository).save(captor.capture());
+            verify(repository).saveAndFlush(captor.capture());
             Food copy = captor.getValue();
             assertThat(copy).isNotSameAs(existing);
             assertThat(copy.getOwner()).isSameAs(me);
             assertThat(copy.isPublished()).isFalse();
-            assertThat(copy.getKcalPer100g()).isEqualTo(380.0);
+            assertThat(copy.getKcalPer100()).isEqualTo(380.0);
             assertThat(result.id()).isEqualTo(2L);
             assertThat(result.owned()).isTrue();
             assertThat(result.published()).isFalse();
@@ -385,7 +439,7 @@ class FoodServiceTest {
             assertThatThrownBy(() -> service.update(USER_ID, 1L, request("Gekapert", true)))
                     .isInstanceOf(ForbiddenException.class);
 
-            verify(repository, never()).save(any());
+            verify(repository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -411,7 +465,240 @@ class FoodServiceTest {
             assertThatThrownBy(() -> service.update(USER_ID, 999L, request("Egal", false)))
                     .isInstanceOf(NotFoundException.class);
 
-            verify(repository, never()).save(any());
+            verify(repository, never()).saveAndFlush(any());
+        }
+    }
+
+    // ---------- unit ----------
+
+    @Nested
+    class Unit {
+
+        @Test
+        void unusedFood_canChangeItsUnit() {
+            Food existing = food(1L, "Milch", me, false);
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request(FoodUnit.ML, List.of()));
+
+            assertThat(existing.getUnit()).isEqualTo(FoodUnit.ML);
+            assertThat(result.unit()).isEqualTo(FoodUnit.ML);
+            assertThat(result.used()).isFalse();
+        }
+
+        @Test
+        void usedFood_canChangeItsUnit_too() {
+            // A correction by the owner: the booked amounts keep their numbers in the new unit.
+            Food existing = food(1L, "Milch", me, false);
+            stubFind(existing);
+            when(recipeItemRepository.existsByFoodId(1L)).thenReturn(true);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request(FoodUnit.ML, List.of()));
+
+            assertThat(existing.getUnit()).isEqualTo(FoodUnit.ML);
+            assertThat(result.used()).isTrue();
+        }
+
+        @Test
+        void usedFood_keepingItsUnit_canChangeEverythingElse() {
+            Food existing = food(1L, "Milch", me, false);
+            stubFind(existing);
+            when(mealItemRepository.existsByFoodId(1L)).thenReturn(true);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request(FoodUnit.G, List.of()));
+
+            assertThat(existing.getName()).isEqualTo("Haferflocken");
+            assertThat(result.used()).isTrue();
+        }
+
+        @Test
+        void get_reportsWhetherTheFoodIsUsed() {
+            stubFind(food(1L, "Milch", me, false));
+            when(variationItemRepository.existsByFoodId(1L)).thenReturn(true);
+
+            assertThat(service.get(USER_ID, 1L).used()).isTrue();
+        }
+    }
+
+    // ---------- portions ----------
+
+    @Nested
+    class Portions {
+
+        @Test
+        void create_addsThePortions_firstOneIsTheFavoriteIfNoneIsMarked() {
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.create(USER_ID, request(FoodUnit.G, List.of(
+                    newPortion(" Packung ", 250, false),
+                    newPortion("Esslöffel", 15, false))));
+
+            assertThat(result.portions())
+                    .extracting(FoodPortionResponse::name, FoodPortionResponse::amount, FoodPortionResponse::favorite)
+                    .containsExactly(tuple("Packung", 250.0, true), tuple("Esslöffel", 15.0, false));
+        }
+
+        @Test
+        void create_keepsTheMarkedFavorite_andListsItFirst() {
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.create(USER_ID, request(FoodUnit.G, List.of(
+                    newPortion("Packung", 250, false),
+                    newPortion("Esslöffel", 15, true))));
+
+            assertThat(result.portions())
+                    .extracting(FoodPortionResponse::name, FoodPortionResponse::favorite)
+                    .containsExactly(tuple("Esslöffel", true), tuple("Packung", false));
+        }
+
+        @Test
+        void update_changesListedPortions_addsNewOnes_removesTheRest() {
+            Food existing = food(1L, "Quark", me, false);
+            savedPortion(existing, 10L, "Packung", 250, true);
+            FoodPortion spoon = savedPortion(existing, 11L, "Löffel", 15, false);
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    new FoodPortionRequest(11L, "Esslöffel", 20.0, true),
+                    newPortion("Becher", 500, false))));
+
+            assertThat(existing.getPortions())
+                    .extracting(FoodPortion::getName, FoodPortion::getAmount, FoodPortion::isFavorite)
+                    .containsExactly(tuple("Esslöffel", 20.0, true), tuple("Becher", 500.0, false));
+            assertThat(existing.getPortions().get(0)).isSameAs(spoon);
+            // removals and updates reach the database before the new portion is inserted
+            verify(repository, atLeastOnce()).flush();
+        }
+
+        @Test
+        void update_withoutMarkedFavorite_theOldestKeptPortionBecomesTheFavorite() {
+            Food existing = food(1L, "Quark", me, false);
+            savedPortion(existing, 10L, "Packung", 250, true);
+            savedPortion(existing, 11L, "Löffel", 15, false);
+            savedPortion(existing, 12L, "Becher", 500, false);
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            // The favorite "Packung" is deleted; the others are listed favorite-first by the app.
+            FoodResponse result = service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    newPortion("Glas", 300, false),
+                    new FoodPortionRequest(12L, "Becher", 500.0, false),
+                    new FoodPortionRequest(11L, "Löffel", 15.0, false))));
+
+            assertThat(result.portions())
+                    .extracting(FoodPortionResponse::name, FoodPortionResponse::favorite)
+                    .containsExactly(tuple("Löffel", true), tuple("Becher", false), tuple("Glas", false));
+        }
+
+        @Test
+        void update_withEmptyList_removesAllPortions() {
+            Food existing = food(1L, "Quark", me, false);
+            savedPortion(existing, 10L, "Packung", 250, true);
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request(FoodUnit.G, List.of()));
+
+            assertThat(existing.getPortions()).isEmpty();
+            assertThat(result.portions()).isEmpty();
+        }
+
+        @Test
+        void sameNameTwice_ignoringCaseAndSpaces_isRejected() {
+            Food existing = food(1L, "Quark", me, false);
+            stubFind(existing);
+
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    newPortion("Packung", 250, true),
+                    newPortion(" packung", 500, false)))))
+                    .isInstanceOf(InvalidRequestException.class);
+
+            verify(repository, never()).saveAndFlush(any());
+        }
+
+        @Test
+        void sameNameIgnoringAccents_isRejected_asTheDatabaseCollationWould() {
+            stubFind(food(1L, "Quark", me, false));
+
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    newPortion("Glas", 250, true),
+                    newPortion("Gläs", 500, false)))))
+                    .isInstanceOf(InvalidRequestException.class);
+        }
+
+        @Test
+        void swappingNames_goesThroughTemporaryNames_soTheUniqueKeyNeverSeesTwoEqualNames() {
+            Food existing = food(1L, "Quark", me, false);
+            FoodPortion pack = savedPortion(existing, 10L, "Packung", 250, true);
+            FoodPortion cup = savedPortion(existing, 11L, "Becher", 500, false);
+            stubFind(existing);
+            List<String> namesAtFlush = new ArrayList<>();
+            doAnswer(inv -> {
+                namesAtFlush.add(pack.getName() + "|" + cup.getName());
+                return null;
+            }).when(repository).flush();
+            stubSaveReturnsArgument();
+
+            service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    new FoodPortionRequest(10L, "Becher", 250.0, true),
+                    new FoodPortionRequest(11L, "Packung", 500.0, false))));
+
+            assertThat(namesAtFlush).containsExactly(" 10| 11", "Becher|Packung");
+        }
+
+        @Test
+        void favoriteLeftOut_countsAsFalse() {
+            assertThat(new FoodPortionRequest(null, "Packung", 250.0, null).favorite()).isFalse();
+        }
+
+        @Test
+        void twoFavorites_areRejected() {
+            stubFind(food(1L, "Quark", me, false));
+
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    newPortion("Packung", 250, true),
+                    newPortion("Becher", 500, true)))))
+                    .isInstanceOf(InvalidRequestException.class);
+        }
+
+        @Test
+        void portionOfAnotherFood_isRejected() {
+            Food existing = food(1L, "Quark", me, false);
+            savedPortion(existing, 10L, "Packung", 250, true);
+            stubFind(existing);
+
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    new FoodPortionRequest(99L, "Fremd", 100.0, true)))))
+                    .isInstanceOf(InvalidRequestException.class)
+                    .hasMessageContaining("99");
+
+            assertThat(existing.getPortions()).extracting(FoodPortion::getName).containsExactly("Packung");
+        }
+
+        @Test
+        void privateCopy_getsNewPortionsLikeTheRequested_originalKeepsItsOwn() {
+            Food existing = food(1L, "Quark", me, true);
+            FoodPortion pack = savedPortion(existing, 10L, "Packung", 250, true);
+            stubFind(existing);
+            when(mealItemRepository.existsByFoodIdAndMealUserIdNot(1L, USER_ID)).thenReturn(true);
+            stubSaveReturnsArgument();
+
+            service.update(USER_ID, 1L, new FoodRequest("Quark", FoodUnit.G, 70.0, 12.0, 4.0, 0.2, false,
+                    List.of(new FoodPortionRequest(10L, "Packung", 500.0, true))));
+
+            assertThat(existing.getPortions()).containsExactly(pack);
+            assertThat(pack.getAmount()).isEqualTo(250.0);
+            ArgumentCaptor<Food> captor = ArgumentCaptor.forClass(Food.class);
+            verify(repository).saveAndFlush(captor.capture());
+            assertThat(captor.getValue().getPortions())
+                    .extracting(FoodPortion::getId, FoodPortion::getName, FoodPortion::getAmount)
+                    .containsExactly(tuple(null, "Packung", 500.0));
         }
     }
 

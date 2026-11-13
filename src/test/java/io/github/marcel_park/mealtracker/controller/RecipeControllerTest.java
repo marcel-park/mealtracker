@@ -9,6 +9,7 @@ import io.github.marcel_park.mealtracker.dto.VariationItemResponse;
 import io.github.marcel_park.mealtracker.dto.VariationResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
 import io.github.marcel_park.mealtracker.service.AuthTokenService;
@@ -49,11 +50,11 @@ class RecipeControllerTest {
     private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
-            {"name":"Chili","servings":4,"published":false,"items":[{"foodId":1,"amountG":400}]}
+            {"name":"Chili","servings":4,"published":false,"items":[{"foodId":1,"amount":400}]}
             """;
 
     private static RecipeResponse chili() {
-        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", 100, 8, 12, 0.5, true, false, false);
+        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, List.of(), true, false, false, false);
         return new RecipeResponse(5L, "Chili", 4, true, false, false, 400, 400,
                 List.of(new RecipeItemResponse(beans, 400, 400)),
                 List.of(new VariationResponse(9L, "Mehr Bohnen", null, 1800.0,
@@ -71,10 +72,10 @@ class RecipeControllerTest {
                 .andExpect(jsonPath("$[0].servings").value(4.0))
                 .andExpect(jsonPath("$[0].owned").value(true))
                 .andExpect(jsonPath("$[0].items[0].food.name").value("Kidneybohnen"))
-                .andExpect(jsonPath("$[0].items[0].amountG").value(400.0))
+                .andExpect(jsonPath("$[0].items[0].amount").value(400.0))
                 .andExpect(jsonPath("$[0].variations[0].name").value("Mehr Bohnen"))
                 .andExpect(jsonPath("$[0].variations[0].servings").isEmpty())
-                .andExpect(jsonPath("$[0].variations[0].items[0].amountG").value(600.0))
+                .andExpect(jsonPath("$[0].variations[0].items[0].amount").value(600.0))
                 .andExpect(jsonPath("$[0].lastUsedVariationId").value(9));
     }
 
@@ -117,7 +118,7 @@ class RecipeControllerTest {
     @Test
     void create_invalidItemAmount_returns400() throws Exception {
         String invalid = """
-                {"name":"Chili","servings":4,"published":false,"items":[{"foodId":1,"amountG":0}]}
+                {"name":"Chili","servings":4,"published":false,"items":[{"foodId":1,"amount":0}]}
                 """;
 
         mockMvc.perform(post("/api/recipes")
@@ -157,12 +158,12 @@ class RecipeControllerTest {
     // ---------- variations ----------
 
     private static final String VARIATION_BODY = """
-            {"name":"Mehr Bohnen","servings":null,"weightG":1800,"items":[{"foodId":1,"amountG":600}]}
+            {"name":"Mehr Bohnen","servings":null,"weightG":1800,"items":[{"foodId":1,"amount":600}]}
             """;
 
     @Test
     void createVariation_returns201() throws Exception {
-        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", 100, 8, 12, 0.5, true, false, false);
+        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, List.of(), true, false, false, false);
         when(service.createVariation(eq(1L), eq(5L), any())).thenReturn(
                 new VariationResponse(9L, "Mehr Bohnen", null, 1800.0, List.of(new VariationItemResponse(beans, 600))));
 
@@ -177,7 +178,7 @@ class RecipeControllerTest {
     @Test
     void createVariation_invalidRequest_returns400() throws Exception {
         String invalid = """
-                {"name":"","servings":0,"items":[{"foodId":1,"amountG":-1}]}
+                {"name":"","servings":0,"items":[{"foodId":1,"amount":-1}]}
                 """;
 
         mockMvc.perform(post("/api/recipes/5/variations")
@@ -194,7 +195,7 @@ class RecipeControllerTest {
         mockMvc.perform(post("/api/recipes/5/variations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"name":"Ohne Bohnen","items":[{"foodId":1,"amountG":0}]}
+                                {"name":"Ohne Bohnen","items":[{"foodId":1,"amount":0}]}
                                 """))
                 .andExpect(status().isCreated());
 

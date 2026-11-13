@@ -46,10 +46,10 @@ class MealRepositoryTest {
 
     // ---------- helpers ----------
 
-    private Food saveFood(String name, double kcalPer100g) {
+    private Food saveFood(String name, double kcalPer100) {
         Food food = new Food();
         food.setName(name);
-        food.setKcalPer100g(kcalPer100g);
+        food.setKcalPer100(kcalPer100);
         food.setProtein(5.0);
         food.setCarbs(10.0);
         food.setFat(2.0);
@@ -184,7 +184,7 @@ class MealRepositoryTest {
                 .extracting(
                         item -> item.getId().getMealId(),
                         item -> item.getId().getFoodId(),
-                        MealItem::getAmountG)
+                        MealItem::getAmount)
                 .containsExactlyInAnyOrder(
                         tuple(saved.getId(), oats.getId(), 150.0),
                         tuple(saved.getId(), milk.getId(), 200.0));

@@ -1,11 +1,11 @@
 package io.github.marcel_park.mealtracker.service;
 
+import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.MealItemRequest;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
-import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
@@ -44,7 +44,7 @@ public class MealService {
     @Transactional(readOnly = true)
     public List<MealResponse> findAll(Long userId) {
         return mealRepository.findAllByUserIdOrderByBookedAtDesc(userId).stream()
-                .map(this::toResponse)
+                .map(meal -> toResponse(meal, userId))
                 .toList();
     }
 
@@ -55,7 +55,7 @@ public class MealService {
     public List<MealResponse> findBookedOn(Long userId, LocalDate day) {
         return mealRepository.findAllBookedBetween(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay())
                 .stream()
-                .map(this::toResponse)
+                .map(meal -> toResponse(meal, userId))
                 .toList();
     }
 
@@ -66,9 +66,9 @@ public class MealService {
         meal.setUser(userRepository.getReferenceById(userId));
         meal.setTitle(request.title());
         for (MealItemRequest item : request.items()) {
-            meal.addItem(foodService.getVisibleEntity(userId, item.foodId()), item.amountG());
+            meal.addItem(foodService.getVisibleEntity(userId, item.foodId()), item.amount());
         }
-        MealResponse response = toResponse(mealRepository.save(meal));
+        MealResponse response = toResponse(mealRepository.save(meal), userId);
         recipeService.markUsed(userId, request.recipes());
         return response;
     }
@@ -87,12 +87,12 @@ public class MealService {
 
         Map<Long, MealItem> keptItems = meal.getItems().stream()
                 .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        requestedAmounts.forEach((foodId, amountG) -> {
+        requestedAmounts.forEach((foodId, amount) -> {
             MealItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmountG(amountG);
+                keptItem.setAmount(amount);
             } else {
-                meal.addItem(foodService.getVisibleEntity(userId, foodId), amountG);
+                meal.addItem(foodService.getVisibleEntity(userId, foodId), amount);
             }
         });
 
@@ -100,7 +100,7 @@ public class MealService {
 
         // No save() needed: the meal was loaded in this transaction, so Hibernate writes all
         // changes, including added and removed items, on commit.
-        return toResponse(meal);
+        return toResponse(meal, userId);
     }
 
     @Transactional
@@ -119,28 +119,28 @@ public class MealService {
     private Map<Long, Double> sumAmountsByFoodId(List<MealItemRequest> items) {
         Map<Long, Double> amounts = new LinkedHashMap<>();
         for (MealItemRequest item : items) {
-            amounts.merge(item.foodId(), item.amountG(), Double::sum);
+            amounts.merge(item.foodId(), item.amount(), Double::sum);
         }
         return amounts;
     }
 
-    private MealResponse toResponse(Meal meal) {
+    private MealResponse toResponse(Meal meal, Long userId) {
         List<MealItemResponse> items = meal.getItems().stream()
-                .map(this::toItemResponse)
+                .map(item -> toItemResponse(item, userId))
                 .toList();
         double totalKcal = items.stream().mapToDouble(MealItemResponse::kcal).sum();
         return new MealResponse(
                 meal.getId(), meal.getTitle(), meal.getBookedAt(), totalKcal, items);
     }
 
-    private MealItemResponse toItemResponse(MealItem item) {
-        Food food = item.getFood();
-        return new MealItemResponse(food.getId(), food.getName(), item.getAmountG(), kcal(item));
+    private MealItemResponse toItemResponse(MealItem item, Long userId) {
+        return new MealItemResponse(
+                FoodResponse.ofUsed(item.getFood(), userId), item.getAmount(), kcal(item));
     }
 
-    // Calories are never stored. They are computed from the food's current kcalPer100g whenever
+    // Calories are never stored. They are computed from the food's current kcalPer100 whenever
     // a response is built, so correcting a food also corrects all meals that contain it.
     private double kcal(MealItem item) {
-        return item.getAmountG() * item.getFood().getKcalPer100g() / 100;
+        return item.getAmount() * item.getFood().getKcalPer100() / 100;
     }
 }

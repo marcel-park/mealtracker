@@ -78,11 +78,11 @@ class RecipeServiceTest {
         return user;
     }
 
-    private Food food(Long id, String name, double kcalPer100g) {
+    private Food food(Long id, String name, double kcalPer100) {
         Food food = new Food();
         food.setId(id);
         food.setName(name);
-        food.setKcalPer100g(kcalPer100g);
+        food.setKcalPer100(kcalPer100);
         food.setOwner(me);
         return food;
     }
@@ -97,8 +97,8 @@ class RecipeServiceTest {
         return recipe;
     }
 
-    private static RecipeItemRequest item(Long foodId, double amountG) {
-        return new RecipeItemRequest(foodId, amountG);
+    private static RecipeItemRequest item(Long foodId, double amount) {
+        return new RecipeItemRequest(foodId, amount);
     }
 
     private static RecipeRequest request(boolean published, RecipeItemRequest... items) {
@@ -132,10 +132,10 @@ class RecipeServiceTest {
             assertThat(result.servings()).isEqualTo(4.0);
             assertThat(result.owned()).isTrue();
             assertThat(result.published()).isFalse();
-            assertThat(result.amountG()).isEqualTo(900.0);
+            assertThat(result.amount()).isEqualTo(900.0);
             assertThat(result.kcal()).isEqualTo(500.0);
             assertThat(result.items())
-                    .extracting(i -> i.food().id(), RecipeItemResponse::amountG, RecipeItemResponse::kcal)
+                    .extracting(i -> i.food().id(), RecipeItemResponse::amount, RecipeItemResponse::kcal)
                     .containsExactly(tuple(1L, 400.0, 400.0), tuple(2L, 500.0, 100.0));
         }
 
@@ -177,7 +177,7 @@ class RecipeServiceTest {
             assertThat(saved.getServings()).isEqualTo(4.0);
             assertThat(saved.isPublished()).isFalse();
             assertThat(saved.getItems())
-                    .extracting(RecipeItem::getFood, RecipeItem::getAmountG)
+                    .extracting(RecipeItem::getFood, RecipeItem::getAmount)
                     .containsExactly(tuple(tomatoes, 500.0), tuple(beans, 400.0));
         }
 
@@ -235,9 +235,9 @@ class RecipeServiceTest {
             assertThat(chili.getName()).isEqualTo("Chili con carne");
             assertThat(chili.getServings()).isEqualTo(6.0);
             assertThat(chili.getItems())
-                    .extracting(RecipeItem::getFood, RecipeItem::getAmountG)
+                    .extracting(RecipeItem::getFood, RecipeItem::getAmount)
                     .containsExactly(tuple(tomatoes, 800.0), tuple(mince, 500.0));
-            assertThat(result.amountG()).isEqualTo(1300.0);
+            assertThat(result.amount()).isEqualTo(1300.0);
             // kept items need no lookup
             verify(foodService, never()).getVisibleEntity(USER_ID, 2L);
         }
@@ -275,7 +275,7 @@ class RecipeServiceTest {
             assertThatThrownBy(() -> service.update(USER_ID, 1L, request(true, item(1L, 1))))
                     .isInstanceOf(ForbiddenException.class);
 
-            assertThat(chili.getItems()).extracting(RecipeItem::getAmountG).containsExactly(400.0);
+            assertThat(chili.getItems()).extracting(RecipeItem::getAmount).containsExactly(400.0);
         }
 
         @Test
@@ -324,8 +324,8 @@ class RecipeServiceTest {
         return variation;
     }
 
-    private static VariationItemRequest change(Long foodId, double amountG) {
-        return new VariationItemRequest(foodId, amountG);
+    private static VariationItemRequest change(Long foodId, double amount) {
+        return new VariationItemRequest(foodId, amount);
     }
 
     // Chili of the caller: 400 g beans, 500 g tomatoes, 4 servings.
@@ -362,7 +362,7 @@ class RecipeServiceTest {
             assertThat(saved.getServings()).isNull();
             assertThat(saved.getWeightG()).isEqualTo(1800.0);
             assertThat(saved.getItems())
-                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmountG)
+                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmount)
                     .containsExactly(tuple(beans, 600.0), tuple(mince, 200.0));
             assertThat(result.id()).isEqualTo(9L);
             assertThat(result.items()).extracting(i -> i.food().id()).containsExactly(1L, 3L);
@@ -382,7 +382,7 @@ class RecipeServiceTest {
             assertThat(saved.getServings()).isEqualTo(3.0);
             assertThat(saved.getWeightG()).isNull();
             assertThat(saved.getItems())
-                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmountG)
+                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmount)
                     .containsExactly(tuple(tomatoes, 0.0));
         }
 
@@ -413,7 +413,7 @@ class RecipeServiceTest {
 
             assertThat(moreBeans.getName()).isEqualTo("Ohne Tomaten");
             assertThat(moreBeans.getItems())
-                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmountG)
+                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmount)
                     .containsExactly(tuple(tomatoes, 0.0));
         }
 
@@ -431,7 +431,7 @@ class RecipeServiceTest {
 
             assertThat(chili.getVariations()).containsExactly(moreBeans);
             assertThat(moreBeans.getItems())
-                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmountG)
+                    .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmount)
                     .containsExactly(tuple(beans, 600.0));
             assertThat(chili.getLastUsedVariationId()).isEqualTo(9L);
         }
@@ -484,7 +484,7 @@ class RecipeServiceTest {
             RecipeResponse result = service.get(USER_ID, 1L);
 
             assertThat(result.variations()).extracting(VariationResponse::name).containsExactly("Mehr Bohnen");
-            assertThat(result.variations().get(0).items()).extracting(i -> i.amountG()).containsExactly(600.0);
+            assertThat(result.variations().get(0).items()).extracting(i -> i.amount()).containsExactly(600.0);
             assertThat(result.lastUsedVariationId()).isEqualTo(9L);
         }
     }

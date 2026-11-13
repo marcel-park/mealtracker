@@ -55,14 +55,14 @@ public class Recipe {
     }
 
     // Same food twice: the amounts are added up (primary key recipe_id, food_id).
-    public void addItem(Food food, double amountG) {
+    public void addItem(Food food, double amount) {
         for (RecipeItem item : items) {
             if (item.getFood().getId().equals(food.getId())) {
-                item.setAmountG(item.getAmountG() + amountG);
+                item.setAmount(item.getAmount() + amount);
                 return;
             }
         }
-        items.add(new RecipeItem(this, food, amountG));
+        items.add(new RecipeItem(this, food, amount));
     }
 
     public Long getId() { return id; }

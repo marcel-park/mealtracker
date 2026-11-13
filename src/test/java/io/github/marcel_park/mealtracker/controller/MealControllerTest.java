@@ -1,11 +1,13 @@
 package io.github.marcel_park.mealtracker.controller;
 
+import io.github.marcel_park.mealtracker.config.CorsConfig;
+import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.MealItemRequest;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
-import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
 import io.github.marcel_park.mealtracker.service.AuthTokenService;
@@ -58,16 +60,21 @@ class MealControllerTest {
     private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
-            {"title":"Haferflocken, Milch","items":[{"foodId":1,"amountG":150},{"foodId":2,"amountG":200}]}
+            {"title":"Haferflocken, Milch","items":[{"foodId":1,"amount":150},{"foodId":2,"amount":200}]}
             """;
 
     // Non-zero seconds, so the expected ISO string does not depend on whether ":00" is written.
     private static final LocalDateTime BOOKED_AT = LocalDateTime.of(2026, 11, 3, 12, 30, 15);
 
+    private static FoodResponse food(Long id, String name, double kcalPer100) {
+        return new FoodResponse(id, name, FoodUnit.G, kcalPer100, 10, 50, 5, List.of(),
+                true, false, false, true);
+    }
+
     private static MealResponse meal(Long id) {
         return new MealResponse(id, "Haferflocken, Milch", BOOKED_AT, 686.0, List.of(
-                new MealItemResponse(1L, "Haferflocken", 150.0, 558.0),
-                new MealItemResponse(2L, "Milch", 200.0, 128.0)));
+                new MealItemResponse(food(1L, "Haferflocken", 372), 150.0, 558.0),
+                new MealItemResponse(food(2L, "Milch", 64), 200.0, 128.0)));
     }
 
     // ---------- GET /api/meals ----------
@@ -83,9 +90,10 @@ class MealControllerTest {
                 .andExpect(jsonPath("$[0].bookedAt").value("2026-11-03T12:30:15"))
                 .andExpect(jsonPath("$[0].kcal").value(686.0))
                 .andExpect(jsonPath("$[0].items.length()").value(2))
-                .andExpect(jsonPath("$[0].items[0].foodId").value(1))
-                .andExpect(jsonPath("$[0].items[0].foodName").value("Haferflocken"))
-                .andExpect(jsonPath("$[0].items[0].amountG").value(150.0))
+                .andExpect(jsonPath("$[0].items[0].food.id").value(1))
+                .andExpect(jsonPath("$[0].items[0].food.name").value("Haferflocken"))
+                .andExpect(jsonPath("$[0].items[0].food.unit").value("G"))
+                .andExpect(jsonPath("$[0].items[0].amount").value(150.0))
                 .andExpect(jsonPath("$[0].items[0].kcal").value(558.0));
     }
 
@@ -136,7 +144,7 @@ class MealControllerTest {
         MealRequest passed = captor.getValue();
         assertThat(passed.title()).isEqualTo("Haferflocken, Milch");
         assertThat(passed.items())
-                .extracting(MealItemRequest::foodId, MealItemRequest::amountG)
+                .extracting(MealItemRequest::foodId, MealItemRequest::amount)
                 .containsExactly(tuple(1L, 150.0), tuple(2L, 200.0));
     }
 
@@ -162,16 +170,16 @@ class MealControllerTest {
     }
 
     // Each body breaks exactly one constraint of MealRequest / MealItemRequest. Spring reports a
-    // constraint on a list element with the index in the path ("items[0].amountG").
+    // constraint on a list element with the index in the path ("items[0].amount").
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', textBlock = """
-            blank title       | {"title":"   ","items":[{"foodId":1,"amountG":150}]}  | title
-            missing title     | {"items":[{"foodId":1,"amountG":150}]}               | title
+            blank title       | {"title":"   ","items":[{"foodId":1,"amount":150}]}  | title
+            missing title     | {"items":[{"foodId":1,"amount":150}]}               | title
             empty items       | {"title":"Snack","items":[]}                          | items
             missing items     | {"title":"Snack"}                                     | items
-            null foodId       | {"title":"Snack","items":[{"foodId":null,"amountG":150}]} | items[0].foodId
-            amountG 0         | {"title":"Snack","items":[{"foodId":1,"amountG":0}]}  | items[0].amountG
-            negative amountG  | {"title":"Snack","items":[{"foodId":1,"amountG":-5}]} | items[0].amountG
+            null foodId       | {"title":"Snack","items":[{"foodId":null,"amount":150}]} | items[0].foodId
+            amount 0         | {"title":"Snack","items":[{"foodId":1,"amount":0}]}  | items[0].amount
+            negative amount  | {"title":"Snack","items":[{"foodId":1,"amount":-5}]} | items[0].amount
             """)
     void create_invalidRequest_returns400WithFieldErrorAndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {
