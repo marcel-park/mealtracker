@@ -2293,7 +2293,7 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
           ))}
         </div>
         {!Number.isNaN(percentSum) && percentSum !== 100 && (
-          <p className="hint warning macro-sum">Zusammen müssen es 100 % sein, gerade sind es {percentSum} %.</p>
+          <p className="hint warning macro-sum">Zusammen müssen es 100 % sein.</p>
         )}
         <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
           Speichern
