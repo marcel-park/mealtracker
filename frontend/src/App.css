@@ -747,11 +747,10 @@ fieldset.plain:disabled input {
   margin: -8px 0 16px;
 }
 
-/* today at a glance: calories left (left half), carbs / protein / fat bars (right half) */
+/* today at a glance: calories left on top, carbs / protein / fat side by side below */
 .day-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   padding: 16px;
   border: 1px solid var(--line);
@@ -784,36 +783,32 @@ fieldset.plain:disabled input {
   font-size: 0.95rem;
 }
 
+/* three columns of equal width. On a 360 px wide phone a third is about 92 px, "Kohlenhydrate"
+   needs about as much; should it not fit, it is hyphenated instead of overflowing. */
 .macro-bars {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  min-width: 0;
 }
 
 .macro {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   font-size: 0.8rem;
+  text-align: center;
 }
 
-/* name left, "30 / 200 g" right. On narrow phones "Kohlenhydrate" and "120 / 200 g" do not fit
-   next to each other in half the box; then the grams move below, still right-aligned, instead of
-   the name being cut off. */
-.macro-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 6px;
+.macro .macro-track {
+  align-self: stretch;
 }
 
 .macro-label {
+  max-width: 100%;
   font-weight: 600;
-}
-
-.macro-head .macro-value {
-  margin-left: auto;
+  hyphens: auto;
 }
 
 .macro-track {
@@ -832,10 +827,8 @@ fieldset.plain:disabled input {
 }
 
 .macro-value {
-  flex: none;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .macro.over .macro-fill {

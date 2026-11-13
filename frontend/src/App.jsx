@@ -676,9 +676,9 @@ function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, 
   )
 }
 
-// Today at a glance, half and half: on the left the calories left of the target (red with
-// "zu viel" once it is exceeded), on the right one bar each for carbs, protein and fat, filled by
-// what is booked of their target (red above 100 %). meals: today's meals.
+// Today at a glance: on top the calories left of the target (red with "zu viel" once it is
+// exceeded), below side by side one bar each for carbs, protein and fat, filled by what is booked
+// of their target (red above 100 %). meals: today's meals.
 function DaySummary({ user, meals }) {
   const remaining = Math.round(remainingKcal(user.calorieTarget, meals))
   const isOver = remaining < 0
@@ -702,9 +702,8 @@ function DaySummary({ user, meals }) {
   )
 }
 
-// One nutrient: its name with "30 / 200 g" right-aligned in the same line, and below a bar filled
-// by the share of the target that is booked. With a target of 0 g any booked amount counts as too
-// much.
+// One nutrient: its name, a bar filled by the share of the target that is booked, and below it
+// "30 / 200 g". With a target of 0 g any booked amount counts as too much.
 function MacroBar({ label, booked, target }) {
   const bookedGrams = Math.round(booked)
   const targetGrams = Math.round(target)
@@ -712,12 +711,7 @@ function MacroBar({ label, booked, target }) {
   const isOver = share > 1
   return (
     <div className={isOver ? 'macro over' : 'macro'}>
-      <span className="macro-head">
-        <span className="macro-label">{label}</span>
-        <span className="macro-value">
-          {bookedGrams.toLocaleString(LOCALE)} / {targetGrams.toLocaleString(LOCALE)} g
-        </span>
-      </span>
+      <span className="macro-label">{label}</span>
       <span
         className="macro-track"
         role="meter"
@@ -728,6 +722,9 @@ function MacroBar({ label, booked, target }) {
         aria-valuetext={`${bookedGrams} von ${targetGrams} g`}
       >
         <span className="macro-fill" style={{ width: `${Math.min(share, 1) * 100}%` }} />
+      </span>
+      <span className="macro-value">
+        {bookedGrams.toLocaleString(LOCALE)} / {targetGrams.toLocaleString(LOCALE)} g
       </span>
     </div>
   )
@@ -1314,7 +1311,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           </label>
           {/* calories and unit share the row half and half */}
           <div className="unit-row">
-            <NumberField label={`Kalorien pro 100 ${symbol} (kcal)`} value={kcal} onChange={setKcal} />
+            <NumberField label={`Kcal pro 100 ${symbol}`} value={kcal} onChange={setKcal} />
             <div className="field">
               <span>Einheit</span>
               <SelectBox
@@ -2195,6 +2192,36 @@ function NumberField({ label, value, onChange }) {
   )
 }
 
+// A whole number with its unit, e.g. "2.000 kcal" or "40 %". While focused it shows only the
+// digits, selected so typing replaces them; only digits can be typed, at most maxDigits. A text
+// field, as a number field cannot show the unit. value / onChange: the digits as text.
+function WholeNumberField({ label, unit, maxDigits, value, onChange }) {
+  const [isFocused, setIsFocused] = useState(false)
+  const inputRef = useRef(null)
+
+  // Selected once the unit is gone from the field, i.e. after rendering.
+  useEffect(() => {
+    if (isFocused) inputRef.current.select()
+  }, [isFocused])
+
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="numeric"
+        enterKeyHint="done"
+        autoComplete="off"
+        value={isFocused || value === '' ? value : `${Number(value).toLocaleString(LOCALE)} ${unit}`}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, maxDigits))}
+      />
+    </label>
+  )
+}
+
 // A whole number from min to max typed into a field, or NaN.
 function wholeNumberIn(text, min, max) {
   const value = Number(text)
@@ -2246,37 +2273,23 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
       </p>
 
       <form onSubmit={save}>
-        <label className="field">
-          <span>Kalorienziel (kcal)</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            enterKeyHint="done"
-            min="1"
-            max={MAX_CALORIE_TARGET}
-            step="1"
-            value={targetText}
-            onChange={(event) => setTargetText(event.target.value)}
-          />
-        </label>
+        <WholeNumberField
+          label="Kalorienziel"
+          unit="kcal"
+          maxDigits={String(MAX_CALORIE_TARGET).length}
+          value={targetText}
+          onChange={setTargetText}
+        />
         <div className="macro-fields">
           {MACROS.map(({ key, label, percentField }) => (
-            <label key={key} className="field">
-              <span>{label} (%)</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                enterKeyHint="done"
-                min="0"
-                max="100"
-                step="1"
-                value={percentTexts[percentField]}
-                onFocus={(event) => event.target.select()}
-                onChange={(event) =>
-                  setPercentTexts((current) => ({ ...current, [percentField]: event.target.value }))
-                }
-              />
-            </label>
+            <WholeNumberField
+              key={key}
+              label={label}
+              unit="%"
+              maxDigits={3}
+              value={percentTexts[percentField]}
+              onChange={(text) => setPercentTexts((current) => ({ ...current, [percentField]: text }))}
+            />
           ))}
         </div>
         {!Number.isNaN(percentSum) && percentSum !== 100 && (
