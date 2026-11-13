@@ -23,10 +23,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 // End-to-end through HTTP, the real security filter, the real services and a real MariaDB
-// (Flyway schema, constraints, cascades). Deliberately not @Transactional: every request commits,
-// as in production, so the reads really come from the database. The database is not reset between
-// tests, so each test registers its own users (random emails) and only relies on ids it created.
-@SpringBootTest
+// (Flyway schema, constraints, cascades). The test application.properties switch Flyway off for
+// the H2 tests; here it is on again and Hibernate only validates the mapping against the migrated
+// schema, as in production. Deliberately not @Transactional: every request commits, so the reads
+// really come from the database. The database is not reset between tests, so each test registers
+// its own users (random emails) and only relies on ids it created.
+@SpringBootTest(properties = {
+        "spring.flyway.enabled=true",
+        "spring.jpa.hibernate.ddl-auto=validate"
+})
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class MealBookingIntegrationTest {
