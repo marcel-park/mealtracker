@@ -152,6 +152,19 @@ export function bookedNutrients(meals) {
   return totals
 }
 
+// What the days contain of each nutrient on average: { amounts: { VITAMIN_C: 98.5, ... }, days }.
+// mealsByDay: the meals of each day. Only days with at least one meal count: a day without any is
+// most likely not tracked, not a day without food. null if no day has meals.
+export function averageNutrients(mealsByDay) {
+  const tracked = mealsByDay.filter((meals) => meals.length > 0)
+  if (tracked.length === 0) return null
+  const amounts = Object.fromEntries(NUTRIENTS.map(({ key }) => [key, 0]))
+  for (const meals of tracked) {
+    for (const [key, amount] of Object.entries(bookedNutrients(meals))) amounts[key] += amount / tracked.length
+  }
+  return { amounts, days: tracked.length }
+}
+
 // e.g. "1.500" or "0,06", without unit
 export const formatNutrientAmount = (amount) =>
   amount.toLocaleString('de-DE', { maximumFractionDigits: NUTRIENT_DECIMALS })

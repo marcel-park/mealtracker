@@ -37,6 +37,7 @@ import {
   addAmount,
   addRecipeItems,
   entriesFromMeal,
+  daysBefore,
   localDate,
   mealRequest,
   msUntilMidnight,
@@ -47,6 +48,7 @@ import {
   NUTRIENT_DECIMALS,
   NUTRIENT_GROUPS,
   NUTRIENT_MAX_DIGITS,
+  averageNutrients,
   bookedNutrients,
   formatNutrient,
   formatNutrientAmount,
@@ -865,9 +867,11 @@ const earnedKcal = (kcal) => `+${Math.round(kcal).toLocaleString(LOCALE)} kcal`
 // each with a bar below. The targets are computed (see dailyTargets.js) with today's calorie
 // target, which grows with the activity. Without birth date or sex in the profile there are none:
 // "300 / 0 mg" with an empty bar, and a hint. Protein, carbs and fat are not repeated here, the
-// main view shows them. activity: see useActivity. today: "YYYY-MM-DD".
+// main view shows them. A small mark on each bar shows the average of the last week (see
+// useWeekAverage). activity: see useActivity. today: "YYYY-MM-DD".
 function NutrientOverview({ user, meals, activity, today, onClose }) {
   const booked = bookedNutrients(meals)
+  const weekAverage = useWeekAverage(today)
   const calorieTarget = Math.round(dayCalorieTarget(user, shownActivity(activity, user)))
   const computed = dailyNutrientTargets(user, calorieTarget, today)
   const targets = computed?.targets ?? {}
@@ -884,6 +888,12 @@ function NutrientOverview({ user, meals, activity, today, onClose }) {
       ) : (
         <p className="hint warning nutrient-note">{MISSING_TARGETS_HINT}</p>
       )}
+      {weekAverage && (
+        <p className="hint nutrient-note">
+          Der Strich zeigt deinen Schnitt der letzten 7 Tage (ohne heute,{' '}
+          {weekAverage.days === 1 ? '1 Tag' : `${weekAverage.days} Tage`} mit Einträgen).
+        </p>
+      )}
       {NUTRIENT_GROUPS.map((group) => (
         <div key={group.title} className="nutrient-group">
           <h3>{group.title}</h3>
@@ -894,6 +904,7 @@ function NutrientOverview({ user, meals, activity, today, onClose }) {
                 label={limit ? `${label} (höchstens)` : label}
                 unit={unit}
                 booked={booked[key]}
+                average={weekAverage?.amounts[key] ?? null}
                 target={targets[key] ?? 0}
               />
             ))}
@@ -904,27 +915,60 @@ function NutrientOverview({ user, meals, activity, today, onClose }) {
   )
 }
 
+// The days of the week average: the 7 before today. Today is still running and would pull it down.
+const WEEK_DAYS = 7
+
+// What the last week contained of each nutrient on average per tracked day (see averageNutrients),
+// loaded when the overview opens. null while loading, if it fails (the mark is only extra
+// information, so no error is shown) or if nothing was booked in that week.
+function useWeekAverage(today) {
+  const [average, setAverage] = useState(null)
+  useEffect(() => {
+    let isCurrent = true
+    Promise.all(daysBefore(today, WEEK_DAYS).map((day) => request(`${API.meals}?date=${day}`)))
+      .then((mealsByDay) => isCurrent && setAverage(averageNutrients(mealsByDay)))
+      .catch(() => isCurrent && setAverage(null))
+    return () => {
+      isCurrent = false
+    }
+  }, [today])
+  return average
+}
+
 // One nutrient: name and "300 / 5.000 mg" in a line, the bar below, filled by the share of the
-// target that is booked (full at the target and above). No colors for now.
-function NutrientBar({ label, unit, booked, target }) {
+// target that is booked (full at the target and above). No colors for now. average: the week
+// average (or null), shown as a thin mark across the bar, at the end if it reaches the target.
+function NutrientBar({ label, unit, booked, average, target }) {
   const share = target > 0 ? Math.min(booked / target, 1) : 0
   const value = `${formatNutrientAmount(booked)} / ${formatNutrientAmount(target)} ${unit}`
+  const averageShare = average !== null && target > 0 ? Math.min(average / target, 1) : null
+  const averageText = average === null ? '' : `, Wochenschnitt ${formatNutrient(average, unit)}`
   return (
     <div className="nutrient-bar">
       <div className="nutrient-bar-head">
         <span className="nutrient-bar-label">{label}</span>
         <span className="nutrient-bar-value">{value}</span>
       </div>
-      <span
-        className="macro-track"
-        role="meter"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={target}
-        aria-valuenow={Math.min(booked, target)}
-        aria-valuetext={value}
-      >
-        <span className="macro-fill" style={{ width: `${share * 100}%` }} />
+      <span className="nutrient-track">
+        <span
+          className="macro-track"
+          role="meter"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={target}
+          aria-valuenow={Math.min(booked, target)}
+          aria-valuetext={value + averageText}
+        >
+          <span className="macro-fill" style={{ width: `${share * 100}%` }} />
+        </span>
+        {averageShare !== null && (
+          // Kept inside the bar: at 100 % it ends flush with the right edge.
+          <span
+            className="week-mark"
+            style={{ left: `calc(${averageShare * 100}% - ${averageShare * 2}px)` }}
+            aria-hidden="true"
+          />
+        )}
       </span>
     </div>
   )

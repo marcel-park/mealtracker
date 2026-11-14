@@ -1579,6 +1579,22 @@ fieldset.plain:disabled input {
   font-size: 0.9rem;
 }
 
+/* the bar with the week average as a thin mark across it, slightly taller than the bar */
+.nutrient-track {
+  position: relative;
+  display: block;
+}
+
+.week-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+  opacity: 0.55;
+}
+
 .nutrient-bar-label {
   min-width: 0;
 }

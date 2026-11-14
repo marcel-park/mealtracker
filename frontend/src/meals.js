@@ -87,6 +87,16 @@ export function localDate(now) {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
+// The `count` days before `day` ("YYYY-MM-DD"), the day before first: daysBefore("2026-03-02", 2)
+// is ["2026-03-01", "2026-02-28"].
+export function daysBefore(day, count) {
+  const [year, month, date] = day.split('-').map(Number)
+  return Array.from({ length: count }, (_, index) => {
+    const before = new Date(Date.UTC(year, month - 1, date - 1 - index))
+    return before.toISOString().slice(0, 10)
+  })
+}
+
 // Milliseconds until the next local midnight (on DST days not always 24 h after the last one).
 export function msUntilMidnight(now) {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
