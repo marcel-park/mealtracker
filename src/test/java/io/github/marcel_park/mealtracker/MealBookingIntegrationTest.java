@@ -395,7 +395,8 @@ class MealBookingIntegrationTest {
                         .content("""
                                 {"calorieTarget":1800,
                                  "carbsPercent":50,"proteinPercent":25,"fatPercent":25,
-                                 "stepGoal":8000,"weightKg":72.5,"heightCm":168,"sex":"FEMALE"}
+                                 "stepGoal":8000,"weightKg":72.5,"heightCm":168,"sex":"FEMALE",
+                                 "birthDate":"1990-06-01"}
                                 """))
                 .andExpect(status().isOk());
         // New accounts follow the device; the theme is set on its own
@@ -416,20 +417,8 @@ class MealBookingIntegrationTest {
                 .andExpect(jsonPath("$.weightKg").value(72.5))
                 .andExpect(jsonPath("$.heightCm").value(168))
                 .andExpect(jsonPath("$.sex").value("FEMALE"))
+                .andExpect(jsonPath("$.birthDate").value("1990-06-01"))
                 .andExpect(jsonPath("$.colorTheme").value("DARK"));
-        // Nutrient targets too, and saving them again replaces them all
-        mockMvc.perform(as(token, put("/api/users/me/nutrient-targets"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"nutrientTargets\":{\"VITAMIN_D\":20,\"IRON\":15}}"))
-                .andExpect(status().isOk());
-        mockMvc.perform(as(token, put("/api/users/me/nutrient-targets"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"nutrientTargets\":{\"IRON\":11,\"SALT\":6}}"))
-                .andExpect(status().isOk());
-        mockMvc.perform(as(token, get("/api/users/me")))
-                .andExpect(jsonPath("$.nutrientTargets.VITAMIN_D").doesNotExist())
-                .andExpect(jsonPath("$.nutrientTargets.IRON").value(11.0))
-                .andExpect(jsonPath("$.nutrientTargets.SALT").value(6.0));
 
         // The same email cannot be registered twice
         mockMvc.perform(post("/api/auth/register")
@@ -776,7 +765,7 @@ class MealBookingIntegrationTest {
     // A complete registration with the password "geheim123" and the required body data.
     private static String registration(String email) {
         return """
-                {"email":"%s","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}
+                {"email":"%s","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}
                 """.formatted(email);
     }
 

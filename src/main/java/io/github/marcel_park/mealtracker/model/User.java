@@ -3,8 +3,7 @@ package io.github.marcel_park.mealtracker.model;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.Map;
+import java.time.LocalDate;
 
 // Whether a request is authenticated is not stored here: that belongs to the login token sent
 // with each request (see AuthToken), not to the user.
@@ -52,15 +51,6 @@ public class User {
     @Column(name = "step_goal", nullable = false)
     private int stepGoal = DEFAULT_STEP_GOAL;
 
-    // Daily targets for the optional nutrients of foods, set in the profile. For sugar, saturated
-    // fat and salt the app treats the value as an upper limit. Only set ones are stored.
-    @ElementCollection
-    @CollectionTable(name = "user_nutrient_target", joinColumns = @JoinColumn(name = "user_id"))
-    @MapKeyColumn(name = "nutrient", length = 30)
-    @Convert(converter = NutrientConverter.class, attributeName = "key")
-    @Column(name = "amount", nullable = false)
-    private Map<Nutrient, Double> nutrientTargets = new HashMap<>();
-
     // Body data for estimating the calories of steps. Required when registering, but null for
     // users who registered before they existed (see the V8 migration).
     @Column(name = "weight_kg", precision = 4, scale = 1)
@@ -73,6 +63,11 @@ public class User {
     @Convert(converter = SexConverter.class)
     @Column(length = 10)
     private Sex sex;
+
+    // The app computes the daily nutrient targets from age and sex. Required when registering, but
+    // null for users who registered before it existed (see the V13 migration).
+    @Column(name = "birth_date")
+    private LocalDate birthDate;
 
     // Stored as plain VARCHAR "SYSTEM" / "LIGHT" / "DARK", see ColorThemeConverter.
     @Convert(converter = ColorThemeConverter.class)
@@ -96,12 +91,6 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
-    public Map<Nutrient, Double> getNutrientTargets() { return nutrientTargets; }
-    // Replaces the content instead of the map, which Hibernate tracks.
-    public void setNutrientTargets(Map<Nutrient, Double> nutrientTargets) {
-        this.nutrientTargets.clear();
-        this.nutrientTargets.putAll(nutrientTargets);
-    }
     public int getCalorieTarget() { return calorieTarget; }
     public void setCalorieTarget(int calorieTarget) { this.calorieTarget = calorieTarget; }
     public int getCarbsPercent() { return carbsPercent; }
@@ -118,6 +107,8 @@ public class User {
     public void setHeightCm(Integer heightCm) { this.heightCm = heightCm; }
     public Sex getSex() { return sex; }
     public void setSex(Sex sex) { this.sex = sex; }
+    public LocalDate getBirthDate() { return birthDate; }
+    public void setBirthDate(LocalDate birthDate) { this.birthDate = birthDate; }
     public ColorTheme getColorTheme() { return colorTheme; }
     public void setColorTheme(ColorTheme colorTheme) { this.colorTheme = colorTheme; }
     public boolean isShareShoppingList() { return shareShoppingList; }

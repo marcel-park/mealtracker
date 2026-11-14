@@ -8,14 +8,16 @@ import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Past;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 // carbsPercent, proteinPercent, fatPercent: how the calorie target splits into the three
 // nutrients, in whole percent of the calories. Each 0 to 100, together exactly 100.
-// stepGoal: steps per day. weightKg, heightCm, sex: required here as well, so saving the profile
-// completes the body data of users who registered before it existed. The color theme is set on
-// its own, see ColorThemeRequest.
+// stepGoal: steps per day. weightKg, heightCm, sex, birthDate: required here as well, so saving
+// the profile completes the body data of users who registered before it existed. The color theme
+// is set on its own, see ColorThemeRequest.
 public record UserSettingsRequest(
         @NotNull @Min(1) @Max(UserSettingsRequest.MAX_CALORIE_TARGET) Integer calorieTarget,
         @NotNull @Min(0) @Max(100) Integer carbsPercent,
@@ -25,7 +27,8 @@ public record UserSettingsRequest(
         @NotNull @DecimalMin(BodyData.MIN_WEIGHT_KG) @DecimalMax(BodyData.MAX_WEIGHT_KG)
         @Digits(integer = 3, fraction = BodyData.WEIGHT_FRACTION_DIGITS) BigDecimal weightKg,
         @NotNull @Min(BodyData.MIN_HEIGHT_CM) @Max(BodyData.MAX_HEIGHT_CM) Integer heightCm,
-        @NotNull Sex sex) {
+        @NotNull Sex sex,
+        @NotNull @Past LocalDate birthDate) {
 
     public static final int MAX_CALORIE_TARGET = 20000;
 
@@ -36,5 +39,11 @@ public record UserSettingsRequest(
             return true;
         }
         return carbsPercent + proteinPercent + fatPercent == 100;
+    }
+
+    // Reported as the field "birthDateFrom1900".
+    @AssertTrue(message = "must not be before 1900-01-01")
+    public boolean isBirthDateFrom1900() {
+        return BodyData.isBirthDateFrom1900(birthDate);
     }
 }

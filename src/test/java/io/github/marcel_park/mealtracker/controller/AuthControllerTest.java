@@ -25,7 +25,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
-import java.util.Map;
+import java.time.LocalDate;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
@@ -50,7 +50,8 @@ class AuthControllerTest {
 
     private static final AuthResponse AUTH_RESPONSE = new AuthResponse("the-token",
             new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, 10_000,
-                    Map.of(), new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false, false));
+                    new BigDecimal("80.5"), 180, Sex.MALE, LocalDate.of(1987, 3, 14), ColorTheme.LIGHT,
+                    false, false));
 
     private static final String CREDENTIALS = """
             {"email":"max@example.com","password":"geheim123"}
@@ -58,7 +59,7 @@ class AuthControllerTest {
 
     // A complete registration: credentials plus the required body data.
     private static final String REGISTRATION = """
-            {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}
+            {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}
             """;
 
     // ---------- POST /api/auth/register ----------
@@ -80,7 +81,8 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
 
         verify(userService).register(
-                new RegisterRequest("max@example.com", "geheim123", new BigDecimal("80.5"), 180, Sex.MALE));
+                new RegisterRequest("max@example.com", "geheim123", new BigDecimal("80.5"), 180, Sex.MALE,
+                        LocalDate.of(1987, 3, 14)));
     }
 
     @Test
@@ -97,17 +99,20 @@ class AuthControllerTest {
     // "ä" is 2 bytes in UTF-8, so 38 of them are 76 bytes: too long for BCrypt despite only 38 characters.
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', textBlock = """
-            invalid email         | {"email":"kein-at-zeichen","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"} | email
-            blank email           | {"email":"  ","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}              | email
-            password too short    | {"email":"max@example.com","password":"kurz","weightKg":80.5,"heightCm":180,"sex":"MALE"}      | password
-            missing password      | {"email":"max@example.com","weightKg":80.5,"heightCm":180,"sex":"MALE"}                        | password
-            password > 72 bytes   | {"email":"max@example.com","password":"ääääääääääääääääääääääääääääääääääääää","weightKg":80.5,"heightCm":180,"sex":"MALE"} | passwordWithinBcryptLimit
-            missing weight        | {"email":"max@example.com","password":"geheim123","heightCm":180,"sex":"MALE"}          | weightKg
-            weight too low        | {"email":"max@example.com","password":"geheim123","weightKg":29.9,"heightCm":180,"sex":"MALE"} | weightKg
-            weight two decimals   | {"email":"max@example.com","password":"geheim123","weightKg":80.55,"heightCm":180,"sex":"MALE"} | weightKg
-            missing height        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"sex":"MALE"}         | heightCm
-            height too big        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":251,"sex":"MALE"} | heightCm
-            missing sex           | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180}       | sex
+            invalid email         | {"email":"kein-at-zeichen","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"} | email
+            blank email           | {"email":"  ","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}              | email
+            password too short    | {"email":"max@example.com","password":"kurz","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}      | password
+            missing password      | {"email":"max@example.com","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}                        | password
+            password > 72 bytes   | {"email":"max@example.com","password":"ääääääääääääääääääääääääääääääääääääää","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"} | passwordWithinBcryptLimit
+            missing weight        | {"email":"max@example.com","password":"geheim123","heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}          | weightKg
+            weight too low        | {"email":"max@example.com","password":"geheim123","weightKg":29.9,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"} | weightKg
+            weight two decimals   | {"email":"max@example.com","password":"geheim123","weightKg":80.55,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"} | weightKg
+            missing height        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"sex":"MALE","birthDate":"1987-03-14"}         | heightCm
+            height too big        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":251,"sex":"MALE","birthDate":"1987-03-14"} | heightCm
+            missing sex           | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"birthDate":"1987-03-14"} | sex
+            missing birth date    | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"} | birthDate
+            birth date in future  | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"2999-01-01"} | birthDate
+            birth date before 1900 | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1899-12-31"} | birthDateFrom1900
             """)
     void register_invalidRequest_returns400WithFieldErrorAndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {
@@ -128,7 +133,7 @@ class AuthControllerTest {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"email":"max@example.com","password":"%s","weightKg":80.5,"heightCm":180,"sex":"MALE"}
+                                {"email":"max@example.com","password":"%s","weightKg":80.5,"heightCm":180,"sex":"MALE","birthDate":"1987-03-14"}
                                 """.formatted("a".repeat(72))))
                 .andExpect(status().isCreated());
     }
