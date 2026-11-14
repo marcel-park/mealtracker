@@ -21,13 +21,11 @@ import {
   FOOD_UNIT_ML,
   MAX_PORTION_NAME_LENGTH,
   amountChoices,
-  amountOf,
   draftPortions,
   formatAmount,
   initialAmountInput,
   isPortionNameTaken,
   portionRequests,
-  quantityFor,
   quickAdd,
   removePortion,
   savePortion,
@@ -44,6 +42,17 @@ import {
   msUntilMidnight,
 } from './meals.js'
 import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
+import {
+  formatQuantity,
+  portionById,
+  portionQuantity,
+  quantityDifference,
+  quantityFields,
+  quantityFromItem,
+  quantityOfInput,
+  unitQuantity,
+  zeroQuantity,
+} from './quantities.js'
 import { activitySummary } from './activity.js'
 import {
   HEIGHT_MAX,
@@ -112,6 +121,12 @@ const COLOR_THEMES = [
 // recipeUses: which recipes were added, in which variation ({ recipeId, variationId }); sent
 // with the meal so the variation is preselected next time. Entries added from a recipe also carry
 // recipeIds, see addRecipeItems.
+// Sharing the shopping list with friends; shown disabled until friends exist.
+const SHARE_OPTIONS = [
+  { value: false, label: 'Nicht teilen' },
+  { value: true, label: 'Teilen' },
+]
+
 const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
 const NEW_FOOD = { id: null, owned: true, published: false, unit: FOOD_UNIT_G, portions: [] }
@@ -161,6 +176,12 @@ const toText = (value) => String(value ?? '')
 
 const formatNumber = (n) => roundToOneDecimal(n).toLocaleString(LOCALE)
 const formatKcal = (kcal) => `${Math.round(kcal).toLocaleString(LOCALE)} kcal`
+// The details below the name of an item: "135 g · 2,25 Stück · 194 kcal" for portions, "200 ml ·
+// 128 kcal" for an amount. quantity: see quantities.js.
+function amountPortionsAndKcal(food, quantity) {
+  const portions = quantity.portionId != null ? ` · ${formatQuantity(food, quantity)}` : ''
+  return `${formatAmount(quantity.amount, food.unit)}${portions} · ${formatKcal(kcalOf(food, quantity.amount))}`
+}
 const formatServings = (servings) =>
   `${formatNumber(servings)} ${servings === 1 ? 'Portion' : 'Portionen'}`
 
@@ -205,6 +226,17 @@ function RefreshIcon() {
       <path d="M4 4v4h4" />
       <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
       <path d="M20 20v-4h-4" />
+    </svg>
+  )
+}
+
+// Shopping cart: the shopping list.
+function CartIcon({ size = 24 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} {...iconProps} height={size}>
+      <path d="M2.5 3.5h2.6l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.1l1.8-6.8H6.3" />
+      <circle cx="9.5" cy="19.8" r="1.4" />
+      <circle cx="17" cy="19.8" r="1.4" />
     </svg>
   )
 }
@@ -784,7 +816,18 @@ function MacroBar({ label, booked, target }) {
 }
 
 // onRefresh: reads the activity again and reloads the meals.
-function MealList({ user, meals, activity, onAdd, onEdit, onDelete, onRefresh, onOpenFoods, onOpenProfile }) {
+function MealList({
+  user,
+  meals,
+  activity,
+  onAdd,
+  onEdit,
+  onDelete,
+  onRefresh,
+  onOpenFoods,
+  onOpenShoppingList,
+  onOpenProfile,
+}) {
   return (
     <section>
       <div className="list-head">
@@ -806,6 +849,15 @@ function MealList({ user, meals, activity, onAdd, onEdit, onDelete, onRefresh, o
             onClick={onOpenFoods}
           >
             <DatabaseIcon />
+          </button>
+          <button
+            type="button"
+            className="tool-btn"
+            title="Einkaufsliste"
+            aria-label="Einkaufsliste"
+            onClick={onOpenShoppingList}
+          >
+            <CartIcon />
           </button>
           <button
             type="button"
@@ -840,7 +892,7 @@ function MealList({ user, meals, activity, onAdd, onEdit, onDelete, onRefresh, o
 function MealRow({ meal, onEdit, onDelete }) {
   const bookedAt = new Date(meal.bookedAt).toLocaleString(LOCALE, DATE_TIME_FORMAT)
   const items = meal.items
-    .map((item) => `${item.food.name} ${Math.round(item.amount)} ${unitSymbol(item.food.unit)}`)
+    .map((item) => `${item.food.name} ${formatQuantity(item.food, quantityFromItem(item.food, item))}`)
     .join(', ')
 
   return (
@@ -990,7 +1042,7 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
         </span>
       </button>
       <div className="row-actions">
-        <QuickAddButton label={`${booked.label} ${food.name} hinzufügen`} onAdd={() => onAdd(food, booked.amount)} />
+        <QuickAddButton label={`${booked.label} ${food.name} hinzufügen`} onAdd={() => onAdd(food, booked)} />
         <button
           type="button"
           className="weigh-btn"
@@ -1082,29 +1134,30 @@ function EntryList({ entries, showDelta = false, onOpen, onRemove }) {
   )
 }
 
+// Two lines that never grow: the name (one line, cut off with "…") next to the "×", and below it
+// amount, portions (if booked as portions) and kcal: "135 g · 2,25 Stück · 194 kcal". showDelta:
+// what was added to an already saved meal, in the unit of the entry, in green behind it.
 function EntryRow({ entry, showDelta, onOpen, onRemove }) {
-  const { food, amount, baseAmount } = entry
-  const addedAmount = roundToOneDecimal(amount - baseAmount)
+  const { food, baseAmount } = entry
+  const added = showDelta ? quantityDifference(food, entry, baseAmount) : null
   const content = (
     <>
-      <span className="main">
-        <span className="name">{food.name}</span>
+      <span className="name">{food.name}</span>
+      <span className="sub">
+        {amountPortionsAndKcal(food, entry)}
+        {added?.positive && <span className="delta"> {added.text}</span>}
       </span>
-      {showDelta && addedAmount > 0 && (
-        <span className="delta">+{formatAmount(addedAmount, food.unit)}</span>
-      )}
-      <span className="amount">{formatAmount(amount, food.unit)}</span>
     </>
   )
 
   return (
-    <div className="row">
+    <div className="row two-line">
       {onOpen ? (
-        <button type="button" className="row-open wrap" onClick={() => onOpen(entry)}>
+        <button type="button" className="row-open" onClick={() => onOpen(entry)}>
           {content}
         </button>
       ) : (
-        <div className="row-open wrap">{content}</div>
+        <div className="row-open">{content}</div>
       )}
       <CrossButton label={`${food.name} entfernen`} onClick={() => onRemove(food.id)} />
     </div>
@@ -1112,9 +1165,9 @@ function EntryRow({ entry, showDelta, onOpen, onRemove }) {
 }
 
 // The amount of a food to add, or to change an amount to. It is typed as a number of one of the
-// food's portions or in its unit (g / ml), chosen next to the number (a field for "9999.9", the
-// select takes the rest); switching converts the number. Whatever was chosen, onConfirm gets the amount in g or ml:
-// portions are only a help for typing.
+// food's portions or in its unit (g / ml), chosen next to the number (a field for "9999.99", the
+// select takes the rest); switching converts the number. onConfirm gets the quantity as chosen
+// (see quantities.js): a number of the portion, or an amount in g or ml.
 // initial: { choice, quantityText }, see initialAmountInput.
 function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
   const [choice, setChoice] = useState(initial.choice)
@@ -1124,7 +1177,8 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
   const [exactAmount, setExactAmount] = useState(null)
   const inputRef = useRef(null)
   // Rounded as it is sent, so a tiny amount that rounds to 0 cannot be confirmed.
-  const amount = roundToOneDecimal(exactAmount ?? amountOf(food, choice, parseFloat(quantityText)))
+  const quantity = quantityOfInput(food, choice, quantityText, exactAmount)
+  const amount = quantity.amount
   const isValid = amount > 0
 
   // At the start and after every switch the number is focused and selected, so typing replaces it.
@@ -1134,10 +1188,13 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
     inputRef.current.select()
   }, [choice])
 
+  // The exact amount is kept across switches, the shown number is rounded for the new choice.
   function changeChoice(newChoice) {
     if (isValid) {
-      setQuantityText(String(quantityFor(food, newChoice, amount)))
-      setExactAmount(amount)
+      const exact = exactAmount ?? amount
+      const converted = quantityOfInput(food, newChoice, '', exact)
+      setQuantityText(String(newChoice === CHOICE_UNIT ? converted.amount : converted.count))
+      setExactAmount(exact)
     }
     setChoice(newChoice)
   }
@@ -1149,7 +1206,7 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
 
   function submit(event) {
     event.preventDefault()
-    if (isValid) onConfirm(food, amount)
+    if (isValid) onConfirm(food, quantity)
   }
 
   return (
@@ -1189,7 +1246,20 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
 
 // Foods and recipes, to look at, add and edit. Stays mounted while a form is open (hidden),
 // so the search survives. version: reloads the list when it changes (after saving).
-function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onError }) {
+// onAddFoodToList, onAddRecipeToList: the cart button of a row (see ShoppingRecipeAdd for
+// recipes). addedToList: { kind, id } of the entry just put on the shopping list, whose cart
+// button shows ✓ for a moment, like "+" when booking.
+function FoodDatabase({
+  hidden,
+  version,
+  addedToList,
+  onOpenFood,
+  onOpenRecipe,
+  onAddFoodToList,
+  onAddRecipeToList,
+  onClose,
+  onError,
+}) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const entries = useCatalog(search.kind, search, version, onError)
   const isRecipes = search.kind === KIND_RECIPES
@@ -1223,7 +1293,9 @@ function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onEr
                   key={recipe.id}
                   entry={recipe}
                   sub={<RecipeSummary recipe={recipe} />}
+                  justAdded={addedToList?.kind === KIND_RECIPES && addedToList.id === recipe.id}
                   onOpen={onOpenRecipe}
+                  onAddToList={onAddRecipeToList}
                 />
               ))
             : entries.map((food) => (
@@ -1231,7 +1303,9 @@ function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onEr
                   key={food.id}
                   entry={food}
                   sub={<KcalPer100 kcal={food.kcalPer100} unit={food.unit} />}
+                  justAdded={addedToList?.kind === KIND_FOODS && addedToList.id === food.id}
                   onOpen={onOpenFood}
+                  onAddToList={onAddFoodToList}
                 />
               ))}
         </div>
@@ -1240,8 +1314,9 @@ function FoodDatabase({ hidden, version, onOpenFood, onOpenRecipe, onClose, onEr
   )
 }
 
-// A food or recipe in the database list; sub is the second line (kcal, portions).
-function DatabaseRow({ entry, sub, onOpen }) {
+// A food or recipe in the database list; sub is the second line (kcal, portions). The row opens
+// the form, the cart button puts the entry on the shopping list (justAdded: shows ✓ instead).
+function DatabaseRow({ entry, sub, justAdded = false, onOpen, onAddToList }) {
   return (
     <div className="row">
       <button type="button" className="row-open" onClick={() => onOpen(entry)}>
@@ -1252,9 +1327,15 @@ function DatabaseRow({ entry, sub, onOpen }) {
           </span>
           <span className="sub">{sub}</span>
         </span>
-        <span className="chevron" aria-hidden="true">
-          ›
-        </span>
+      </button>
+      <button
+        type="button"
+        className="weigh-btn"
+        title="Zur Einkaufsliste"
+        aria-label={`${entry.name} zur Einkaufsliste hinzufügen`}
+        onClick={() => onAddToList(entry)}
+      >
+        {justAdded ? '✓' : <CartIcon size={22} />}
       </button>
     </div>
   )
@@ -1552,50 +1633,64 @@ function PortionEditor({ portion, unit, isNameTaken, onSave, onDelete, onClose }
   )
 }
 
-// Difference to the original recipe: green "+100 g", red "−100 g" (or ml), nothing when equal.
-function Deviation({ amount, originalAmount, unit }) {
-  const difference = roundToOneDecimal(amount - originalAmount)
-  if (difference === 0) return null
-  return (
-    <span className={difference > 0 ? 'delta' : 'delta minus'}>
-      {difference > 0 ? '+' : '−'}
-      {formatAmount(Math.abs(difference), unit)}
-    </span>
-  )
+// Difference to the original recipe in the unit of the item: green "+1 Packung", red "−30 g",
+// nothing when equal.
+function Deviation({ item }) {
+  const difference = quantityDifference(item.food, item, item.originalAmount)
+  if (difference === null) return null
+  return <span className={difference.positive ? 'delta' : 'delta minus'}>{difference.text}</span>
 }
 
-// One ingredient of a recipe or variation, its amount in the unit of the food. Without onOpen the
-// row is read-only; without onRemove there is no "×". A left-out ingredient (0 g) stays listed,
-// greyed.
+// One ingredient of a recipe or variation. Without onOpen the row is read-only; without onRemove
+// there is no "×". A left-out ingredient (0) stays listed, greyed.
+//
+// Normally two lines that never grow: the name (one line, cut off with "…") next to the "×", and
+// below it amount, portions (if booked as portions) and kcal: "240 g · 4 Stück · 346 kcal".
+// showDeviation (variations, booking view): quantity and kcal below the name, followed by the
+// difference to the original: "5 Stück · 432 kcal +1 Stück".
 function IngredientRow({ item, showDeviation, onOpen, onRemove }) {
   const isLeftOut = item.amount === 0
-  const content = (
-    <>
-      <span className="main">
-        <span className="name">
-          {item.food.name}
-          <PrivateMark entry={item.food} />
+  const { food } = item
+  const name = (
+    <span className="name">
+      {food.name}
+      <PrivateMark entry={food} />
+    </span>
+  )
+  const content = showDeviation ? (
+    <span className="main">
+      {name}
+      <span className="sub booking-sub">
+        <span className="booking-part">
+          {formatQuantity(food, item)} · {formatKcal(kcalOf(food, item.amount))}
+        </span>{' '}
+        <span className="booking-part">
+          <Deviation item={item} />
         </span>
-        <span className="sub">{formatKcal(kcalOf(item.food, item.amount))}</span>
       </span>
-      {showDeviation && (
-        <Deviation amount={item.amount} originalAmount={item.originalAmount} unit={item.food.unit} />
-      )}
-      <span className="amount">{formatAmount(item.amount, item.food.unit)}</span>
+    </span>
+  ) : (
+    <>
+      {name}
+      <span className="sub">{amountPortionsAndKcal(food, item)}</span>
     </>
   )
+  const openClass = showDeviation ? 'row-open wrap' : 'row-open'
+  const rowClasses = ['row']
+  if (!showDeviation) rowClasses.push('two-line')
+  if (isLeftOut) rowClasses.push('left-out')
 
   return (
-    <div className={isLeftOut ? 'row left-out' : 'row'}>
+    <div className={rowClasses.join(' ')}>
       {onOpen ? (
-        <button type="button" className="row-open wrap" onClick={onOpen}>
+        <button type="button" className={openClass} onClick={onOpen}>
           {content}
         </button>
       ) : (
-        <div className="row-open wrap">{content}</div>
+        <div className={openClass}>{content}</div>
       )}
       {onRemove && !isLeftOut && (
-        <CrossButton label={`${item.food.name} weglassen`} onClick={onRemove} />
+        <CrossButton label={`${food.name} weglassen`} onClick={onRemove} />
       )}
     </div>
   )
@@ -1716,6 +1811,15 @@ function CopyRecipeDialog({ recipeName, isAdjusted, onCopy, onClose }) {
   )
 }
 
+// What the amount view of an ingredient starts with: its quantity as it is, or for a left-out
+// ingredient (0) the amount of the original, in the same unit (100 g if neither is there).
+function editableQuantity(item) {
+  if (item.amount > 0) return item
+  const portion = portionById(item.food, item.portionId)
+  if (portion) return portionQuantity(item.food, portion.id, item.originalAmount > 0 ? item.originalAmount / portion.amount : 1)
+  return unitQuantity(item.originalAmount || DEFAULT_AMOUNT)
+}
+
 // Name, portions, visibility and the foods of a recipe, or one of its variations (owner only).
 // Tapping a food changes its amount. Switching between original and variations drops unsaved
 // changes. Recipes of others are shown read-only.
@@ -1749,9 +1853,9 @@ function RecipeEditor({
     (weightG === null || weightG > 0) &&
     items.some((item) => item.amount > 0)
 
-  function setAmount(foodId, amount) {
+  function setQuantity(foodId, quantity) {
     onChange({
-      items: items.map((item) => (item.food.id === foodId ? { ...item, amount } : item)),
+      items: items.map((item) => (item.food.id === foodId ? { ...item, ...quantity } : item)),
       layer: null,
     })
   }
@@ -1762,12 +1866,12 @@ function RecipeEditor({
     if (next > 0) onChange({ servingsText: String(next) })
   }
 
-  // In a variation, an ingredient of the original stays listed with 0 g.
+  // In a variation, an ingredient of the original stays listed with 0 (g or portions).
   function remove(item) {
     onChange({
       items:
         isVariation && item.originalAmount > 0
-          ? items.map((other) => (other === item ? { ...other, amount: 0 } : other))
+          ? items.map((other) => (other === item ? { ...other, ...zeroQuantity(other.food, other) } : other))
           : items.filter((other) => other !== item),
     })
   }
@@ -1786,12 +1890,9 @@ function RecipeEditor({
     return (
       <FoodDetail
         food={item.food}
-        initial={initialAmountInput(item.food, {
-          asUnit: true,
-          amount: item.amount || item.originalAmount || DEFAULT_AMOUNT,
-        })}
+        initial={initialAmountInput(item.food, { quantity: editableQuantity(item) })}
         confirmLabel="Übernehmen"
-        onConfirm={(food, amount) => setAmount(food.id, amount)}
+        onConfirm={(food, quantity) => setQuantity(food.id, quantity)}
         onClose={() => onChange({ layer: null })}
       />
     )
@@ -2011,9 +2112,9 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
   }
 
   // Changing an ingredient makes the weight follow the ingredients again.
-  function setAmount(foodId, amount) {
+  function setQuantity(foodId, quantity) {
     onChange({
-      items: items.map((item) => (item.food.id === foodId ? { ...item, amount } : item)),
+      items: items.map((item) => (item.food.id === foodId ? { ...item, ...quantity } : item)),
       weightText: null,
       layer: null,
     })
@@ -2046,12 +2147,9 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
     return (
       <FoodDetail
         food={item.food}
-        initial={initialAmountInput(item.food, {
-          asUnit: true,
-          amount: item.amount || item.originalAmount || DEFAULT_AMOUNT,
-        })}
+        initial={initialAmountInput(item.food, { quantity: editableQuantity(item) })}
         confirmLabel="Übernehmen"
-        onConfirm={(food, amount) => setAmount(food.id, amount)}
+        onConfirm={(food, quantity) => setQuantity(food.id, quantity)}
         onClose={() => onChange({ layer: null })}
       />
     )
@@ -2187,7 +2285,7 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
               item={item}
               showDeviation
               onOpen={() => onChange({ layer: { type: 'amount', foodId: item.food.id } })}
-              onRemove={() => setAmount(item.food.id, 0)}
+              onRemove={() => setQuantity(item.food.id, zeroQuantity(item.food, item))}
             />
           ))}
         </div>
@@ -2235,6 +2333,319 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
           onClose={() => onChange({ layer: null })}
         />
       )}
+    </section>
+  )
+}
+
+// ----- Shopping list -----
+
+// The shopping list. Swiping an entry sideways checks it off (crossed out, moved to the end) or
+// back; pressing an unchecked entry for a moment lifts it, then it can be dragged up or down to a
+// new place; tapping it opens its quantity; "×" removes it (after asking). items: as the server
+// sends them, already in order (unchecked first). null while loading.
+function ShoppingListPage({ items, onToggle, onEdit, onMoveTo, onRemove, onReset, onClose }) {
+  // The entry being dragged: { id, from, dy, height }, from its place among the unchecked entries,
+  // dy how far it is dragged, height of one entry (all are equally high).
+  const [drag, setDrag] = useState(null)
+  const uncheckedCount = (items ?? []).filter((item) => !item.checked).length
+  const target = drag
+    ? Math.max(0, Math.min(uncheckedCount - 1, drag.from + Math.round(drag.dy / drag.height)))
+    : null
+
+  // The dragged entry follows the finger; the ones it passes make room.
+  function shiftOf(item, index) {
+    if (!drag || item.checked) return 0
+    if (item.id === drag.id) return drag.dy
+    if (index > drag.from && index <= target) return -drag.height
+    if (index < drag.from && index >= target) return drag.height
+    return 0
+  }
+
+  function endDrag(item, apply) {
+    if (apply && target !== drag.from) onMoveTo(item, target)
+    setDrag(null)
+  }
+
+  return (
+    <section>
+      <TopBar title="Einkaufsliste" closeLabel="Schließen" onClose={onClose} />
+      {items !== null && items.length === 0 && <p className="empty">Die Einkaufsliste ist leer.</p>}
+      {items !== null && items.length > 0 && (
+        <div className="rows shopping-rows">
+          {items.map((item, index) => (
+            <ShoppingRow
+              key={item.id}
+              item={item}
+              shift={shiftOf(item, index)}
+              isDragged={drag?.id === item.id}
+              onToggle={onToggle}
+              onEdit={onEdit}
+              onDragStart={(height) => setDrag({ id: item.id, from: index, dy: 0, height })}
+              onDragMove={(dy) => setDrag((current) => current && { ...current, dy })}
+              onDragEnd={(apply) => endDrag(item, apply)}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      )}
+      <div className="bar">
+        <button type="button" className="btn danger wide" disabled={!items?.length} onClick={onReset}>
+          Einkaufsliste zurücksetzen
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// How far a finger has to move sideways over a shopping list entry to check it off (or back).
+const SWIPE_DISTANCE = 72
+// How long a finger has to rest on an unchecked entry before it can be dragged to another place.
+const LONG_PRESS_MS = 400
+// Moving less than this is still resting (fingers are never completely still).
+const MOVE_TOLERANCE = 8
+
+// The gestures on a shopping list entry, with pointer events (finger and mouse alike):
+// - sideways: the entry follows the finger (offsetX); moved at least SWIPE_DISTANCE when the
+//   finger lifts, onSwipe is called;
+// - resting LONG_PRESS_MS first (canDrag only): the entry is lifted and dragged up or down,
+//   reported by onDragStart(height), onDragMove(dy) and onDragEnd(apply), apply false if the
+//   system took the gesture away;
+// - anything else is the page's: vertical moves scroll (CSS touch-action: pan-y). While dragging,
+//   scrolling is blocked with a touchmove listener that is not passive (React's are).
+// wasGesture(): whether the click the browser may send afterwards belongs to a swipe or drag (and
+// is to be ignored); it answers only once.
+// rowRef: the entry's element.
+function useRowGestures(rowRef, { canDrag, onSwipe, onDragStart, onDragMove, onDragEnd }) {
+  const gesture = useRef(null) // { x, y, mode: null | 'swipe' | 'drag' | 'other', timer }
+  const handledGesture = useRef(false)
+  const [offsetX, setOffsetX] = useState(0)
+  const [isLifted, setIsLifted] = useState(false)
+
+  useEffect(() => {
+    const row = rowRef.current
+    const blockScrolling = (event) => {
+      if (gesture.current?.mode === 'drag') event.preventDefault()
+    }
+    row.addEventListener('touchmove', blockScrolling, { passive: false })
+    return () => row.removeEventListener('touchmove', blockScrolling)
+  }, [rowRef])
+
+  function finish(event, cancelled) {
+    const current = gesture.current
+    gesture.current = null
+    if (!current) return
+    clearTimeout(current.timer)
+    setOffsetX(0)
+    if (current.mode === 'swipe') {
+      handledGesture.current = true
+      if (!cancelled && Math.abs(event.clientX - current.x) >= SWIPE_DISTANCE) onSwipe()
+    } else if (current.mode === 'drag') {
+      handledGesture.current = true
+      setIsLifted(false)
+      onDragEnd(!cancelled)
+    }
+  }
+
+  return {
+    offsetX,
+    isLifted,
+    wasGesture() {
+      const was = handledGesture.current
+      handledGesture.current = false
+      return was
+    },
+    handlers: {
+      onPointerDown(event) {
+        if (event.pointerType === 'mouse' && event.button !== 0) return
+        handledGesture.current = false
+        const { pointerId } = event
+        const current = { x: event.clientX, y: event.clientY, mode: null, timer: null }
+        if (canDrag) {
+          current.timer = setTimeout(() => {
+            if (gesture.current !== current || current.mode !== null) return
+            current.mode = 'drag'
+            rowRef.current.setPointerCapture?.(pointerId)
+            navigator.vibrate?.(15)
+            setIsLifted(true)
+            onDragStart(rowRef.current.offsetHeight)
+          }, LONG_PRESS_MS)
+        }
+        gesture.current = current
+      },
+      onPointerMove(event) {
+        const current = gesture.current
+        if (!current) return
+        const dx = event.clientX - current.x
+        const dy = event.clientY - current.y
+        if (current.mode === null && Math.max(Math.abs(dx), Math.abs(dy)) > MOVE_TOLERANCE) {
+          clearTimeout(current.timer)
+          current.mode = Math.abs(dx) > Math.abs(dy) ? 'swipe' : 'other'
+        }
+        if (current.mode === 'swipe') {
+          setOffsetX(Math.max(-1.5 * SWIPE_DISTANCE, Math.min(1.5 * SWIPE_DISTANCE, dx)))
+        } else if (current.mode === 'drag') {
+          onDragMove(dy)
+        }
+      },
+      onPointerUp: (event) => finish(event, false),
+      onPointerCancel: (event) => finish(event, true),
+      // a long press would otherwise open the context menu or select text
+      onContextMenu: (event) => event.preventDefault(),
+    },
+  }
+}
+
+// One entry in two lines that never grow: the name (one line, cut off with "…"), and below it
+// the amount in g or ml, followed by the portions if it was put on the list as portions
+// ("360 g · 6 Stück"); the "×" right of both lines.
+// shift: how far the entry is moved up or down by a drag (its own, or one passing it).
+function ShoppingRow({ item, shift, isDragged, onToggle, onEdit, onDragStart, onDragMove, onDragEnd, onRemove }) {
+  const { food } = item
+  const quantity = quantityFromItem(food, item)
+  const rowRef = useRef(null)
+  const gestures = useRowGestures(rowRef, {
+    canDrag: !item.checked,
+    onSwipe: () => onToggle(item),
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+  })
+
+  const classes = ['row', 'two-line', 'shopping-row']
+  if (item.checked) classes.push('checked')
+  if (gestures.isLifted) classes.push('lifted')
+  let style
+  if (gestures.offsetX) style = { transform: `translateX(${gestures.offsetX}px)`, transition: 'none' }
+  else if (isDragged) style = { transform: `translateY(${shift}px)`, transition: 'none' }
+  else if (shift) style = { transform: `translateY(${shift}px)` }
+
+  // The click after a swipe or drag is not a tap.
+  function open() {
+    if (!gestures.wasGesture()) onEdit(item)
+  }
+
+  return (
+    <div ref={rowRef} className={classes.join(' ')} style={style} {...gestures.handlers}>
+      <button type="button" className="row-open" onClick={open}>
+        <span className="name">{food.name}</span>
+        <span className="sub">
+          {formatAmount(item.amount, food.unit)}
+          {quantity.portionId !== null && ` · ${formatQuantity(food, quantity)}`}
+        </span>
+      </button>
+      <CrossButton label={`${food.name} entfernen`} onClick={() => onRemove(item)} />
+    </div>
+  )
+}
+
+// Puts a recipe on the shopping list: the foods it takes for the chosen number of portions (the
+// recipe's own number preselected) in the chosen variation (the original preselected; only the
+// owner has variations). onConfirm(items, { recipeId, variationId }).
+function ShoppingRecipeAdd({ recipe, onConfirm, onClose }) {
+  const servingsId = useId()
+  const [variationId, setVariationId] = useState(null)
+  const variation = variationOf(recipe, variationId)
+  const [servingsText, setServingsText] = useState(() => String(servingsOf(recipe, null)))
+  const servings = parseFloat(servingsText)
+  const share = servings > 0 ? servings / servingsOf(recipe, variation) : 0
+  const items =
+    share > 0
+      ? scaleItems(
+          itemsOf(recipe, variation).filter((item) => item.amount > 0),
+          share,
+        ).filter((item) => item.amount > 0)
+      : []
+  const variations = recipe.variations ?? []
+
+  function selectVariation(value) {
+    const id = value === '' ? null : Number(value)
+    setVariationId(id)
+    setServingsText(String(servingsOf(recipe, variationOf(recipe, id))))
+  }
+
+  // "−" / "+": one portion less or more, never 0 or below.
+  function stepServings(step) {
+    const next = roundToOneDecimal((servings > 0 ? servings : 0) + step)
+    if (next > 0) setServingsText(String(next))
+  }
+
+  function submit(event) {
+    event.preventDefault()
+    if (items.length > 0) onConfirm(items, { recipeId: recipe.id, variationId })
+  }
+
+  return (
+    <section>
+      <TopBar title={recipe.name} closeLabel="Schließen" onClose={onClose} centered />
+      <form onSubmit={submit}>
+        <div className="field">
+          <label htmlFor={servingsId}>Portionen</label>
+          <div className="stepper">
+            <input
+              id={servingsId}
+              type="number"
+              inputMode="decimal"
+              enterKeyHint="done"
+              min="0"
+              step="any"
+              value={servingsText}
+              onFocus={(event) => event.target.select()}
+              onChange={(event) => setServingsText(event.target.value)}
+            />
+            <button
+              type="button"
+              className="frame-btn"
+              aria-label="Eine Portion weniger"
+              disabled={!(servings - 1 > 0)}
+              onClick={() => stepServings(-1)}
+            >
+              <MinusIcon />
+            </button>
+            <button
+              type="button"
+              className="frame-btn"
+              aria-label="Eine Portion mehr"
+              onClick={() => stepServings(1)}
+            >
+              <PlusIcon size={22} />
+            </button>
+          </div>
+        </div>
+        {recipe.owned && variations.length > 0 && (
+          <div className="field">
+            <span>Variation</span>
+            <SelectBox
+              label="Original oder Variation"
+              className="wide"
+              value={String(variationId ?? '')}
+              options={[
+                { value: '', label: 'Original' },
+                ...variations.map((other) => ({ value: String(other.id), label: other.name })),
+              ]}
+              onChange={selectVariation}
+            />
+          </div>
+        )}
+
+        <div className="section-head">
+          <h2>Kommt auf die Einkaufsliste</h2>
+        </div>
+        {items.length === 0 ? (
+          <p className="empty">Bitte gib die Portionen an.</p>
+        ) : (
+          <div className="rows">
+            {items.map((item) => (
+              <IngredientRow key={item.food.id} item={item} showDeviation={false} />
+            ))}
+          </div>
+        )}
+
+        <div className="bar">
+          <button type="submit" className="btn primary" disabled={items.length === 0}>
+            Zur Einkaufsliste hinzufügen
+          </button>
+        </div>
+      </form>
     </section>
   )
 }
@@ -2315,6 +2726,7 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
   const [sex, setSex] = useState(user.sex)
   const runAction = useActionRunner(onError)
   const themeLabelId = useId()
+  const shareLabelId = useId()
 
   const settings = {
     calorieTarget: wholeNumberIn(targetText, 1, MAX_CALORIE_TARGET),
@@ -2420,6 +2832,26 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
       </div>
 
       <HealthConnectSetting activity={activity} onError={onError} />
+
+      {/* Shown but not usable yet: sharing comes with friends. */}
+      <div className="field theme-field">
+        <span id={shareLabelId}>Einkaufsliste mit Freunden teilen</span>
+        <div className="segmented" role="radiogroup" aria-labelledby={shareLabelId} aria-disabled="true">
+          {SHARE_OPTIONS.map((option) => (
+            <button
+              key={String(option.value)}
+              type="button"
+              role="radio"
+              aria-checked={user.shareShoppingList === option.value}
+              className={user.shareShoppingList === option.value ? 'selected' : undefined}
+              disabled
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <span className="hint">Kommt mit Freunden.</span>
+      </div>
 
       <div className="bar">
         <button type="button" className="btn danger wide" onClick={onLogout}>
@@ -2892,7 +3324,8 @@ function useActivity(today) {
 
 // The app after login. Keyed by the user id in App, so nothing carries over to another account.
 function MealTracker({ user, onUserChange, onLogout }) {
-  const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
+  // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'shopping' | 'profile'
+  const [view, setView] = useState('list')
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
   // Amount view of a food: null or { food, mode: 'add' | 'set' | 'recipe-add', initial }, initial
@@ -2906,6 +3339,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // previewing }, target 'editor' | 'booking'; entries are the foods about to be added.
   const [recipeSearch, setRecipeSearch] = useState(null)
   const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
+  const [shoppingList, setShoppingList] = useState(null) // items of the shopping list, null until loaded
+  // Putting a database entry on the shopping list: null, { food } or { recipe }.
+  const [shoppingAdd, setShoppingAdd] = useState(null)
+  const [shoppingEdit, setShoppingEdit] = useState(null) // shopping list entry whose quantity is changed
+  // { kind, id } of the database entry just put on the shopping list: its cart shows ✓ for a moment.
+  const [addedToList, setAddedToList] = useState(null)
   const [confirm, setConfirm] = useState(null) // props of the open ConfirmDialog
   const [notice, setNotice] = useState(null)
   const [error, setError] = useState(null)
@@ -2962,8 +3401,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setView('list')
   }
 
-  function addToDraft(food, amount) {
-    setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, amount) }))
+  // quantity: portions or an amount in g / ml, see quantities.js
+  function addToDraft(food, quantity) {
+    setDraft((current) => ({ ...current, entries: addAmount(current.entries, food, quantity) }))
   }
 
   // use: { recipeId, variationId }, remembered for the preselection next time.
@@ -3103,10 +3543,10 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
-  function saveEntryAmount(food, amount) {
+  function saveEntryAmount(food, quantity) {
     runAction(async () => {
       await saveEditedEntries(
-        draft.entries.map((entry) => (entry.food.id === food.id ? { ...entry, amount } : entry)),
+        draft.entries.map((entry) => (entry.food.id === food.id ? { ...entry, ...quantity } : entry)),
       )
       setDetail(null)
       await loadMeals()
@@ -3122,18 +3562,18 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setDetail({ food, mode: 'recipe-add', initial: initialAmountInput(food, { asUnit }) })
   }
 
-  // An amount already in the meal is shown as it is, in g / ml.
+  // An amount already in the meal is shown as it was booked: as portions or in g / ml.
   function openEntryDetail(entry) {
     setDetail({
       food: entry.food,
       mode: 'set',
-      initial: initialAmountInput(entry.food, { asUnit: true, amount: entry.amount }),
+      initial: initialAmountInput(entry.food, { quantity: entry }),
     })
   }
 
-  function addFromDetail(food, amount) {
-    if (detail.mode === 'recipe-add') addToRecipeSearch(food, amount)
-    else addToDraft(food, amount)
+  function addFromDetail(food, quantity) {
+    if (detail.mode === 'recipe-add') addToRecipeSearch(food, quantity)
+    else addToDraft(food, quantity)
     setDetail(null)
   }
 
@@ -3212,8 +3652,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setRecipeSearch({ target, entries: [], previewing: false })
   }
 
-  function addToRecipeSearch(food, amount) {
-    setRecipeSearch((current) => ({ ...current, entries: addAmount(current.entries, food, amount) }))
+  function addToRecipeSearch(food, quantity) {
+    setRecipeSearch((current) => ({ ...current, entries: addAmount(current.entries, food, quantity) }))
   }
 
   function removeFromRecipeSearch(foodId) {
@@ -3379,6 +3819,112 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
+  // ----- shopping list -----
+
+  useEffect(() => {
+    if (!addedToList) return
+    const timer = setTimeout(() => setAddedToList(null), ADDED_FEEDBACK_MS)
+    return () => clearTimeout(timer)
+  }, [addedToList])
+
+  // Every change answers with the whole list in the order to show.
+  function changeShoppingList(path, options) {
+    runAction(async () => {
+      setShoppingList(await request(`${API.shoppingList}${path}`, options))
+      setError(null)
+    })
+  }
+
+  function toggleShoppingItem(item) {
+    changeShoppingList(`/items/${item.id}/checked`, {
+      method: 'PUT',
+      body: JSON.stringify({ checked: !item.checked }),
+    })
+  }
+
+  // Replaces the quantity of an entry (portions or g / ml), from the amount view.
+  function saveShoppingQuantity(food, quantity) {
+    const { id } = shoppingEdit
+    runAction(async () => {
+      setShoppingList(
+        await request(`${API.shoppingList}/items/${id}/quantity`, {
+          method: 'PUT',
+          body: JSON.stringify(quantityFields(quantity)),
+        }),
+      )
+      setShoppingEdit(null)
+      setError(null)
+    })
+  }
+
+  // Moves an unchecked entry to place `to` among the unchecked ones. Shown right away; the
+  // server's answer then has the same order. If the server refuses, the old order comes back.
+  function moveShoppingItem(item, to) {
+    const before = shoppingList
+    const unchecked = before.filter((other) => !other.checked && other.id !== item.id)
+    unchecked.splice(to, 0, item)
+    setShoppingList([...unchecked, ...before.filter((other) => other.checked)])
+    runAction(async () => {
+      try {
+        setShoppingList(
+          await request(`${API.shoppingList}/items/${item.id}/move?to=${to}`, { method: 'POST' }),
+        )
+        setError(null)
+      } catch (error) {
+        setShoppingList(before)
+        throw error
+      }
+    })
+  }
+
+  function askRemoveShoppingItem(item) {
+    setConfirm({
+      title: 'Eintrag entfernen?',
+      text: `„${item.food.name}“ wird von der Einkaufsliste entfernt.`,
+      confirmLabel: 'Entfernen',
+      onConfirm: () => {
+        setConfirm(null)
+        changeShoppingList(`/items/${item.id}`, { method: 'DELETE' })
+      },
+    })
+  }
+
+  function askResetShoppingList() {
+    setConfirm({
+      title: 'Einkaufsliste zurücksetzen?',
+      text: 'Alle Einträge werden gelöscht.',
+      confirmLabel: 'Zurücksetzen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(API.shoppingList, { method: 'DELETE' })
+          setShoppingList([])
+          setError(null)
+        }),
+    })
+  }
+
+  // items: foods with quantities; added: { kind, id } of the database entry they come from, whose
+  // cart then shows ✓; use: the recipe ({ recipeId, variationId }), which counts as booked last in
+  // that variation, like when booking a meal.
+  function addToShoppingList(items, added, use = null) {
+    runAction(async () => {
+      setShoppingList(
+        await request(`${API.shoppingList}/items`, {
+          method: 'POST',
+          body: JSON.stringify({
+            items: items.map((item) => ({ foodId: item.food.id, ...quantityFields(item) })),
+            recipes: use ? [use] : [],
+          }),
+        }),
+      )
+      setShoppingAdd(null)
+      setAddedToList(added)
+      if (use) reloadCatalog()
+      setError(null)
+    })
+  }
+
   // ----- views -----
 
   function openFoods() {
@@ -3387,6 +3933,17 @@ function MealTracker({ user, onUserChange, onLogout }) {
   }
 
   function closeFoods() {
+    setError(null)
+    setView('list')
+  }
+
+  function openShoppingList() {
+    setError(null)
+    setView('shopping')
+    runAction(async () => setShoppingList(await request(API.shoppingList)))
+  }
+
+  function closeShoppingList() {
     setError(null)
     setView('list')
   }
@@ -3412,11 +3969,14 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (recipeBooking) setRecipeBooking(null)
     else if (recipeEditor?.layer) updateEditor({ layer: null })
     else if (recipeEditor) setRecipeEditor(null)
+    else if (shoppingAdd) setShoppingAdd(null)
+    else if (shoppingEdit) setShoppingEdit(null)
     else if (foodFormLayer) setFoodFormLayer(null)
     else if (foodForm) setFoodForm(null)
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
     else if (view === 'foods') closeFoods()
+    else if (view === 'shopping') closeShoppingList()
     else if (view === 'profile') closeProfile()
   }
 
@@ -3445,7 +4005,32 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onDelete={askDeleteMeal}
           onRefresh={() => runAction(() => Promise.all([activity.refresh(), loadMeals()]))}
           onOpenFoods={openFoods}
+          onOpenShoppingList={openShoppingList}
           onOpenProfile={openProfile}
+        />
+      )}
+
+      {view === 'shopping' && shoppingEdit && (
+        <FoodDetail
+          food={shoppingEdit.food}
+          initial={initialAmountInput(shoppingEdit.food, {
+            quantity: quantityFromItem(shoppingEdit.food, shoppingEdit),
+          })}
+          confirmLabel="Übernehmen"
+          onConfirm={saveShoppingQuantity}
+          onClose={goBack}
+        />
+      )}
+
+      {view === 'shopping' && !shoppingEdit && (
+        <ShoppingListPage
+          items={shoppingList}
+          onToggle={toggleShoppingItem}
+          onEdit={setShoppingEdit}
+          onMoveTo={moveShoppingItem}
+          onRemove={askRemoveShoppingItem}
+          onReset={askResetShoppingList}
+          onClose={goBack}
         />
       )}
 
@@ -3513,13 +4098,43 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'foods' && (
         <>
           <FoodDatabase
-            hidden={foodForm !== null || recipeEditor !== null}
+            hidden={foodForm !== null || recipeEditor !== null || shoppingAdd !== null}
             version={catalogVersion}
+            addedToList={addedToList}
             onOpenFood={openFood}
             onOpenRecipe={openRecipe}
+            onAddFoodToList={(food) => {
+              setNotice(null)
+              setShoppingAdd({ food })
+            }}
+            onAddRecipeToList={(recipe) => {
+              setNotice(null)
+              setShoppingAdd({ recipe })
+            }}
             onClose={goBack}
             onError={setError}
           />
+          {shoppingAdd?.food && (
+            <FoodDetail
+              food={shoppingAdd.food}
+              initial={initialAmountInput(shoppingAdd.food)}
+              confirmLabel="Zur Einkaufsliste hinzufügen"
+              onConfirm={(food, quantity) =>
+                addToShoppingList([{ food, ...quantity }], { kind: KIND_FOODS, id: food.id })
+              }
+              onClose={goBack}
+            />
+          )}
+          {shoppingAdd?.recipe && (
+            <ShoppingRecipeAdd
+              key={shoppingAdd.recipe.id}
+              recipe={shoppingAdd.recipe}
+              onConfirm={(items, use) =>
+                addToShoppingList(items, { kind: KIND_RECIPES, id: use.recipeId }, use)
+              }
+              onClose={goBack}
+            />
+          )}
           {foodForm && (
             <FoodForm
               key={foodForm.id ?? 'new'}

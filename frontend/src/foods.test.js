@@ -38,12 +38,12 @@ describe('formatAmount', () => {
 })
 
 describe('quickAdd', () => {
-  it('books one default portion', () => {
-    expect(quickAdd(quark)).toEqual({ amount: 250, label: 'Packung (250 g)' })
+  it('books one default portion, as a portion', () => {
+    expect(quickAdd(quark)).toEqual({ amount: 250, portionId: 12, count: 1, label: 'Packung (250 g)' })
   })
 
   it('books 100 g or ml without portions', () => {
-    expect(quickAdd(beer)).toEqual({ amount: 100, label: '100 ml' })
+    expect(quickAdd(beer)).toEqual({ amount: 100, portionId: null, count: null, label: '100 ml' })
   })
 })
 
@@ -67,6 +67,17 @@ describe('initialAmountInput', () => {
   it('starts with 100 in the unit without portions, or when asked for the unit', () => {
     expect(initialAmountInput(beer)).toEqual({ choice: CHOICE_UNIT, quantityText: '100' })
     expect(initialAmountInput(quark, { asUnit: true })).toEqual({ choice: CHOICE_UNIT, quantityText: '100' })
+  })
+
+  it('starts with a booked quantity as it was booked: portions, or the unit', () => {
+    expect(initialAmountInput(quark, { quantity: { amount: 375, portionId: 12, count: 1.5 } })).toEqual({
+      choice: 12,
+      quantityText: '1.5',
+    })
+    expect(initialAmountInput(quark, { quantity: { amount: 80, portionId: null, count: null } })).toEqual({
+      choice: CHOICE_UNIT,
+      quantityText: '80',
+    })
   })
 
   it('shows a given amount in the unit, e.g. when an amount is changed', () => {

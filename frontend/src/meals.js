@@ -1,7 +1,7 @@
 // The meal being put together in the app (the "draft") and what is sent to the backend.
 // Pure functions, see meals.test.js.
 
-import { roundToOneDecimal } from './recipes.js'
+import { addQuantities, quantityFields, quantityFromItem, toQuantity } from './quantities.js'
 
 export const MAX_TITLE_LENGTH = 100
 
@@ -13,16 +13,23 @@ export function makeTitle(names) {
   return title.slice(0, MAX_TITLE_LENGTH)
 }
 
-// label: what the amount is added as (see NEW_DRAFT in App.jsx). Defaults to the food itself.
-export function addAmount(entries, food, amount, label = food.name) {
+// Entries are { food, amount, portionId, count, baseAmount, labels }: a quantity of the food (see
+// quantities.js), the amount booked before editing started (baseAmount, to show what was added),
+// and the names the meal title is made of.
+//
+// quantity: what is added, a quantity or an amount in g or ml. The same food again is added to
+// its entry, in the unit of that entry (2 Stück + 30 g = 2,5 Stück). label: what the amount is
+// added as (see NEW_DRAFT in App.jsx). Defaults to the food itself.
+export function addAmount(entries, food, quantity, label = food.name) {
+  const added = toQuantity(food, quantity)
   if (!entries.some((entry) => entry.food.id === food.id)) {
-    return [...entries, { food, amount, baseAmount: 0, labels: [label] }]
+    return [...entries, { food, ...added, baseAmount: 0, labels: [label] }]
   }
   return entries.map((entry) =>
     entry.food.id === food.id
       ? {
           ...entry,
-          amount: roundToOneDecimal(entry.amount + amount),
+          ...addQuantities(food, toQuantity(food, entry), added),
           labels: entry.labels.includes(label) ? entry.labels : [...entry.labels, label],
         }
       : entry,
@@ -36,7 +43,7 @@ export function addRecipeItems(entries, items, recipeName, recipeId) {
   const booked = items.filter((item) => item.amount > 0)
   const bookedFoodIds = new Set(booked.map((item) => item.food.id))
   return booked
-    .reduce((result, item) => addAmount(result, item.food, item.amount, recipeName), entries)
+    .reduce((result, item) => addAmount(result, item.food, item, recipeName), entries)
     .map((entry) => {
       const recipeIds = entry.recipeIds ?? []
       return bookedFoodIds.has(entry.food.id) && !recipeIds.includes(recipeId)
@@ -54,7 +61,7 @@ export function entriesFromMeal(meal) {
   const keepsTitle = meal.title !== titleFromFoods
   return meal.items.map((item) => ({
     food: item.food,
-    amount: item.amount,
+    ...quantityFromItem(item.food, item),
     baseAmount: item.amount,
     labels: [keepsTitle ? meal.title : item.food.name],
   }))
@@ -66,7 +73,7 @@ export function mealRequest(entries, recipeUses = []) {
   const labels = [...new Set(entries.flatMap((entry) => entry.labels))]
   return {
     title: makeTitle(labels),
-    items: entries.map((entry) => ({ foodId: entry.food.id, amount: entry.amount })),
+    items: entries.map((entry) => ({ foodId: entry.food.id, ...quantityFields(entry) })),
     recipes: recipeUses.filter((use) =>
       entries.some((entry) => (entry.recipeIds ?? []).includes(use.recipeId)),
     ),

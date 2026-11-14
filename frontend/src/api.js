@@ -6,6 +6,7 @@ export const API = {
   foods: '/api/foods',
   recipes: '/api/recipes',
   meals: '/api/meals',
+  shoppingList: '/api/shopping-list',
   register: '/api/auth/register',
   login: '/api/auth/login',
   logout: '/api/auth/logout',

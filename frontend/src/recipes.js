@@ -1,7 +1,18 @@
 // Arithmetic for recipes. A recipe is booked as its foods: every amount is scaled by the share of
 // the recipe that was eaten, so meals never reference a recipe (see RecipeService in the backend).
+//
+// Items are { food, amount, portionId, count, ... }: a quantity of the food (see quantities.js),
+// whose amount is always in the unit of the food. Scaling keeps portions as portions.
 
-export const roundToOneDecimal = (n) => Math.round(n * 10) / 10
+import {
+  addQuantities,
+  quantityFields,
+  quantityFromItem,
+  scaleQuantity,
+  toQuantity,
+} from './quantities.js'
+
+export { roundToOneDecimal } from './numbers.js'
 
 export function kcalOf(food, amount) {
   return (amount * food.kcalPer100) / 100
@@ -26,9 +37,10 @@ export function shareOf({ unit, quantity, servings, weightG }) {
   return unit === 'portion' ? quantity / servings : quantity / weightG
 }
 
-// The items with all amounts multiplied by share (e.g. 0.25 for one of four portions).
+// The items with all quantities multiplied by share (e.g. 0.25 for one of four portions): amounts
+// rounded to one decimal, portion counts to two.
 export function scaleItems(items, share) {
-  return items.map((item) => ({ food: item.food, amount: roundToOneDecimal(item.amount * share) }))
+  return items.map((item) => ({ food: item.food, ...scaleQuantity(item.food, toQuantity(item.food, item), share) }))
 }
 
 // The same amount of the dish in the other unit, e.g. when the unit select is switched.
@@ -50,22 +62,46 @@ export function lastUsedVariation(recipe) {
 }
 
 // The ingredients of the original (variation null) or of a variation, each with the amount of the
-// original next to it (originalAmount, 0 for foods only the variation contains). Left-out ingredients
-// stay in the list with 0 g, so the difference to the original can be shown.
+// original next to it (originalAmount in g or ml, 0 for foods only the variation contains).
+// Left-out ingredients stay in the list with 0, so the difference to the original can be shown.
 export function itemsOf(recipe, variation) {
-  const changed = new Map((variation?.items ?? []).map((item) => [item.food.id, item.amount]))
+  const changed = new Map((variation?.items ?? []).map((item) => [item.food.id, item]))
   const items = recipe.items.map((item) => ({
     food: item.food,
+    ...quantityFromItem(item.food, changed.get(item.food.id) ?? item),
     originalAmount: item.amount,
-    amount: changed.get(item.food.id) ?? item.amount,
   }))
   for (const item of variation?.items ?? []) {
     if (!recipe.items.some((original) => original.food.id === item.food.id)) {
-      items.push({ food: item.food, originalAmount: 0, amount: item.amount })
+      items.push({ food: item.food, ...quantityFromItem(item.food, item), originalAmount: 0 })
     }
   }
   return items
 }
+
+// Adds foods (quantities, e.g. from the search) to items: the same food adds up in the unit of the
+// item already there, a new food comes with `extra` (its originalAmount and so on).
+function addItems(items, added, extra) {
+  const merged = items.map((item) => ({ ...item }))
+  for (const entry of added) {
+    const quantity = toQuantity(entry.food, entry)
+    const index = merged.findIndex((item) => item.food.id === entry.food.id)
+    if (index >= 0) {
+      const existing = merged[index]
+      merged[index] = { ...existing, ...addQuantities(existing.food, toQuantity(existing.food, existing), quantity) }
+    } else {
+      merged.push({ food: entry.food, ...quantity, ...extra(quantity) })
+    }
+  }
+  return merged
+}
+
+// Changed against the saved version: another amount, or the same written another way (portions
+// instead of grams).
+const isItemChanged = (item) => item.amount !== item.savedAmount || item.portionId !== item.savedPortionId
+
+// savedAmount, savedPortionId: the item as saved in the shown version (see isItemChanged).
+const withSaved = (item) => ({ ...item, savedAmount: item.amount, savedPortionId: item.portionId })
 
 // A variation without own number of portions has as many as the original.
 export function servingsOf(recipe, variation) {
@@ -106,16 +142,10 @@ export const NEW_EDITOR = {
   layer: null,
 }
 
-// Foods added to the recipe editor: same food twice adds up. In a variation, a food the original
-// does not contain is compared with 0 g.
+// Foods added to the recipe editor: same food twice adds up, in the unit already there. In a
+// variation, a food the original does not contain is compared with 0 g.
 export function mergeEditorItems(items, added, isVariation) {
-  const merged = items.map((item) => ({ ...item }))
-  for (const { food, amount } of added) {
-    const existing = merged.find((item) => item.food.id === food.id)
-    if (existing) existing.amount = roundToOneDecimal(existing.amount + amount)
-    else merged.push({ food, amount, originalAmount: isVariation ? 0 : amount })
-  }
-  return merged
+  return addItems(items, added, (quantity) => ({ originalAmount: isVariation ? 0 : quantity.amount }))
 }
 
 // The editor showing the original (variationId null) or a variation of `recipe`. Switching
@@ -133,8 +163,8 @@ export function editorFor(recipe, variationId = null) {
     weightText: variation?.weightG != null ? String(variation.weightG) : '',
     published: recipe.published,
     wasPublished: recipe.published,
-    // savedAmount: amount as saved in the shown version, to tell what was changed (see editorChanges)
-    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedAmount: item.amount })),
+    // as saved in the shown version, to tell what was changed (see editorChanges)
+    items: itemsOf(recipe, variation).map(withSaved),
   }
 }
 
@@ -146,7 +176,7 @@ export function editorChanges(editor) {
   const variation = variationOf(recipe, variationId)
   const savedItemCount = itemsOf(recipe, variation).length
   const items =
-    editor.items.some((item) => item.amount !== item.savedAmount) ||
+    editor.items.some(isItemChanged) ||
     editor.items.filter((item) => item.savedAmount !== undefined).length !== savedItemCount ||
     parseFloat(editor.servingsText) !== servingsOf(recipe, variation)
   const any =
@@ -158,7 +188,8 @@ export function editorChanges(editor) {
 
 // What the booking view shows for the original (null) or a variation; adjustments are dropped.
 // saved: the values as saved, to tell whether something was changed since (see isAdjusted).
-// Items keep savedAmount (amount in the shown version) next to originalAmount (amount in the original).
+// Items keep savedAmount and savedPortionId (as in the shown version) next to originalAmount
+// (amount in the original).
 export function bookingSelection(recipe, variationId) {
   const variation = variationOf(recipe, variationId)
   const servingsText = String(servingsOf(recipe, variation))
@@ -167,7 +198,7 @@ export function bookingSelection(recipe, variationId) {
     variationId: variation?.id ?? null,
     servingsText,
     weightText,
-    items: itemsOf(recipe, variation).map((item) => ({ ...item, savedAmount: item.amount })),
+    items: itemsOf(recipe, variation).map(withSaved),
     saved: { servingsText, weightText },
   }
 }
@@ -185,16 +216,11 @@ export function bookingFor(recipe, variationId = recipe.lastUsedVariationId) {
   }
 }
 
-// Foods added in the booking view: same food adds up, a new food was in neither the original
-// nor the shown version (originalAmount and savedAmount 0), so it counts as a change.
+// Foods added in the booking view: same food adds up (in the unit already there), a new food was
+// in neither the original nor the shown version (originalAmount and savedAmount 0), so it counts as
+// a change.
 export function addToBookingItems(items, added) {
-  const merged = items.map((item) => ({ ...item }))
-  for (const { food, amount } of added) {
-    const existing = merged.find((item) => item.food.id === food.id)
-    if (existing) existing.amount = roundToOneDecimal(existing.amount + amount)
-    else merged.push({ food, amount, originalAmount: 0, savedAmount: 0 })
-  }
-  return merged
+  return addItems(items, added, () => ({ originalAmount: 0, savedAmount: 0, savedPortionId: null }))
 }
 
 // Changed since the shown version (original or variation) was loaded or saved. Booking is only
@@ -202,7 +228,7 @@ export function addToBookingItems(items, added) {
 export function isAdjusted(booking) {
   const { saved } = booking
   return (
-    booking.items.some((item) => item.amount !== item.savedAmount) ||
+    booking.items.some(isItemChanged) ||
     parseFloat(booking.servingsText) !== parseFloat(saved.servingsText) ||
     booking.weightText !== saved.weightText
   )
@@ -221,11 +247,11 @@ export function variationRequest(name, servingsText, weightText, items) {
     name: name.trim(),
     servings: parseFloat(servingsText),
     weightG,
-    items: items.map((item) => ({ foodId: item.food.id, amount: item.amount })),
+    items: items.map((item) => ({ foodId: item.food.id, ...quantityFields(item) })),
   }
 }
 
-// Body of POST/PUT /api/recipes. Left-out ingredients (0 g) are not part of an original.
+// Body of POST/PUT /api/recipes. Left-out ingredients (0) are not part of an original.
 export function recipeRequest({ name, servingsText, published, items }) {
   return {
     name: name.trim(),
@@ -233,6 +259,6 @@ export function recipeRequest({ name, servingsText, published, items }) {
     published,
     items: items
       .filter((item) => item.amount > 0)
-      .map((item) => ({ foodId: item.food.id, amount: item.amount })),
+      .map((item) => ({ foodId: item.food.id, ...quantityFields(item) })),
   }
 }

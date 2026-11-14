@@ -12,6 +12,10 @@ import {
 const apple = { id: 1, name: 'Apfel', kcalPer100: 52 }
 const banana = { id: 2, name: 'Banane', kcalPer100: 89 }
 const beans = { id: 3, name: 'Bohnen', kcalPer100: 100 }
+const eggs = { id: 4, name: 'Ei', kcalPer100: 144, portions: [{ id: 40, name: 'Stück', amount: 60 }] }
+
+// What entries in g or ml carry besides their amount (no portion, see quantities.js).
+const inUnit = { portionId: null, count: null }
 
 describe('makeTitle', () => {
   it('lists up to three names', () => {
@@ -29,7 +33,9 @@ describe('makeTitle', () => {
 
 describe('addAmount', () => {
   it('adds a new food labelled with its own name', () => {
-    expect(addAmount([], apple, 100)).toEqual([{ food: apple, amount: 100, baseAmount: 0, labels: ['Apfel'] }])
+    expect(addAmount([], apple, 100)).toEqual([
+      { food: apple, amount: 100, ...inUnit, baseAmount: 0, labels: ['Apfel'] },
+    ])
   })
 
   it('adds up amounts of the same food (rounded) and keeps each label once', () => {
@@ -37,7 +43,15 @@ describe('addAmount', () => {
     entries = addAmount(entries, apple, 50.04)
     entries = addAmount(entries, apple, 10, 'Obstsalat')
     entries = addAmount(entries, apple, 10, 'Obstsalat')
-    expect(entries).toEqual([{ food: apple, amount: 170, baseAmount: 0, labels: ['Apfel', 'Obstsalat'] }])
+    expect(entries).toEqual([
+      { food: apple, amount: 170, ...inUnit, baseAmount: 0, labels: ['Apfel', 'Obstsalat'] },
+    ])
+  })
+
+  it('adds to an entry in portions as portions: 2 Stück + 30 g are 2,5 Stück', () => {
+    let entries = addAmount([], eggs, { amount: 120, portionId: 40, count: 2 })
+    entries = addAmount(entries, eggs, 30)
+    expect(entries[0]).toMatchObject({ amount: 150, portionId: 40, count: 2.5 })
   })
 })
 
@@ -78,9 +92,17 @@ describe('entriesFromMeal', () => {
       ],
     })
     expect(entries).toEqual([
-      { food: apple, amount: 200, baseAmount: 200, labels: ['Apfel'] },
-      { food: banana, amount: 50, baseAmount: 50, labels: ['Banane'] },
+      { food: apple, amount: 200, ...inUnit, baseAmount: 200, labels: ['Apfel'] },
+      { food: banana, amount: 50, ...inUnit, baseAmount: 50, labels: ['Banane'] },
     ])
+  })
+
+  it('takes portion and count of items booked as portions', () => {
+    const [entry] = entriesFromMeal({
+      title: 'Ei',
+      items: [{ food: eggs, amount: 150, portionId: 40, portionCount: 2.5, kcal: 216 }],
+    })
+    expect(entry).toMatchObject({ amount: 150, portionId: 40, count: 2.5, baseAmount: 150 })
   })
 
   it('keeps the title of a meal booked from a recipe', () => {
@@ -103,6 +125,11 @@ describe('mealRequest', () => {
       ],
       recipes: [],
     })
+  })
+
+  it('sends entries in portions as portion and count', () => {
+    const entries = addAmount([], eggs, { amount: 120, portionId: 40, count: 2 })
+    expect(mealRequest(entries).items).toEqual([{ foodId: 4, portionId: 40, portionCount: 2 }])
   })
 
   it('only reports recipes that still have something in the meal', () => {
