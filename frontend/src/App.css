@@ -23,22 +23,24 @@
   --filter-height: 40px;
   --book-amount-height: 52px;
 
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12171d;
-    --surface: #1b222a;
-    --ink: #e8ecf0;
-    --muted: #96a1ad;
-    --line: #2d3742;
-    --accent: #7e97ff;
-    --on-accent: #0f1522;
-    --danger: #ff8d80;
-    --ok: #6fd08c;
-    --favorite: #f2c14e;
-  }
+/* Dark, chosen in the profile or following the device: data-theme is set by theme.js (and early
+   by the script in index.html), so the page never asks the device itself. */
+:root[data-theme='dark'] {
+  --bg: #12171d;
+  --surface: #1b222a;
+  --ink: #e8ecf0;
+  --muted: #96a1ad;
+  --line: #2d3742;
+  --accent: #7e97ff;
+  --on-accent: #0f1522;
+  --danger: #ff8d80;
+  --ok: #6fd08c;
+  --favorite: #f2c14e;
+
+  color-scheme: dark;
 }
 
 /* =============================================================================
@@ -907,6 +909,11 @@ fieldset.plain:disabled input {
   max-width: 420px;
   margin: 0 auto;
   padding-top: max(48px, env(safe-area-inset-top, 0px));
+}
+
+/* the registration view starts with its title bar, like every other view */
+.login.registering {
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
 }
 
 .login-title {
