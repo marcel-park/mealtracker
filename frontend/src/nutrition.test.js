@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bookedMacros, macroTargetGrams, macroTargets, remainingKcal } from './nutrition.js'
+import { bookedMacros, macroTargetGrams, macroTargets, mealTotals, remainingKcal } from './nutrition.js'
 
 const user = { calorieTarget: 2000, carbsPercent: 40, proteinPercent: 30, fatPercent: 30 }
 
@@ -41,5 +41,21 @@ describe('remainingKcal', () => {
   it('is what is left of the target, negative when there is too much', () => {
     expect(remainingKcal(2000, [{ kcal: 686 }, { kcal: 372 }])).toBe(942)
     expect(remainingKcal(2000, [{ kcal: 2100.4 }])).toBeCloseTo(-100.4, 6)
+  })
+})
+
+describe('mealTotals', () => {
+  it('adds up kcal and grams of all entries per 100 g or ml', () => {
+    const egg = { kcalPer100: 144, carbs: 1, protein: 12, fat: 10 }
+    const milk = { kcalPer100: 64, carbs: 5, protein: 3.4, fat: 3.5 }
+    const totals = mealTotals([{ food: egg, amount: 120 }, { food: milk, amount: 200 }])
+    expect(totals.kcal).toBeCloseTo(300.8)
+    expect(totals.carbs).toBeCloseTo(11.2)
+    expect(totals.protein).toBeCloseTo(21.2)
+    expect(totals.fat).toBeCloseTo(19)
+  })
+
+  it('is all 0 without entries', () => {
+    expect(mealTotals([])).toEqual({ kcal: 0, carbs: 0, protein: 0, fat: 0 })
   })
 })

@@ -44,6 +44,15 @@ export function bookedMacros(meals) {
   return totals
 }
 
+// { kcal, carbs, protein, fat } of one meal: entries [{ food, amount }], each amount in the unit
+// of its food, whose values are per 100 of that unit.
+export function mealTotals(entries) {
+  return {
+    kcal: entries.reduce((sum, { food, amount }) => sum + (amount * food.kcalPer100) / 100, 0),
+    ...bookedMacros([{ items: entries }]),
+  }
+}
+
 // What is left of the calorie target. Negative: that much too much.
 export function remainingKcal(calorieTarget, meals) {
   return calorieTarget - meals.reduce((sum, meal) => sum + meal.kcal, 0)
