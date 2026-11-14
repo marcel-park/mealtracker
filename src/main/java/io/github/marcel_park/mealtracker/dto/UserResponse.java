@@ -1,10 +1,14 @@
 package io.github.marcel_park.mealtracker.dto;
 
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 
+import java.math.BigDecimal;
+
 // Never contains the password hash. carbsPercent, proteinPercent, fatPercent: the split of the
-// calorie target, see UserSettingsRequest.
+// calorie target, see UserSettingsRequest. weightKg, heightCm, sex: null for users who registered
+// before they were asked for.
 public record UserResponse(
         Long id,
         String email,
@@ -12,6 +16,10 @@ public record UserResponse(
         int carbsPercent,
         int proteinPercent,
         int fatPercent,
+        int stepGoal,
+        BigDecimal weightKg,
+        Integer heightCm,
+        Sex sex,
         ColorTheme colorTheme,
         boolean admin) {
 
@@ -23,6 +31,10 @@ public record UserResponse(
                 user.getCarbsPercent(),
                 user.getProteinPercent(),
                 user.getFatPercent(),
+                user.getStepGoal(),
+                user.getWeightKg(),
+                user.getHeightCm(),
+                user.getSex(),
                 user.getColorTheme(),
                 user.isAdmin());
     }

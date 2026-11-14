@@ -55,6 +55,9 @@ public class UserService {
         User user = new User();
         user.setEmail(email);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setWeightKg(request.weightKg());
+        user.setHeightCm(request.heightCm());
+        user.setSex(request.sex());
         user.setAdmin(isFirstUser);
         userRepository.save(user);
 
@@ -98,6 +101,10 @@ public class UserService {
         user.setCarbsPercent(request.carbsPercent());
         user.setProteinPercent(request.proteinPercent());
         user.setFatPercent(request.fatPercent());
+        user.setStepGoal(request.stepGoal());
+        user.setWeightKg(request.weightKg());
+        user.setHeightCm(request.heightCm());
+        user.setSex(request.sex());
         user.setColorTheme(request.colorTheme());
         return UserResponse.from(user);
     }

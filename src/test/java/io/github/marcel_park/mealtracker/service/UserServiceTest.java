@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -24,6 +25,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,6 +60,11 @@ class UserServiceTest {
         service = new UserService(userRepository, mealRepository, authTokenService, passwordEncoder);
     }
 
+    // A complete registration of the given email with the password "geheim123".
+    private static RegisterRequest registration(String email) {
+        return new RegisterRequest(email, "geheim123", new BigDecimal("80.5"), 180, Sex.MALE);
+    }
+
     private User existingUser(String email, String password) {
         User user = new User();
         user.setId(1L);
@@ -82,7 +89,7 @@ class UserServiceTest {
 
         @Test
         void register_storesBcryptHashInsteadOfThePassword() {
-            service.register(new RegisterRequest("max@example.com", "geheim123"));
+            service.register(registration("max@example.com"));
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -93,7 +100,7 @@ class UserServiceTest {
 
         @Test
         void register_normalizesEmail() {
-            service.register(new RegisterRequest("  Max@Example.COM ", "geheim123"));
+            service.register(registration("  Max@Example.COM "));
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -104,21 +111,31 @@ class UserServiceTest {
         void register_usesDefaultsForNewUser() {
             when(userRepository.count()).thenReturn(3L);
 
-            UserResponse user = service.register(new RegisterRequest("max@example.com", "geheim123")).user();
+            UserResponse user = service.register(registration("max@example.com")).user();
 
             assertThat(user.calorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
             assertThat(user)
                     .extracting(UserResponse::carbsPercent, UserResponse::proteinPercent, UserResponse::fatPercent)
                     .containsExactly(40, 30, 30);
+            assertThat(user.stepGoal()).isEqualTo(User.DEFAULT_STEP_GOAL);
             assertThat(user.colorTheme()).isEqualTo(ColorTheme.LIGHT);
             assertThat(user.admin()).isFalse();
+        }
+
+        @Test
+        void register_storesBodyData() {
+            UserResponse user = service.register(registration("max@example.com")).user();
+
+            assertThat(user)
+                    .extracting(UserResponse::weightKg, UserResponse::heightCm, UserResponse::sex)
+                    .containsExactly(new BigDecimal("80.5"), 180, Sex.MALE);
         }
 
         @Test
         void register_returnsTokenAndUser() {
             when(authTokenService.issue(any(User.class))).thenReturn("new-token");
 
-            AuthResponse response = service.register(new RegisterRequest("max@example.com", "geheim123"));
+            AuthResponse response = service.register(registration("max@example.com"));
 
             assertThat(response.token()).isEqualTo("new-token");
             assertThat(response.user().id()).isEqualTo(1L);
@@ -129,7 +146,7 @@ class UserServiceTest {
         void register_firstUser_becomesAdminAndTakesOverOwnerlessMeals() {
             when(userRepository.count()).thenReturn(0L);
 
-            UserResponse user = service.register(new RegisterRequest("max@example.com", "geheim123")).user();
+            UserResponse user = service.register(registration("max@example.com")).user();
 
             assertThat(user.admin()).isTrue();
             verify(mealRepository).assignOwnerlessMealsTo(any(User.class));
@@ -139,7 +156,7 @@ class UserServiceTest {
         void register_laterUser_doesNotTakeOverMeals() {
             when(userRepository.count()).thenReturn(1L);
 
-            service.register(new RegisterRequest("max@example.com", "geheim123"));
+            service.register(registration("max@example.com"));
 
             verify(mealRepository, never()).assignOwnerlessMealsTo(any());
         }
@@ -149,7 +166,7 @@ class UserServiceTest {
     void register_emailAlreadyRegistered_throwsAndSavesNothing() {
         when(userRepository.existsByEmail("max@example.com")).thenReturn(true);
 
-        assertThatThrownBy(() -> service.register(new RegisterRequest("Max@example.com", "geheim123")))
+        assertThatThrownBy(() -> service.register(registration("Max@example.com")))
                 .isInstanceOf(EmailAlreadyRegisteredException.class);
 
         verify(userRepository, never()).save(any());
@@ -229,7 +246,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, ColorTheme.LIGHT, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, ColorTheme.LIGHT, false));
     }
 
     @Test
@@ -242,17 +259,20 @@ class UserServiceTest {
     }
 
     @Test
-    void updateSettings_setsCalorieTargetMacroSplitAndColorTheme() {
+    void updateSettings_setsAllSettingsAndBodyData() {
         User user = existingUser("max@example.com", "geheim123");
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
-        UserResponse result = service.updateSettings(1L,
-                new UserSettingsRequest(1800, ColorTheme.DARK, 50, 25, 25));
+        UserResponse result = service.updateSettings(1L, new UserSettingsRequest(1800, ColorTheme.DARK,
+                50, 25, 25, 8000, new BigDecimal("72.0"), 168, Sex.FEMALE));
 
         assertThat(user)
                 .extracting(User::getCalorieTarget, User::getCarbsPercent, User::getProteinPercent,
                         User::getFatPercent, User::getColorTheme)
                 .containsExactly(1800, 50, 25, 25, ColorTheme.DARK);
+        assertThat(user)
+                .extracting(User::getStepGoal, User::getWeightKg, User::getHeightCm, User::getSex)
+                .containsExactly(8000, new BigDecimal("72.0"), 168, Sex.FEMALE);
         assertThat(result)
                 .extracting(UserResponse::calorieTarget, UserResponse::carbsPercent,
                         UserResponse::proteinPercent, UserResponse::fatPercent, UserResponse::colorTheme)

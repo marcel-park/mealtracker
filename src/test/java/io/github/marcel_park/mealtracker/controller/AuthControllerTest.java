@@ -9,6 +9,7 @@ import io.github.marcel_park.mealtracker.exception.AccountDisabledException;
 import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredException;
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
 import io.github.marcel_park.mealtracker.service.AuthTokenService;
@@ -22,6 +23,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,10 +48,16 @@ class AuthControllerTest {
     private AuthTokenService authTokenService;
 
     private static final AuthResponse AUTH_RESPONSE = new AuthResponse("the-token",
-            new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, ColorTheme.LIGHT, false));
+            new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, 10_000,
+                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false));
 
     private static final String CREDENTIALS = """
             {"email":"max@example.com","password":"geheim123"}
+            """;
+
+    // A complete registration: credentials plus the required body data.
+    private static final String REGISTRATION = """
+            {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}
             """;
 
     // ---------- POST /api/auth/register ----------
@@ -59,15 +68,18 @@ class AuthControllerTest {
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(CREDENTIALS))
+                        .content(REGISTRATION))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.token").value("the-token"))
                 .andExpect(jsonPath("$.user.email").value("max@example.com"))
                 .andExpect(jsonPath("$.user.calorieTarget").value(2000))
                 .andExpect(jsonPath("$.user.colorTheme").value("LIGHT"))
+                .andExpect(jsonPath("$.user.weightKg").value(80.5))
+                .andExpect(jsonPath("$.user.sex").value("MALE"))
                 .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
 
-        verify(userService).register(new RegisterRequest("max@example.com", "geheim123"));
+        verify(userService).register(
+                new RegisterRequest("max@example.com", "geheim123", new BigDecimal("80.5"), 180, Sex.MALE));
     }
 
     @Test
@@ -76,7 +88,7 @@ class AuthControllerTest {
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(CREDENTIALS))
+                        .content(REGISTRATION))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409));
     }
@@ -84,11 +96,17 @@ class AuthControllerTest {
     // "ä" is 2 bytes in UTF-8, so 38 of them are 76 bytes: too long for BCrypt despite only 38 characters.
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', textBlock = """
-            invalid email         | {"email":"kein-at-zeichen","password":"geheim123"} | email
-            blank email           | {"email":"  ","password":"geheim123"}              | email
-            password too short    | {"email":"max@example.com","password":"kurz"}      | password
-            missing password      | {"email":"max@example.com"}                        | password
-            password > 72 bytes   | {"email":"max@example.com","password":"ääääääääääääääääääääääääääääääääääääää"} | passwordWithinBcryptLimit
+            invalid email         | {"email":"kein-at-zeichen","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"} | email
+            blank email           | {"email":"  ","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}              | email
+            password too short    | {"email":"max@example.com","password":"kurz","weightKg":80.5,"heightCm":180,"sex":"MALE"}      | password
+            missing password      | {"email":"max@example.com","weightKg":80.5,"heightCm":180,"sex":"MALE"}                        | password
+            password > 72 bytes   | {"email":"max@example.com","password":"ääääääääääääääääääääääääääääääääääääää","weightKg":80.5,"heightCm":180,"sex":"MALE"} | passwordWithinBcryptLimit
+            missing weight        | {"email":"max@example.com","password":"geheim123","heightCm":180,"sex":"MALE"}          | weightKg
+            weight too low        | {"email":"max@example.com","password":"geheim123","weightKg":29.9,"heightCm":180,"sex":"MALE"} | weightKg
+            weight two decimals   | {"email":"max@example.com","password":"geheim123","weightKg":80.55,"heightCm":180,"sex":"MALE"} | weightKg
+            missing height        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"sex":"MALE"}         | heightCm
+            height too big        | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":251,"sex":"MALE"} | heightCm
+            missing sex           | {"email":"max@example.com","password":"geheim123","weightKg":80.5,"heightCm":180}       | sex
             """)
     void register_invalidRequest_returns400WithFieldErrorAndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {
@@ -109,7 +127,7 @@ class AuthControllerTest {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"email":"max@example.com","password":"%s"}
+                                {"email":"max@example.com","password":"%s","weightKg":80.5,"heightCm":180,"sex":"MALE"}
                                 """.formatted("a".repeat(72))))
                 .andExpect(status().isCreated());
     }
