@@ -10,7 +10,6 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
-import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
@@ -27,6 +26,7 @@ import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 
@@ -63,7 +63,8 @@ class UserServiceTest {
 
     // A complete registration of the given email with the password "geheim123".
     private static RegisterRequest registration(String email) {
-        return new RegisterRequest(email, "geheim123", new BigDecimal("80.5"), 180, Sex.MALE);
+        return new RegisterRequest(email, "geheim123", new BigDecimal("80.5"), 180, Sex.MALE,
+                LocalDate.of(1987, 3, 14));
     }
 
     private User existingUser(String email, String password) {
@@ -128,8 +129,9 @@ class UserServiceTest {
             UserResponse user = service.register(registration("max@example.com")).user();
 
             assertThat(user)
-                    .extracting(UserResponse::weightKg, UserResponse::heightCm, UserResponse::sex)
-                    .containsExactly(new BigDecimal("80.5"), 180, Sex.MALE);
+                    .extracting(UserResponse::weightKg, UserResponse::heightCm, UserResponse::sex,
+                            UserResponse::birthDate)
+                    .containsExactly(new BigDecimal("80.5"), 180, Sex.MALE, LocalDate.of(1987, 3, 14));
         }
 
         @Test
@@ -247,7 +249,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, Map.of(), null, null, null, ColorTheme.SYSTEM, false, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, null, ColorTheme.SYSTEM, false, false));
     }
 
     @Test
@@ -266,15 +268,16 @@ class UserServiceTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
         UserResponse result = service.updateSettings(1L, new UserSettingsRequest(1800,
-                50, 25, 25, 8000, new BigDecimal("72.0"), 168, Sex.FEMALE));
+                50, 25, 25, 8000, new BigDecimal("72.0"), 168, Sex.FEMALE, LocalDate.of(1990, 6, 1)));
 
         assertThat(user)
                 .extracting(User::getCalorieTarget, User::getCarbsPercent, User::getProteinPercent,
                         User::getFatPercent, User::getColorTheme)
                 .containsExactly(1800, 50, 25, 25, ColorTheme.DARK);
         assertThat(user)
-                .extracting(User::getStepGoal, User::getWeightKg, User::getHeightCm, User::getSex)
-                .containsExactly(8000, new BigDecimal("72.0"), 168, Sex.FEMALE);
+                .extracting(User::getStepGoal, User::getWeightKg, User::getHeightCm, User::getSex,
+                        User::getBirthDate)
+                .containsExactly(8000, new BigDecimal("72.0"), 168, Sex.FEMALE, LocalDate.of(1990, 6, 1));
         assertThat(result)
                 .extracting(UserResponse::calorieTarget, UserResponse::carbsPercent,
                         UserResponse::proteinPercent, UserResponse::fatPercent)
@@ -291,17 +294,5 @@ class UserServiceTest {
         assertThat(user.getColorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(result.colorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(user.getCalorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
-    }
-
-    @Test
-    void setNutrientTargets_replacesAllTargets() {
-        User user = existingUser("max@example.com", "geheim123");
-        user.setNutrientTargets(Map.of(Nutrient.IRON, 15.0, Nutrient.ZINC, 10.0));
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-
-        UserResponse result = service.setNutrientTargets(1L, Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
-
-        assertThat(user.getNutrientTargets()).isEqualTo(Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
-        assertThat(result.nutrientTargets()).isEqualTo(Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
     }
 }

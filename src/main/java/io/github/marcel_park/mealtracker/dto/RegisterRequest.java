@@ -10,19 +10,23 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 
 // weightKg, heightCm, sex: required, the app needs them to turn steps into calories.
+// birthDate: required, the app computes the daily nutrient targets from age and sex.
 public record RegisterRequest(
         @NotBlank @Email @Size(max = 254) String email,
         @NotBlank @Size(min = RegisterRequest.MIN_PASSWORD_LENGTH) String password,
         @NotNull @DecimalMin(BodyData.MIN_WEIGHT_KG) @DecimalMax(BodyData.MAX_WEIGHT_KG)
         @Digits(integer = 3, fraction = BodyData.WEIGHT_FRACTION_DIGITS) BigDecimal weightKg,
         @NotNull @Min(BodyData.MIN_HEIGHT_CM) @Max(BodyData.MAX_HEIGHT_CM) Integer heightCm,
-        @NotNull Sex sex) {
+        @NotNull Sex sex,
+        @NotNull @Past LocalDate birthDate) {
 
     public static final int MIN_PASSWORD_LENGTH = 8;
 
@@ -35,5 +39,11 @@ public record RegisterRequest(
     @AssertTrue(message = "must not be longer than " + MAX_PASSWORD_BYTES + " bytes")
     public boolean isPasswordWithinBcryptLimit() {
         return password == null || password.getBytes(StandardCharsets.UTF_8).length <= MAX_PASSWORD_BYTES;
+    }
+
+    // Reported as the field "birthDateFrom1900".
+    @AssertTrue(message = "must not be before 1900-01-01")
+    public boolean isBirthDateFrom1900() {
+        return BodyData.isBirthDateFrom1900(birthDate);
     }
 }
