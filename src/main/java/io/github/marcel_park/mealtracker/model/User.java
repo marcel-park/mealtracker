@@ -2,6 +2,8 @@ package io.github.marcel_park.mealtracker.model;
 
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
+
 // Whether a request is authenticated is not stored here: that belongs to the login token sent
 // with each request (see AuthToken), not to the user.
 @Entity
@@ -14,6 +16,8 @@ public class User {
     public static final int DEFAULT_CARBS_PERCENT = 40;
     public static final int DEFAULT_PROTEIN_PERCENT = 30;
     public static final int DEFAULT_FAT_PERCENT = 30;
+
+    public static final int DEFAULT_STEP_GOAL = 10_000;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -42,6 +46,23 @@ public class User {
     @Column(name = "fat_percent", nullable = false)
     private int fatPercent = DEFAULT_FAT_PERCENT;
 
+    // Steps per day; the app shows the step count in green once it is reached.
+    @Column(name = "step_goal", nullable = false)
+    private int stepGoal = DEFAULT_STEP_GOAL;
+
+    // Body data for estimating the calories of steps. Required when registering, but null for
+    // users who registered before they existed (see the V8 migration).
+    @Column(name = "weight_kg", precision = 4, scale = 1)
+    private BigDecimal weightKg;
+
+    @Column(name = "height_cm")
+    private Integer heightCm;
+
+    // Stored as plain VARCHAR "MALE" / "FEMALE" / "DIVERSE", see SexConverter.
+    @Convert(converter = SexConverter.class)
+    @Column(length = 10)
+    private Sex sex;
+
     // Stored as plain VARCHAR "LIGHT" / "DARK", see ColorThemeConverter.
     @Convert(converter = ColorThemeConverter.class)
     @Column(name = "color_theme", nullable = false, length = 10)
@@ -68,6 +89,14 @@ public class User {
     public void setProteinPercent(int proteinPercent) { this.proteinPercent = proteinPercent; }
     public int getFatPercent() { return fatPercent; }
     public void setFatPercent(int fatPercent) { this.fatPercent = fatPercent; }
+    public int getStepGoal() { return stepGoal; }
+    public void setStepGoal(int stepGoal) { this.stepGoal = stepGoal; }
+    public BigDecimal getWeightKg() { return weightKg; }
+    public void setWeightKg(BigDecimal weightKg) { this.weightKg = weightKg; }
+    public Integer getHeightCm() { return heightCm; }
+    public void setHeightCm(Integer heightCm) { this.heightCm = heightCm; }
+    public Sex getSex() { return sex; }
+    public void setSex(Sex sex) { this.sex = sex; }
     public ColorTheme getColorTheme() { return colorTheme; }
     public void setColorTheme(ColorTheme colorTheme) { this.colorTheme = colorTheme; }
     public boolean isActive() { return active; }

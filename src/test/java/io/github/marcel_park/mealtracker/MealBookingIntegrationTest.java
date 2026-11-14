@@ -273,7 +273,8 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"calorieTarget":1800,"colorTheme":"DARK",
-                                 "carbsPercent":50,"proteinPercent":25,"fatPercent":25}
+                                 "carbsPercent":50,"proteinPercent":25,"fatPercent":25,
+                                 "stepGoal":8000,"weightKg":72.5,"heightCm":168,"sex":"FEMALE"}
                                 """))
                 .andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/users/me")))
@@ -283,12 +284,16 @@ class MealBookingIntegrationTest {
                 .andExpect(jsonPath("$.carbsPercent").value(50))
                 .andExpect(jsonPath("$.proteinPercent").value(25))
                 .andExpect(jsonPath("$.fatPercent").value(25))
+                .andExpect(jsonPath("$.stepGoal").value(8000))
+                .andExpect(jsonPath("$.weightKg").value(72.5))
+                .andExpect(jsonPath("$.heightCm").value(168))
+                .andExpect(jsonPath("$.sex").value("FEMALE"))
                 .andExpect(jsonPath("$.colorTheme").value("DARK"));
 
         // The same email cannot be registered twice
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(email, "geheim123")))
+                        .content(registration(email)))
                 .andExpect(status().isConflict());
 
         // After logout the token is useless
@@ -495,6 +500,13 @@ class MealBookingIntegrationTest {
                 """.formatted(email, password);
     }
 
+    // A complete registration with the password "geheim123" and the required body data.
+    private static String registration(String email) {
+        return """
+                {"email":"%s","password":"geheim123","weightKg":80.5,"heightCm":180,"sex":"MALE"}
+                """.formatted(email);
+    }
+
     private String register() throws Exception {
         return register(randomEmail());
     }
@@ -503,7 +515,7 @@ class MealBookingIntegrationTest {
     private String register(String email) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(email, "geheim123")))
+                        .content(registration(email)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.user.email").value(email))
                 .andReturn();
