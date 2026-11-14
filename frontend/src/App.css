@@ -321,12 +321,6 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.chevron {
-  padding-right: 8px;
-  color: var(--muted);
-  font-size: 1.5rem;
-}
-
 .empty {
   padding: 24px 0;
   color: var(--muted);
@@ -842,8 +836,10 @@ fieldset.plain:disabled input {
   text-align: center;
 }
 
+/* a little narrower than the column, so the three bars stand apart */
 .macro .macro-track {
   align-self: stretch;
+  margin: 0 4px;
 }
 
 .macro-label {
@@ -1118,7 +1114,8 @@ fieldset.plain:disabled input {
    In gram mode the weight needs room for four digits. */
 .variation-row {
   display: grid;
-  grid-template-columns: calc(12.5% + 3px) minmax(0, 1fr);
+  /* the portions field: two digits wider than the columns above, for "12.25" */
+  grid-template-columns: calc(12.5% + 3px + 2ch) minmax(0, 1fr);
   align-items: end;
   gap: 8px;
 }
@@ -1129,7 +1126,7 @@ fieldset.plain:disabled input {
 
 /* recipes of others have no variations: no select */
 .variation-row.foreign {
-  grid-template-columns: calc(12.5% + 3px);
+  grid-template-columns: calc(12.5% + 3px + 2ch);
 }
 
 .variation-row.gram.foreign {
@@ -1230,6 +1227,7 @@ fieldset.plain:disabled input {
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--on-accent);
+  font-size: 1.3rem; /* the ✓ after putting something on the shopping list, as big as on "+" */
 }
 
 /* "Packung (250 g) · 430 kcal": two pieces that never break inside. If they do not fit in one line
@@ -1243,11 +1241,11 @@ fieldset.plain:disabled input {
   vertical-align: bottom;
 }
 
-/* the amount view of a food: the number, wide enough for "9999.9" (nobody books more than 9999 g
-   of anything), and the portion or unit select taking the rest of the row */
+/* the amount view of a food: the number, wide enough for "9999.99" (nobody books more than 9999 g
+   or portions of anything), and the portion or unit select taking the rest of the row */
 .portion-amount input {
   flex: none;
-  width: calc(6ch + 30px); /* 4 digits, separator and decimal plus padding and border */
+  width: calc(8ch + 30px); /* 4 digits, separator and 2 decimals plus room, padding and border */
   height: var(--book-amount-height);
   appearance: textfield; /* no spin buttons taking room from the digits */
 }
@@ -1333,4 +1331,73 @@ fieldset.plain:disabled input {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* ----- Shopping list ----- */
+
+/* checked off: crossed out and greyed; the list puts it at the end */
+.row.checked .name,
+.row.checked .sub,
+.row.checked .amount {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* ----- Rows in two lines (meal editor, preview, shopping list) -----
+   The name gets the whole width next to the "×" and stays in one line, so long names never make a
+   row taller. The second line holds the details on the left and the quantity on the right. */
+.row.two-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.row.two-line > .row-open {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+/* centred on both lines */
+.row.two-line > .icon-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.line-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.line-detail .sub {
+  flex: 1;
+  min-width: 0;
+}
+
+/* shopping list: the "×" centred on both lines like in the meal editor. touch-action: the page
+   only scrolls vertically, so sideways swipes reach the row (see useRowGestures). Long presses
+   neither select text nor open a menu. */
+.rows.shopping-rows {
+  overflow: hidden; /* a swiped row slides inside the list's rounded frame, not over it */
+}
+
+.row.shopping-row {
+  position: relative;
+  touch-action: pan-y;
+  transition: transform 0.15s ease-out;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* lifted by a long press, ready to be dragged */
+.row.shopping-row.lifted {
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
 }

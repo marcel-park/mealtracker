@@ -61,6 +61,17 @@ const chili = {
 
 const amounts = (items) => items.map((item) => [item.food.name, item.amount])
 
+// What items in g or ml carry besides their amount (no portion, see quantities.js).
+const inUnit = { portionId: null, count: null }
+
+// A food with portions: eggs of 60 g, booked as "Stück".
+const eggs = {
+  id: 5,
+  name: 'Ei',
+  kcalPer100: 144,
+  portions: [{ id: 50, name: 'Stück', amount: 60, favorite: true }],
+}
+
 // ---------- arithmetic ----------
 
 describe('arithmetic', () => {
@@ -112,16 +123,16 @@ describe('variations', () => {
 
   it('lists the original with its own amounts as reference', () => {
     expect(itemsOf(chili, null)).toEqual([
-      { food: beans, originalAmount: 400, amount: 400 },
-      { food: tomatoes, originalAmount: 500, amount: 500 },
+      { food: beans, originalAmount: 400, amount: 400, ...inUnit },
+      { food: tomatoes, originalAmount: 500, amount: 500, ...inUnit },
     ])
   })
 
   it('applies a variation: changed, left out (0 g, still listed) and added ingredients', () => {
     expect(itemsOf(chili, moreBeans)).toEqual([
-      { food: beans, originalAmount: 400, amount: 600 },
-      { food: tomatoes, originalAmount: 500, amount: 0 },
-      { food: mince, originalAmount: 0, amount: 200 },
+      { food: beans, originalAmount: 400, amount: 600, ...inUnit },
+      { food: tomatoes, originalAmount: 500, amount: 0, ...inUnit },
+      { food: mince, originalAmount: 0, amount: 200, ...inUnit },
     ])
   })
 
@@ -281,11 +292,16 @@ describe('recipe editor', () => {
       { food: rice, amount: 100 },
     ]
     expect(mergeEditorItems(items, added, true)).toEqual([
-      { food: beans, originalAmount: 400, amount: 450 },
-      { food: tomatoes, originalAmount: 500, amount: 500 },
-      { food: rice, originalAmount: 0, amount: 100 },
+      { food: beans, originalAmount: 400, amount: 450, ...inUnit },
+      { food: tomatoes, originalAmount: 500, amount: 500, ...inUnit },
+      { food: rice, originalAmount: 0, amount: 100, ...inUnit },
     ])
-    expect(mergeEditorItems(items, added, false).at(-1)).toEqual({ food: rice, originalAmount: 100, amount: 100 })
+    expect(mergeEditorItems(items, added, false).at(-1)).toEqual({
+      food: rice,
+      originalAmount: 100,
+      amount: 100,
+      ...inUnit,
+    })
     expect(items[0].amount).toBe(400) // the input is not changed
   })
 })
@@ -310,6 +326,9 @@ describe('requests', () => {
         { foodId: 3, amount: 200 },
       ],
     })
+    // items booked as portions send portion and count instead
+    const egg = { food: eggs, amount: 120, portionId: 50, count: 2 }
+    expect(variationRequest('X', '5', null, [egg]).items).toEqual([{ foodId: 5, portionId: 50, portionCount: 2 }])
     expect(variationRequest('X', '5', null, items).weightG).toBeNull()
     expect(variationRequest('X', '5', '  ', items).weightG).toBeNull()
   })
@@ -326,5 +345,54 @@ describe('requests', () => {
         ],
       }),
     ).toEqual({ name: 'Chili', servings: 4, published: true, items: [{ foodId: 1, amount: 400 }] })
+  })
+})
+
+// ---------- portions ----------
+
+describe('items booked as portions', () => {
+  // Omelette: 4 eggs (as portions) and 100 ml... of rice for the sake of it, 2 portions.
+  const omelette = {
+    id: 60,
+    name: 'Omelette',
+    servings: 2,
+    owned: true,
+    published: false,
+    items: [
+      { food: eggs, amount: 240, portionId: 50, portionCount: 4 },
+      { food: rice, amount: 100, portionId: null, portionCount: null },
+    ],
+    variations: [
+      {
+        id: 61,
+        name: 'Mehr Ei',
+        servings: null,
+        weightG: null,
+        items: [{ food: eggs, amount: 300, portionId: 50, portionCount: 5 }],
+      },
+    ],
+    lastUsedVariationId: null,
+  }
+
+  it('keeps portion and count next to the amount, also in a variation', () => {
+    expect(itemsOf(omelette, null)[0]).toEqual({ food: eggs, amount: 240, portionId: 50, count: 4, originalAmount: 240 })
+    expect(itemsOf(omelette, omelette.variations[0])[0]).toMatchObject({ portionId: 50, count: 5, originalAmount: 240 })
+  })
+
+  it('scales portions as portions with two decimals', () => {
+    const [egg, riceItem] = scaleItems(itemsOf(omelette, null), 0.5625)
+    expect(egg).toEqual({ food: eggs, amount: 135, portionId: 50, count: 2.25 })
+    expect(riceItem).toEqual({ food: rice, amount: 56.3, ...inUnit })
+  })
+
+  it('adds grams to an ingredient in portions as portions', () => {
+    const items = addToBookingItems(bookingFor(omelette, null).items, [{ food: eggs, amount: 30, ...inUnit }])
+    expect(items[0]).toMatchObject({ portionId: 50, count: 4.5, amount: 270 })
+  })
+
+  it('counts the same amount written another way as a change', () => {
+    const booking = bookingFor(omelette, null)
+    const asGrams = { ...booking.items[0], portionId: null, count: null }
+    expect(isAdjusted({ ...booking, items: [asGrams, booking.items[1]] })).toBe(true)
   })
 })

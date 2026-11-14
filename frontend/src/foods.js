@@ -1,11 +1,11 @@
 // Units and portions of foods. Pure functions, see foods.test.js.
 //
-// Every amount of a food is in its unit (g or ml), and so are the amounts of its portions. A portion
-// is only a help for booking: "2 × Packung (250 g)" is booked as 500 g, nothing else remembers it.
-// The backend lists the portions of a food favorite first, then in the order they were added, so
-// the first portion is the default when booking.
+// Every amount of a food is in its unit (g or ml), and so are the amounts of its portions. Items can
+// be booked as a number of portions ("2 Packung"), see quantities.js. The backend lists the portions
+// of a food favorite first, then in the order they were added, so the first portion is the default
+// when booking.
 
-import { roundToOneDecimal } from './recipes.js'
+import { roundToOneDecimal } from './numbers.js'
 
 // The unit of a food, as the backend names it. (Not to be confused with the units of the recipe
 // booking, UNIT_PORTION and UNIT_GRAM in recipes.js.)
@@ -48,13 +48,13 @@ export function defaultPortion(food) {
   return food.portions?.[0] ?? null
 }
 
-// What one tap on "+" in the search books: one default portion, or 100 g / ml.
-// label: e.g. "Packung (250 g)" or "100 g".
+// What one tap on "+" in the search books: one default portion, or 100 g / ml, as a quantity (see
+// quantities.js). label: e.g. "Packung (250 g)" or "100 g".
 export function quickAdd(food) {
   const portion = defaultPortion(food)
   return portion
-    ? { amount: portion.amount, label: portionLabel(portion, food.unit) }
-    : { amount: DEFAULT_AMOUNT, label: formatAmount(DEFAULT_AMOUNT, food.unit) }
+    ? { amount: portion.amount, portionId: portion.id, count: 1, label: portionLabel(portion, food.unit) }
+    : { amount: DEFAULT_AMOUNT, portionId: null, count: null, label: formatAmount(DEFAULT_AMOUNT, food.unit) }
 }
 
 // The options next to the amount field: the portions of the food, then the unit itself. Portions
@@ -66,9 +66,16 @@ export function amountChoices(food) {
   ]
 }
 
-// How the amount view starts: a number of the default portion (or 100 g / ml without one), or a
-// given amount in the unit itself (asUnit, e.g. when an existing amount is changed).
-export function initialAmountInput(food, { asUnit = false, amount = DEFAULT_AMOUNT } = {}) {
+// How the amount view starts: a number of the default portion (or 100 g / ml without one), the
+// unit itself (asUnit: the scale button), or an existing quantity as it was booked (quantity, see
+// quantities.js: its portion and count, or its amount).
+export function initialAmountInput(food, { asUnit = false, amount = DEFAULT_AMOUNT, quantity = null } = {}) {
+  if (quantity) {
+    const booked = (food.portions ?? []).some((portion) => portion.id === quantity.portionId)
+    return booked
+      ? { choice: quantity.portionId, quantityText: String(quantity.count) }
+      : { choice: CHOICE_UNIT, quantityText: String(roundToOneDecimal(quantity.amount)) }
+  }
   const portion = asUnit ? null : defaultPortion(food)
   return portion
     ? { choice: portion.id, quantityText: '1' }
