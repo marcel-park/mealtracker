@@ -1581,15 +1581,65 @@ fieldset.plain:disabled input {
   font-variant-numeric: tabular-nums;
 }
 
-/* "322 kcal" in one line, the unit beside the number */
+/* "322 kcal" in one line: the number centered on its own, the unit beside it */
 .meal-summary .kcal-left {
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: baseline;
-  justify-content: center;
   gap: 8px;
+}
+
+.meal-summary .kcal-left-value {
+  grid-column: 2;
+}
+
+.meal-summary .kcal-left-label {
+  grid-column: 3;
+  justify-self: start;
 }
 
 .meal-summary .macro-label {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* ----- Checklist and tasks (ChecklistPage, TasksPage, TaskForm) ----- */
+
+/* the meal of a task is only shown, see MealEditor */
+.task-meal-hint {
+  margin: 12px 0 0;
+}
+
+/* seven square day buttons across the whole width */
+.weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.weekday {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.weekday.selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* the checklist button once all of today's tasks are done */
+.tool-btn.done {
+  color: var(--ok);
+}
+
+/* a section heading written as it is, not in capitals ("Zu buchende Lebensmittel") */
+.section-head.normal-case h2 {
+  letter-spacing: normal;
+  text-transform: none;
 }

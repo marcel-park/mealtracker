@@ -68,6 +68,7 @@ import {
   zeroQuantity,
 } from './quantities.js'
 import { activitySummary } from './activity.js'
+import { WEEKDAYS, canSaveTask, formatWeekdays, taskEditorFor, taskRequest, toggleWeekday } from './tasks.js'
 import {
   HEIGHT_MAX,
   HEIGHT_MIN,
@@ -233,14 +234,13 @@ function DatabaseIcon() {
   )
 }
 
-// Two arrows in a circle.
-function RefreshIcon() {
+// A clipboard with a tick: the checklist.
+function ChecklistIcon() {
   return (
     <svg viewBox="0 0 24 24" width="24" {...iconProps}>
-      <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
-      <path d="M4 4v4h4" />
-      <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
-      <path d="M20 20v-4h-4" />
+      <path d="M15 4.5h2a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2" />
+      <rect x="9" y="3" width="6" height="3" rx="1" />
+      <path d="M9 13.5l2 2 4-4" />
     </svg>
   )
 }
@@ -886,7 +886,6 @@ function MacroBar({ label, booked, target }) {
   )
 }
 
-// onRefresh: reads the activity again and reloads the meals.
 function MealList({
   user,
   meals,
@@ -894,7 +893,8 @@ function MealList({
   onAdd,
   onEdit,
   onDelete,
-  onRefresh,
+  onOpenChecklist,
+  isChecklistDone,
   onOpenFoods,
   onOpenShoppingList,
   onOpenProfile,
@@ -907,11 +907,20 @@ function MealList({
           <button
             type="button"
             className="tool-btn"
-            title="Aktualisieren"
-            aria-label="Aktualisieren"
-            onClick={onRefresh}
+            title="Einkaufsliste"
+            aria-label="Einkaufsliste"
+            onClick={onOpenShoppingList}
           >
-            <RefreshIcon />
+            <CartIcon />
+          </button>
+          <button
+            type="button"
+            className={isChecklistDone ? 'tool-btn done' : 'tool-btn'}
+            title={isChecklistDone ? 'Checkliste: alles erledigt' : 'Checkliste'}
+            aria-label="Checkliste"
+            onClick={onOpenChecklist}
+          >
+            <ChecklistIcon />
           </button>
           <button
             type="button"
@@ -921,15 +930,6 @@ function MealList({
             onClick={onOpenFoods}
           >
             <DatabaseIcon />
-          </button>
-          <button
-            type="button"
-            className="tool-btn"
-            title="Einkaufsliste"
-            aria-label="Einkaufsliste"
-            onClick={onOpenShoppingList}
-          >
-            <CartIcon />
           </button>
           <button
             type="button"
@@ -1161,7 +1161,9 @@ function RecipeSearchRow({ recipe, onOpen, onAdd }) {
 
 // A booked meal: its totals at the top (MealSummary), then its items, with "Weiteres hinzufügen"
 // right below them. bookedAt: when the meal was booked, shown in the title ("Mahlzeit um 13:23 Uhr").
-function MealEditor({ entries, bookedAt, onOpenEntry, onRemoveEntry, onAddMore, onClose }) {
+// fromTask: booked by ticking off a task; such a meal can only be deleted as a whole (from the
+// list), so here it is only shown.
+function MealEditor({ entries, bookedAt, fromTask, onOpenEntry, onRemoveEntry, onAddMore, onClose }) {
   const time = bookedAt
     ? new Date(bookedAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' })
     : null
@@ -1173,11 +1175,20 @@ function MealEditor({ entries, bookedAt, onOpenEntry, onRemoveEntry, onAddMore, 
         onClose={onClose}
       />
       <MealSummary entries={entries} />
-      <EntryList entries={entries} onOpen={onOpenEntry} onRemove={onRemoveEntry} />
-      <button type="button" className="btn add-more" onClick={onAddMore}>
-        <PlusIcon size={18} />
-        Weiteres hinzufügen
-      </button>
+      {fromTask ? (
+        <>
+          <EntryList entries={entries} />
+          <p className="hint task-meal-hint">Aus der Checkliste gebucht.</p>
+        </>
+      ) : (
+        <>
+          <EntryList entries={entries} onOpen={onOpenEntry} onRemove={onRemoveEntry} />
+          <button type="button" className="btn add-more" onClick={onAddMore}>
+            <PlusIcon size={18} />
+            Weiteres hinzufügen
+          </button>
+        </>
+      )}
     </section>
   )
 }
@@ -1213,7 +1224,7 @@ function DraftPreview({ entries, showDelta, onRemoveEntry, onClose }) {
   )
 }
 
-// Without onOpen (preview) the rows are read-only.
+// Without onOpen (preview) the rows cannot be opened, without onRemove they have no "×".
 function EntryList({ entries, showDelta = false, onOpen, onRemove }) {
   if (entries.length === 0) {
     return <p className="empty">Noch nichts hinzugefügt.</p>
@@ -1259,7 +1270,7 @@ function EntryRow({ entry, showDelta, onOpen, onRemove }) {
       ) : (
         <div className="row-open">{content}</div>
       )}
-      <CrossButton label={`${food.name} entfernen`} onClick={() => onRemove(food.id)} />
+      {onRemove && <CrossButton label={`${food.name} entfernen`} onClick={() => onRemove(food.id)} />}
     </div>
   )
 }
@@ -2694,7 +2705,7 @@ const LONG_PRESS_MS = 400
 // Moving less than this is still resting (fingers are never completely still).
 const MOVE_TOLERANCE = 8
 
-// The gestures on a shopping list entry, with pointer events (finger and mouse alike):
+// The gestures on a shopping list or checklist entry, with pointer events (finger and mouse alike):
 // - sideways: the entry follows the finger (offsetX); moved at least SWIPE_DISTANCE when the
 //   finger lifts, onSwipe is called;
 // - resting LONG_PRESS_MS first (canDrag only): the entry is lifted and dragged up or down,
@@ -2831,6 +2842,167 @@ function ShoppingRow({ item, shift, isDragged, onToggle, onEdit, onDragStart, on
 // Puts a recipe on the shopping list: the foods it takes for the chosen number of portions (the
 // recipe's own number preselected) in the chosen variation (the original preselected; only the
 // owner has variations). onConfirm(items, { recipeId, variationId }).
+// ----- Checklist -----
+
+// Today's tasks: the open ones first, then those ticked off (struck through). Swiping an entry
+// ticks it off or on (onToggle). entries: null while loading.
+function ChecklistPage({ entries, onToggle, onManage, onClose }) {
+  return (
+    <section>
+      <TopBar title="Checkliste" closeLabel="Schließen" onClose={onClose} />
+      {entries !== null && entries.length === 0 && <p className="empty">Keine Aufgaben geplant.</p>}
+      {entries !== null && entries.length > 0 && (
+        <div className="rows shopping-rows">
+          {entries.map((entry) => (
+            <ChecklistRow key={entry.task.id} entry={entry} onToggle={onToggle} />
+          ))}
+        </div>
+      )}
+      <div className="bar">
+        <button type="button" className="btn primary" onClick={onManage}>
+          Aufgaben verwalten
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// Two lines of fixed height: the name (cut off with "…") and the kcal it books, "0 kcal" for a
+// task without foods. Only swiping does something.
+function ChecklistRow({ entry, onToggle }) {
+  const { task } = entry
+  const rowRef = useRef(null)
+  const gestures = useRowGestures(rowRef, { canDrag: false, onSwipe: () => onToggle(entry) })
+
+  const classes = ['row', 'two-line', 'shopping-row', 'checklist-row']
+  if (entry.done) classes.push('checked')
+  const style = gestures.offsetX
+    ? { transform: `translateX(${gestures.offsetX}px)`, transition: 'none' }
+    : undefined
+
+  return (
+    <div ref={rowRef} className={classes.join(' ')} style={style} {...gestures.handlers}>
+      <div className="row-open">
+        <span className="name">{task.name}</span>
+        <span className="sub">{formatKcal(task.kcal)}</span>
+      </div>
+    </div>
+  )
+}
+
+// All tasks, in the order they were created, each with its days ("Täglich" or "Mo, Mi, Fr").
+// Tapping one opens it (onOpen), "Aufgabe planen" a new one (onNew). tasks: null while loading.
+function TasksPage({ tasks, onOpen, onNew, onClose }) {
+  return (
+    <section>
+      <TopBar title="Aufgaben verwalten" closeLabel="Schließen" onClose={onClose} />
+      {tasks !== null && tasks.length === 0 && <p className="empty">Keine Aufgaben.</p>}
+      {tasks !== null && tasks.length > 0 && (
+        <div className="rows">
+          {tasks.map((task) => (
+            <div key={task.id} className="row two-line">
+              <button type="button" className="row-open" onClick={() => onOpen(task)}>
+                <span className="name">{task.name}</span>
+                <span className="sub">{formatWeekdays(task.weekdays)}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="bar">
+        <button type="button" className="btn primary" onClick={onNew}>
+          Aufgabe planen
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// Name, the weekdays it is due on (seven buttons, each on its own) and the foods it books.
+// editor: see taskEditorFor; it lives in MealTracker, so the food search and the amount view can
+// open on top and the back button closes them. onChange(changes) merges into it.
+function TaskForm({ editor, onChange, onAddFoods, onOpenEntry, onSave, onDelete, onClose }) {
+  const isNew = editor.taskId === null
+  const daysLabelId = useId()
+
+  function submit(event) {
+    event.preventDefault()
+    if (canSaveTask(editor)) onSave()
+  }
+
+  return (
+    <section>
+      <TopBar title={isNew ? 'Aufgabe erstellen' : 'Aufgabe bearbeiten'} closeLabel="Schließen" onClose={onClose} />
+      <form onSubmit={submit}>
+        <label className="field">
+          <span>Name</span>
+          <input
+            type="text"
+            autoComplete="off"
+            maxLength={100}
+            value={editor.name}
+            onChange={(event) => onChange({ name: event.target.value })}
+          />
+        </label>
+        <div className="field">
+          <span id={daysLabelId}>Wochentage</span>
+          <div className="weekdays" role="group" aria-labelledby={daysLabelId}>
+            {WEEKDAYS.map(({ key, short }) => {
+              const selected = editor.weekdays.includes(key)
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={selected ? 'weekday selected' : 'weekday'}
+                  aria-pressed={selected}
+                  onClick={() => onChange({ weekdays: toggleWeekday(editor.weekdays, key) })}
+                >
+                  {short}
+                </button>
+              )
+            })}
+          </div>
+          {editor.weekdays.length === 0 && <span className="hint warning">Mindestens ein Tag.</span>}
+        </div>
+
+        <div className="section-head normal-case">
+          <h2>Zu buchende Lebensmittel</h2>
+        </div>
+        {editor.entries.length > 0 && (
+          <div className="rows">
+            {editor.entries.map((entry) => (
+              <EntryRow
+                key={entry.food.id}
+                entry={entry}
+                showDelta={false}
+                onOpen={onOpenEntry}
+                onRemove={(foodId) =>
+                  onChange({ entries: editor.entries.filter((other) => other.food.id !== foodId) })
+                }
+              />
+            ))}
+          </div>
+        )}
+        <button type="button" className="btn add-more" onClick={onAddFoods}>
+          <PlusIcon size={18} />
+          Lebensmittel hinzufügen
+        </button>
+
+        <div className="bar">
+          {!isNew && (
+            <button type="button" className="btn danger-outline" onClick={onDelete}>
+              Löschen
+            </button>
+          )}
+          <button type="submit" className="btn primary" disabled={!canSaveTask(editor)}>
+            Speichern
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
 function ShoppingRecipeAdd({ recipe, onConfirm, onClose }) {
   const servingsId = useId()
   const [variationId, setVariationId] = useState(null)
@@ -3718,14 +3890,17 @@ function useActivity(today) {
   return { ...state, refresh, connect, disconnect }
 }
 
+// "×" of the food search, by what it adds to (see recipeSearch in MealTracker).
+const SEARCH_CLOSE_LABELS = { editor: 'Zurück zum Rezept', booking: 'Zurück zur Buchung', task: 'Zurück zur Aufgabe' }
+
 // The app after login. Keyed by the user id in App, so nothing carries over to another account.
 function MealTracker({ user, onUserChange, onLogout }) {
-  // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'shopping' | 'profile'
+  // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'shopping' | 'profile' | 'nutrients' | 'checklist'
   const [view, setView] = useState('list')
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
-  // Amount view of a food: null or { food, mode: 'add' | 'set' | 'recipe-add', initial }, initial
-  // see initialAmountInput.
+  // Amount view of a food: null or { food, mode: 'add' | 'set' | 'recipe-add' | 'task-set', initial },
+  // initial see initialAmountInput. 'task-set' changes an amount in the task form.
   const [detail, setDetail] = useState(null)
   const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
@@ -3735,8 +3910,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // Details of a food or recipe from the database or the shopping list search:
   // { kind, entry, variationId, copying }, see FoodInfo and RecipeInfo.
   const [catalogDetail, setCatalogDetail] = useState(null)
-  // Food search on top of the recipe editor or the booking view: null or { target, entries,
-  // previewing }, target 'editor' | 'booking'; entries are the foods about to be added.
+  // Food search on top of the recipe editor, the booking view or the task form: null or { target,
+  // entries, previewing }, target 'editor' | 'booking' | 'task'; entries are the foods about to be
+  // added.
   const [recipeSearch, setRecipeSearch] = useState(null)
   const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
   const [shoppingList, setShoppingList] = useState(null) // items of the shopping list, null until loaded
@@ -3746,32 +3922,45 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [shoppingEdit, setShoppingEdit] = useState(null) // shopping list entry whose quantity is changed
   // { kind, id } of the database entry just put on the shopping list: its cart shows ✓ for a moment.
   const [addedToList, setAddedToList] = useState(null)
+  const [checklist, setChecklist] = useState(null) // today's checklist entries, null until loaded
+  // Today has tasks and all of them are done: the checklist button turns green.
+  const isChecklistDone = checklist !== null && checklist.length > 0 && checklist.every((entry) => entry.done)
+  const [tasksOpen, setTasksOpen] = useState(false) // "Aufgaben verwalten" is open
+  const [tasks, setTasks] = useState(null) // all tasks, null while loading
+  const [taskEditor, setTaskEditor] = useState(null) // task form, see taskEditorFor
   const [confirm, setConfirm] = useState(null) // props of the open ConfirmDialog
   const [notice, setNotice] = useState(null)
   const [error, setError] = useState(null)
   const runAction = useActionRunner(setError)
 
   const isEditing = draft.mealId !== null
+  const editedMeal = isEditing ? meals.find((meal) => meal.id === draft.mealId) : undefined
 
   // The list only shows the meals booked today, so it starts empty every day at midnight. Older
   // meals stay in the database.
   const today = useToday()
   const mealsUrl = `${API.meals}?date=${today}`
+  const checklistUrl = `${API.checklist}?date=${today}`
   const activity = useActivity(today)
 
+  // The checklist comes along: deleting a meal may open a task again, and the main view shows
+  // whether all of today's tasks are done.
   const loadMeals = useCallback(async () => {
-    setMeals(await request(mealsUrl))
+    const [loadedMeals, loadedChecklist] = await Promise.all([request(mealsUrl), request(checklistUrl)])
+    setMeals(loadedMeals)
+    setChecklist(loadedChecklist)
     setError(null)
-  }, [mealsUrl])
+  }, [mealsUrl, checklistUrl])
 
-  // First load, and again on a new day. State is only set once the request is done (not
+  // First load, and again on a new day. State is only set once the requests are done (not
   // synchronously in the effect); a late answer after unmounting or for another day is ignored.
   useEffect(() => {
     let isCurrent = true
-    request(mealsUrl)
-      .then((loaded) => {
+    Promise.all([request(mealsUrl), request(checklistUrl)])
+      .then(([loadedMeals, loadedChecklist]) => {
         if (!isCurrent) return
-        setMeals(loaded)
+        setMeals(loadedMeals)
+        setChecklist(loadedChecklist)
         setError(null)
       })
       .catch((error) => {
@@ -3780,7 +3969,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     return () => {
       isCurrent = false
     }
-  }, [mealsUrl])
+  }, [mealsUrl, checklistUrl])
 
   const reloadCatalog = () => setCatalogVersion((version) => version + 1)
 
@@ -4106,7 +4295,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // In the booking view the weight follows the ingredients again, as after changing an amount.
   function applyRecipeSearch() {
     const { target, entries: added } = recipeSearch
-    if (target === 'booking') {
+    if (target === 'task') {
+      setTaskEditor((current) => ({
+        ...current,
+        entries: added.reduce((entries, entry) => addAmount(entries, entry.food, entry), current.entries),
+      }))
+    } else if (target === 'booking') {
       setRecipeBooking((current) => ({
         ...current,
         items: addToBookingItems(current.items, added),
@@ -4410,6 +4604,91 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setView('list')
   }
 
+  // ----- checklist and tasks -----
+
+  function openChecklist() {
+    setError(null)
+    setView('checklist')
+    runAction(async () => setChecklist(await request(checklistUrl)))
+  }
+
+  function closeChecklist() {
+    setError(null)
+    setTasksOpen(false)
+    setView('list')
+  }
+
+  // Swiped: an open task is ticked off and books its foods; a done one is opened again right
+  // away, which deletes the meal it booked.
+  function toggleTask(entry) {
+    runAction(async () => {
+      const url = `${API.checklist}/${entry.task.id}/done?date=${today}`
+      setChecklist(await request(url, { method: entry.done ? 'DELETE' : 'PUT' }))
+      await loadMeals()
+    })
+  }
+
+  function openTasks() {
+    setError(null)
+    setTasks(null)
+    setTasksOpen(true)
+    runAction(async () => setTasks(await request(API.tasks)))
+  }
+
+  function updateTaskEditor(changes) {
+    setTaskEditor((current) => ({ ...current, ...changes }))
+  }
+
+  function openTaskEntryDetail(entry) {
+    setDetail({ food: entry.food, mode: 'task-set', initial: initialAmountInput(entry.food, { quantity: entry }) })
+  }
+
+  function saveTaskEntryAmount(food, quantity) {
+    setTaskEditor((current) => ({
+      ...current,
+      entries: current.entries.map((entry) => (entry.food.id === food.id ? { ...entry, ...quantity } : entry)),
+    }))
+    setDetail(null)
+  }
+
+  // Back to "Aufgaben verwalten"; the checklist may have changed with it.
+  function saveTask() {
+    runAction(async () => {
+      await createOrUpdate(API.tasks, taskEditor.taskId, taskRequest(taskEditor))
+      setTaskEditor(null)
+      const [allTasks, todays] = await Promise.all([request(API.tasks), request(checklistUrl)])
+      setTasks(allTasks)
+      setChecklist(todays)
+    })
+  }
+
+  function askDeleteTask() {
+    const { taskId, name } = taskEditor
+    setConfirm({
+      title: 'Aufgabe löschen?',
+      text: `„${name}“ wird gelöscht. Schon gebuchte Mahlzeiten bleiben.`,
+      confirmLabel: 'Löschen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(`${API.tasks}/${taskId}`, { method: 'DELETE' })
+          setTaskEditor(null)
+          const [allTasks, todays] = await Promise.all([request(API.tasks), request(checklistUrl)])
+          setTasks(allTasks)
+          setChecklist(todays)
+          await loadMeals()
+        }),
+    })
+  }
+
+  // What the amount view's button does, by its mode.
+  const detailActions = {
+    add: addFromDetail,
+    'recipe-add': addFromDetail,
+    set: saveEntryAmount,
+    'task-set': saveTaskEntryAmount,
+  }
+
   // One handler for every "×" and for the system back button: close the topmost layer.
   function goBack() {
     setNotice(null)
@@ -4427,12 +4706,15 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (shoppingEdit) setShoppingEdit(null)
     else if (foodFormLayer) setFoodFormLayer(null)
     else if (foodForm) setFoodForm(null)
+    else if (taskEditor) setTaskEditor(null)
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
     else if (view === 'foods') closeFoods()
     else if (view === 'shopping' && shoppingSearch) setShoppingSearch(false)
     else if (view === 'shopping') closeShoppingList()
     else if (view === 'nutrients') closeNutrients()
+    else if (view === 'checklist' && tasksOpen) setTasksOpen(false)
+    else if (view === 'checklist') closeChecklist()
     else if (view === 'profile' && profileLayer) setProfileLayer(null)
     else if (view === 'profile') closeProfile()
   }
@@ -4460,7 +4742,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onAdd={startNewMeal}
           onEdit={editMeal}
           onDelete={askDeleteMeal}
-          onRefresh={() => runAction(() => Promise.all([activity.refresh(), loadMeals()]))}
+          onOpenChecklist={openChecklist}
+          isChecklistDone={isChecklistDone}
           onOpenFoods={openFoods}
           onOpenShoppingList={openShoppingList}
           onOpenProfile={openProfile}
@@ -4469,6 +4752,29 @@ function MealTracker({ user, onUserChange, onLogout }) {
       )}
 
       {view === 'nutrients' && <NutrientOverview user={user} meals={meals} onClose={goBack} />}
+
+      {view === 'checklist' && !tasksOpen && (
+        <ChecklistPage entries={checklist} onToggle={toggleTask} onManage={openTasks} onClose={goBack} />
+      )}
+      {view === 'checklist' && tasksOpen && !taskEditor && (
+        <TasksPage
+          tasks={tasks}
+          onOpen={(task) => setTaskEditor(taskEditorFor(task))}
+          onNew={() => setTaskEditor(taskEditorFor(null))}
+          onClose={goBack}
+        />
+      )}
+      {view === 'checklist' && taskEditor && !recipeSearch && !detail && (
+        <TaskForm
+          editor={taskEditor}
+          onChange={updateTaskEditor}
+          onAddFoods={() => openRecipeSearch('task')}
+          onOpenEntry={openTaskEntryDetail}
+          onSave={saveTask}
+          onDelete={askDeleteTask}
+          onClose={goBack}
+        />
+      )}
 
       {view === 'shopping' && shoppingEdit && (
         <FoodDetail
@@ -4586,7 +4892,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'edit' && !detail && (
         <MealEditor
           entries={draft.entries}
-          bookedAt={meals.find((meal) => meal.id === draft.mealId)?.bookedAt}
+          bookedAt={editedMeal?.bookedAt}
+          fromTask={editedMeal?.taskId != null}
           onOpenEntry={openEntryDetail}
           onRemoveEntry={removeEntryFromMeal}
           onAddMore={() => setView('search')}
@@ -4658,15 +4965,15 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {/* Adds foods to the recipe editor or the booking view. Recipes cannot contain recipes,
-          so this search only offers foods. */}
+      {/* Adds foods to the recipe editor, the booking view or the task form. Recipes cannot
+          contain recipes, and tasks book foods only, so this search only offers foods. */}
       {recipeSearch && (
         <FoodSearch
           visible={!recipeSearch.previewing && !detail}
           kindLocked
           draftCount={recipeSearch.entries.length}
           submitLabel="Hinzufügen"
-          closeLabel={recipeSearch.target === 'booking' ? 'Zurück zur Buchung' : 'Zurück zum Rezept'}
+          closeLabel={SEARCH_CLOSE_LABELS[recipeSearch.target]}
           onOpenFood={openRecipeFoodDetail}
           onAddFood={addToRecipeSearch}
           onPreview={() => setRecipeSearch({ ...recipeSearch, previewing: true })}
@@ -4688,8 +4995,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
         <FoodDetail
           food={detail.food}
           initial={detail.initial}
-          confirmLabel={detail.mode === 'set' ? 'Übernehmen' : 'Hinzufügen'}
-          onConfirm={detail.mode === 'set' ? saveEntryAmount : addFromDetail}
+          confirmLabel={detail.mode === 'set' || detail.mode === 'task-set' ? 'Übernehmen' : 'Hinzufügen'}
+          onConfirm={detailActions[detail.mode]}
           onClose={goBack}
         />
       )}
