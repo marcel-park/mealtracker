@@ -11,6 +11,7 @@ import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
 import io.github.marcel_park.mealtracker.model.Quantity;
@@ -37,6 +38,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -111,11 +113,11 @@ class FoodServiceTest {
     }
 
     private static FoodRequest request(String name, boolean published) {
-        return new FoodRequest(name, FoodUnit.G, 372.0, 13.5, 58.7, 7.0, published, List.of());
+        return new FoodRequest(name, FoodUnit.G, 372.0, 13.5, 58.7, 7.0, Map.of(), published, List.of());
     }
 
     private static FoodRequest request(FoodUnit unit, List<FoodPortionRequest> portions) {
-        return new FoodRequest("Haferflocken", unit, 372.0, 13.5, 58.7, 7.0, false, portions);
+        return new FoodRequest("Haferflocken", unit, 372.0, 13.5, 58.7, 7.0, Map.of(), false, portions);
     }
 
     // A portion as already saved, with the id the database would have given it.
@@ -332,13 +334,27 @@ class FoodServiceTest {
             stubSaveReturnsArgument();
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, false, List.of()));
+                    new FoodRequest("Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), false, List.of()));
 
             assertThat(existing)
                     .extracting(Food::getName, Food::getKcalPer100, Food::getProtein, Food::getCarbs, Food::getFat)
                     .containsExactly("Haferflocken zart", 370.0, 13.0, 59.0, 6.5);
             assertThat(result).isEqualTo(
-                    new FoodResponse(1L, "Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, List.of(), true, false, false, false));
+                    new FoodResponse(1L, "Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), List.of(), true, false, false, false));
+        }
+
+        @Test
+        void ownFood_replacesTheNutrients() {
+            Food existing = food(1L, "Lachs", me, false);
+            existing.setNutrients(Map.of(Nutrient.IRON, 0.4, Nutrient.ZINC, 0.5));
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, new FoodRequest("Lachs", FoodUnit.G, 200.0, 20.0, 0.0,
+                    13.0, Map.of(Nutrient.VITAMIN_D, 11.0), false, List.of()));
+
+            assertThat(existing.getNutrients()).isEqualTo(Map.of(Nutrient.VITAMIN_D, 11.0));
+            assertThat(result.nutrients()).isEqualTo(Map.of(Nutrient.VITAMIN_D, 11.0));
         }
 
         @Test
@@ -396,7 +412,7 @@ class FoodServiceTest {
             });
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken", FoodUnit.G, 380.0, 13.5, 58.7, 7.0, false, List.of()));
+                    new FoodRequest("Haferflocken", FoodUnit.G, 380.0, 13.5, 58.7, 7.0, Map.of(), false, List.of()));
 
             // The original stays exactly as the others know it, public and without owner
             assertThat(existing.getOwner()).isNull();
@@ -759,7 +775,7 @@ class FoodServiceTest {
             when(mealItemRepository.existsByFoodIdAndMealUserIdNot(1L, USER_ID)).thenReturn(true);
             stubSaveReturnsArgument();
 
-            service.update(USER_ID, 1L, new FoodRequest("Quark", FoodUnit.G, 70.0, 12.0, 4.0, 0.2, false,
+            service.update(USER_ID, 1L, new FoodRequest("Quark", FoodUnit.G, 70.0, 12.0, 4.0, 0.2, Map.of(), false,
                     List.of(new FoodPortionRequest(10L, "Packung", 500.0, true))));
 
             assertThat(existing.getPortions()).containsExactly(pack);

@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 public class UserService {
@@ -113,6 +115,13 @@ public class UserService {
     public UserResponse setColorTheme(Long userId, ColorTheme colorTheme) {
         User user = getEntity(userId);
         user.setColorTheme(colorTheme);
+        return UserResponse.from(user);
+    }
+
+    @Transactional
+    public UserResponse setNutrientTargets(Long userId, Map<Nutrient, Double> nutrientTargets) {
+        User user = getEntity(userId);
+        user.setNutrientTargets(nutrientTargets);
         return UserResponse.from(user);
     }
 

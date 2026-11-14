@@ -4,6 +4,7 @@ import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.model.Meal;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.User;
 import jakarta.persistence.EntityManager;
@@ -14,6 +15,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -282,5 +284,44 @@ class FoodRepositoryTest {
 
         assertThatThrownBy(repository::flush)
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    // ---------- nutrients ----------
+
+    @Test
+    void nutrients_areStoredByNameAndReplacedAsAWhole() {
+        Food salmon = save("Lachs", alice, false);
+        salmon.setNutrients(Map.of(Nutrient.VITAMIN_D, 11.0, Nutrient.OMEGA_3, 2.5));
+        repository.saveAndFlush(salmon);
+        entityManager.clear();
+
+        Food loaded = repository.findById(salmon.getId()).orElseThrow();
+        assertThat(loaded.getNutrients()).isEqualTo(Map.of(Nutrient.VITAMIN_D, 11.0, Nutrient.OMEGA_3, 2.5));
+        Object stored = entityManager
+                .createNativeQuery("select nutrient from food_nutrient where food_id = :id and amount = 11")
+                .setParameter("id", salmon.getId())
+                .getSingleResult();
+        assertThat(stored).isEqualTo("VITAMIN_D");
+
+        loaded.setNutrients(Map.of(Nutrient.IODINE, 34.0));
+        repository.saveAndFlush(loaded);
+        entityManager.clear();
+
+        assertThat(repository.findById(salmon.getId()).orElseThrow().getNutrients())
+                .isEqualTo(Map.of(Nutrient.IODINE, 34.0));
+    }
+
+    @Test
+    void delete_removesTheNutrientsToo() {
+        Food salmon = save("Lachs", alice, false);
+        salmon.setNutrients(Map.of(Nutrient.VITAMIN_D, 11.0));
+        repository.saveAndFlush(salmon);
+        entityManager.clear();
+
+        repository.delete(repository.findById(salmon.getId()).orElseThrow());
+        repository.flush();
+
+        Object count = entityManager.createNativeQuery("select count(*) from food_nutrient").getSingleResult();
+        assertThat(((Number) count).longValue()).isZero();
     }
 }

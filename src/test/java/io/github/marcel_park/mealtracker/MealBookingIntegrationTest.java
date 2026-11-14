@@ -114,13 +114,44 @@ class MealBookingIntegrationTest {
     // accent-insensitive by collation), the flush order in FoodService.applyPortions, and the unit
     // change of a booked food.
     @Test
+    void nutrients_areSavedWithTheFood_andReplacedAsAWhole() throws Exception {
+        String token = register();
+        MvcResult created = mockMvc.perform(as(token, post("/api/foods"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Lachs (IT)","unit":"G","kcalPer100":200,"protein":20,"carbs":0,"fat":13,
+                                 "nutrients":{"VITAMIN_D":11,"OMEGA_3":2.5},"published":false,"portions":[]}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.nutrients.VITAMIN_D").value(11.0))
+                .andExpect(jsonPath("$.nutrients.OMEGA_3").value(2.5))
+                .andReturn();
+        long salmonId = idOf(created);
+
+        mockMvc.perform(as(token, put("/api/foods/" + salmonId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Lachs (IT)","unit":"G","kcalPer100":200,"protein":20,"carbs":0,"fat":13,
+                                 "nutrients":{"IODINE":34},"published":false,"portions":[]}
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(token, get("/api/foods/" + salmonId)))
+                .andExpect(jsonPath("$.nutrients.VITAMIN_D").doesNotExist())
+                .andExpect(jsonPath("$.nutrients.IODINE").value(34.0));
+
+        mockMvc.perform(as(token, delete("/api/foods/" + salmonId)))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
     void portionsAndUnit_areSavedWithTheFood_andTheUnitCanChangeEvenOnceBooked() throws Exception {
         String token = register();
         MvcResult created = mockMvc.perform(as(token, post("/api/foods"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
-                                 "published":false,"portions":[
+                                 "nutrients":{},"published":false,"portions":[
                                    {"name":"Flasche","amount":500},
                                    {"name":"kleine Flasche","amount":330}]}
                                 """))
@@ -141,7 +172,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
-                                 "published":false,"portions":[
+                                 "nutrients":{},"published":false,"portions":[
                                    {"id":%d,"name":"Dose","amount":330,"favorite":true},
                                    {"name":"flasche","amount":500}]}
                                 """.formatted(smallId.longValue())))
@@ -158,7 +189,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
-                                 "published":false,"portions":[
+                                 "nutrients":{},"published":false,"portions":[
                                    {"id":%d,"name":"flasche","amount":330,"favorite":true},
                                    {"id":%d,"name":"Dose","amount":500}]}
                                 """.formatted(canId.longValue(), newBottleId.longValue())))
@@ -170,7 +201,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Bier (IT)","unit":"ML","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
-                                 "published":false,"portions":[{"name":"Glas","amount":200},{"name":"GLÄS","amount":300}]}
+                                 "nutrients":{},"published":false,"portions":[{"name":"Glas","amount":200},{"name":"GLÄS","amount":300}]}
                                 """))
                 .andExpect(status().isBadRequest());
 
@@ -206,7 +237,7 @@ class MealBookingIntegrationTest {
     private static String beerJson(String unit) {
         return """
                 {"name":"Bier (IT)","unit":"%s","kcalPer100":42,"protein":0.5,"carbs":3,"fat":0,
-                 "published":false,"portions":[]}
+                 "nutrients":{},"published":false,"portions":[]}
                 """.formatted(unit);
     }
 
@@ -296,6 +327,19 @@ class MealBookingIntegrationTest {
                 .andExpect(jsonPath("$.heightCm").value(168))
                 .andExpect(jsonPath("$.sex").value("FEMALE"))
                 .andExpect(jsonPath("$.colorTheme").value("DARK"));
+        // Nutrient targets too, and saving them again replaces them all
+        mockMvc.perform(as(token, put("/api/users/me/nutrient-targets"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nutrientTargets\":{\"VITAMIN_D\":20,\"IRON\":15}}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, put("/api/users/me/nutrient-targets"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nutrientTargets\":{\"IRON\":11,\"SALT\":6}}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, get("/api/users/me")))
+                .andExpect(jsonPath("$.nutrientTargets.VITAMIN_D").doesNotExist())
+                .andExpect(jsonPath("$.nutrientTargets.IRON").value(11.0))
+                .andExpect(jsonPath("$.nutrientTargets.SALT").value(6.0));
 
         // The same email cannot be registered twice
         mockMvc.perform(post("/api/auth/register")
@@ -493,7 +537,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
-                                 "published":false,"portions":[{"name":"Stück","amount":60}]}
+                                 "nutrients":{},"published":false,"portions":[{"name":"Stück","amount":60}]}
                                 """))
                 .andExpect(status().isCreated())
                 .andReturn();
@@ -536,7 +580,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
-                                 "published":false,"portions":[{"id":%d,"name":"Stück","amount":50}]}
+                                 "nutrients":{},"published":false,"portions":[{"id":%d,"name":"Stück","amount":50}]}
                                 """.formatted(pieceId.longValue())))
                 .andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/meals")))
@@ -547,7 +591,7 @@ class MealBookingIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
-                                 "published":false,"portions":[]}
+                                 "nutrients":{},"published":false,"portions":[]}
                                 """))
                 .andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/meals")))
@@ -676,7 +720,7 @@ class MealBookingIntegrationTest {
 
     private static String foodJson(String name, int kcalPer100, boolean published) {
         return """
-                {"name":"%s","unit":"G","kcalPer100":%d,"protein":10,"carbs":50,"fat":5,"published":%b,
+                {"name":"%s","unit":"G","kcalPer100":%d,"protein":10,"carbs":50,"fat":5,"nutrients":{},"published":%b,
                  "portions":[]}
                 """.formatted(name, kcalPer100, published);
     }

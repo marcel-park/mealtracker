@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import org.hibernate.annotations.BatchSize;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Entity
 public class Food {
@@ -40,6 +42,15 @@ public class Food {
 
     @Column(nullable = false)
     private double fat;
+
+    // The optional nutrients, per 100 g or 100 ml like the values above. Only stated ones are
+    // stored; a missing one is unknown, not 0.
+    @ElementCollection
+    @CollectionTable(name = "food_nutrient", joinColumns = @JoinColumn(name = "food_id"))
+    @MapKeyColumn(name = "nutrient", length = 30)
+    @Convert(converter = NutrientConverter.class, attributeName = "key")
+    @Column(name = "amount", nullable = false)
+    private Map<Nutrient, Double> nutrients = new HashMap<>();
 
     // The owner's choice. Without owner the food is public regardless, see isPublic().
     @Column(name = "is_public", nullable = false)
@@ -92,6 +103,12 @@ public class Food {
     public void setCarbs(double carbs) { this.carbs = carbs; }
     public double getFat() { return fat; }
     public void setFat(double fat) { this.fat = fat; }
+    public Map<Nutrient, Double> getNutrients() { return nutrients; }
+    // Replaces the content instead of the map, which Hibernate tracks.
+    public void setNutrients(Map<Nutrient, Double> nutrients) {
+        this.nutrients.clear();
+        this.nutrients.putAll(nutrients);
+    }
     public boolean isPublished() { return published; }
     public void setPublished(boolean published) { this.published = published; }
     public boolean isConfirmed() { return confirmed; }
