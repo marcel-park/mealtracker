@@ -1454,3 +1454,79 @@ fieldset.plain:disabled input {
 .bar.halves > .btn {
   flex: 1;
 }
+
+/* ----- Optional nutrients (FoodForm, FoodInfo, NutrientTargetsPage) ----- */
+
+/* a heading row that opens and closes what follows; the chevron turns when open */
+.collapsible {
+  margin-bottom: 16px;
+}
+
+.collapsible-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
+  text-align: left;
+}
+
+.collapsible-head svg {
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+
+.collapsible-head[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.collapsible-body {
+  padding-top: 12px;
+}
+
+.nutrient-note {
+  margin: 0 0 12px;
+}
+
+.nutrient-group h3,
+.info-group {
+  margin: 8px 0 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* two fields per row; long labels wrap, the inputs stay level */
+.nutrient-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 0 8px;
+}
+
+.nutrient-fields .field,
+.nutrient-fields input {
+  min-width: 0;
+}
+
+/* group headings inside the detail card span both columns */
+.info-group {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.part-problem {
+  margin: 12px 0 0;
+}
+
+.targets-btn {
+  margin-bottom: 16px;
+}
