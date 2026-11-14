@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import './App.css'
@@ -43,6 +43,17 @@ import {
 } from './meals.js'
 import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
 import { DARK, LIGHT, SYSTEM, applyColorTheme, storedColorTheme } from './theme.js'
+import {
+  NUTRIENT_DECIMALS,
+  NUTRIENT_GROUPS,
+  NUTRIENT_MAX_DIGITS,
+  formatNutrient,
+  nutrientAmounts,
+  nutrientPartProblems,
+  nutrientTexts,
+  sameNutrientAmounts,
+  statedNutrientGroups,
+} from './nutrients.js'
 import {
   formatQuantity,
   portionById,
@@ -1371,6 +1382,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   const [protein, setProtein] = useState(toText(food.protein))
   const [carbs, setCarbs] = useState(toText(food.carbs))
   const [fat, setFat] = useState(toText(food.fat))
+  const [nutrientTextsByKey, setNutrientTextsByKey] = useState(() => nutrientTexts(food.nutrients))
   const [published, setPublished] = useState(food.published)
   const [portions, setPortions] = useState(() => draftPortions(food))
   const newPortionCount = useRef(0) // for the keys of new portions, see foods.js
@@ -1378,6 +1390,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   // the portion view: autoFocus would jump to the top and open the keyboard once more.
   const [focusName, setFocusName] = useState(isNew)
 
+  const { amounts: nutrients, invalid: invalidNutrients } = nutrientAmounts(nutrientTextsByKey)
   // Field names as the backend expects them.
   const values = {
     name: name.trim(),
@@ -1386,12 +1399,18 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
     protein: parseFloat(protein),
     carbs: parseFloat(carbs),
     fat: parseFloat(fat),
+    nutrients,
     published,
     portions: portionRequests(portions),
   }
+  const partProblems = nutrientPartProblems(values)
   const numbers = [values.kcalPer100, values.protein, values.carbs, values.fat]
   // An empty field parses to NaN, and NaN >= 0 is false.
-  const isValid = values.name !== '' && numbers.every((n) => n >= 0)
+  const isValid =
+    values.name !== '' &&
+    numbers.every((n) => n >= 0) &&
+    invalidNutrients.length === 0 &&
+    partProblems.length === 0
   const becomesPrivate = !isNew && food.published && !published
   const symbol = unitSymbol(unit)
 
@@ -1461,6 +1480,10 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           <NumberField label={`Protein pro 100 ${symbol}`} value={protein} onChange={setProtein} />
           <NumberField label={`Kohlenhydrate pro 100 ${symbol}`} value={carbs} onChange={setCarbs} />
           <NumberField label={`Fett pro 100 ${symbol}`} value={fat} onChange={setFat} />
+          <Collapsible title="Weitere Nährwerte">
+            <p className="hint nutrient-note">Alle optional, pro 100 {symbol}.</p>
+            <NutrientFields texts={nutrientTextsByKey} onChange={setNutrientTextsByKey} />
+          </Collapsible>
           <VisibilitySwitch published={published} onChange={setPublished} />
           {becomesPrivate && (
             <p className="hint switch-hint">
@@ -1492,6 +1515,13 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           <PlusIcon size={18} />
           Portion hinzufügen
         </button>
+
+        {/* Here and not in the closed "Weitere Nährwerte": carbs or fat above may cause it. */}
+        {partProblems.map((problem) => (
+          <p key={problem} className="hint warning part-problem">
+            {problem}
+          </p>
+        ))}
 
         <div className="bar">
           {!isNew && (
@@ -2052,6 +2082,54 @@ function RecipeEditor({
 // ----- Details (food database and shopping list search) -----
 
 // One value of the details, its name above it. wide: over the whole width of the card.
+// A heading that opens and closes the content below it, closed at first.
+function Collapsible({ title, children }) {
+  const [open, setOpen] = useState(false)
+  const contentId = useId()
+  return (
+    <div className="collapsible">
+      <button
+        type="button"
+        className="collapsible-head"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen(!open)}
+      >
+        <span>{title}</span>
+        <ChevronDownIcon />
+      </button>
+      {open && (
+        <div id={contentId} className="collapsible-body">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// A field for each optional nutrient, grouped as in nutrients.js, two per row. texts / onChange:
+// what is typed, e.g. { VITAMIN_C: "12,5" }. labelOf: the label of a field.
+function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.label }) {
+  return NUTRIENT_GROUPS.map((group) => (
+    <div key={group.title} className="nutrient-group">
+      <h3>{group.title}</h3>
+      <div className="nutrient-fields">
+        {group.nutrients.map((nutrient) => (
+          <UnitNumberField
+            key={nutrient.key}
+            label={labelOf(nutrient)}
+            unit={nutrient.unit}
+            maxDigits={NUTRIENT_MAX_DIGITS}
+            decimals={NUTRIENT_DECIMALS}
+            value={texts[nutrient.key] ?? ''}
+            onChange={(text) => onChange({ ...texts, [nutrient.key]: text })}
+          />
+        ))}
+      </div>
+    </div>
+  ))
+}
+
 function Info({ label, wide = false, children }) {
   return (
     <div className={wide ? 'info wide' : 'info'}>
@@ -2064,9 +2142,11 @@ function Info({ label, wide = false, children }) {
 const visibilityLabel = (published) => (published ? 'Öffentlich' : 'Privat')
 
 // What a food is, as text: name, kcal and nutrients per 100 g / ml, unit, visibility, portions.
+// The optional nutrients only as far as they are stated, in a closed "Weitere Nährwerte".
 // Nothing to change here; owners edit with the pencil in the list (FoodForm).
 function FoodInfo({ food, onClose }) {
   const per100 = `pro 100 ${unitSymbol(food.unit)}`
+  const statedGroups = statedNutrientGroups(food.nutrients)
   return (
     <section>
       <TopBar title="Lebensmittel" closeLabel="Schließen" onClose={onClose} />
@@ -2081,6 +2161,23 @@ function FoodInfo({ food, onClose }) {
         <Info label={`Fett ${per100}`}>{formatNumber(food.fat)} g</Info>
         <Info label="Sichtbarkeit">{visibilityLabel(food.published)}</Info>
       </div>
+      {statedGroups.length > 0 && (
+        <Collapsible title="Weitere Nährwerte">
+          <p className="hint nutrient-note">Pro 100 {unitSymbol(food.unit)}.</p>
+          <div className="info-card">
+            {statedGroups.map((group) => (
+              <Fragment key={group.title}>
+                <h3 className="info-group">{group.title}</h3>
+                {group.nutrients.map(({ key, label, unit }) => (
+                  <Info key={key} label={label}>
+                    {formatNutrient(food.nutrients[key], unit)}
+                  </Info>
+                ))}
+              </Fragment>
+            ))}
+          </div>
+        </Collapsible>
+      )}
 
       <div className="section-head">
         <h2>Portionen</h2>
@@ -2816,8 +2913,10 @@ function wholeNumberIn(text, min, max) {
 // calories split into carbs, protein and fat (whole percent, together 100), and the body data the
 // calories of steps are estimated from. All of them must be filled in. Below: color theme and the
 // connection to Health Connect (Android app only), which is kept on the phone, not on the server.
-// activity: see useActivity.
-function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError }) {
+// activity: see useActivity. layer 'nutrientTargets': the daily targets are open on top (see
+// NutrientTargetsPage); the layer lives in MealTracker, so the back button closes it, and this
+// page stays mounted underneath, keeping what is typed.
+function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLogout, onClose, onError }) {
   const [targetText, setTargetText] = useState(String(user.calorieTarget))
   const [stepGoalText, setStepGoalText] = useState(String(user.stepGoal))
   // { carbsPercent, proteinPercent, fatPercent } as typed
@@ -2880,6 +2979,17 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
     })
   }
 
+  if (layer === 'nutrientTargets') {
+    return (
+      <NutrientTargetsPage
+        user={user}
+        onUserChange={onUserChange}
+        onClose={() => onLayerChange(null)}
+        onError={onError}
+      />
+    )
+  }
+
   return (
     <section>
       <TopBar title="Profil" closeLabel="Schließen" onClose={onClose} />
@@ -2922,6 +3032,9 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
         {!Number.isNaN(percentSum) && percentSum !== 100 && (
           <p className="hint warning macro-sum">Zusammen müssen es 100 % sein.</p>
         )}
+        <button type="button" className="btn wide targets-btn" onClick={() => onLayerChange('nutrientTargets')}>
+          Tagesbedarf festlegen
+        </button>
         <BodyDataFields
           weightText={weightText}
           heightText={heightText}
@@ -2981,6 +3094,58 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
           Abmelden
         </button>
       </div>
+    </section>
+  )
+}
+
+// The daily targets for the optional nutrients of foods, each optional: an empty field has no
+// target. For sugar, saturated fat and salt the value is an upper limit. Saved on their own, then
+// back to the profile.
+function NutrientTargetsPage({ user, onUserChange, onClose, onError }) {
+  const [texts, setTexts] = useState(() => nutrientTexts(user.nutrientTargets))
+  const runAction = useActionRunner(onError)
+  const { amounts, invalid } = nutrientAmounts(texts, { allowZero: false })
+  const isValid = invalid.length === 0
+  const isChanged = !sameNutrientAmounts(amounts, user.nutrientTargets)
+
+  // Opened from the middle of the profile: start at the top, and leave the profile at the top too.
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    return () => window.scrollTo(0, 0)
+  }, [])
+
+  function save(event) {
+    event.preventDefault()
+    if (!isValid || !isChanged) return
+    runAction(async () => {
+      onUserChange(
+        await request(`${API.me}/nutrient-targets`, {
+          method: 'PUT',
+          body: JSON.stringify({ nutrientTargets: amounts }),
+        }),
+      )
+      onError(null)
+      onClose()
+    })
+  }
+
+  return (
+    <section>
+      <TopBar title="Tagesbedarf" closeLabel="Schließen" onClose={onClose} />
+      <form onSubmit={save}>
+        <p className="hint nutrient-note">Alle optional, pro Tag.</p>
+        <NutrientFields
+          texts={texts}
+          onChange={setTexts}
+          labelOf={(nutrient) => (nutrient.limit ? `${nutrient.label} (Obergrenze)` : nutrient.label)}
+        />
+        {!isValid && <p className="hint warning">Werte müssen größer als 0 sein.</p>}
+        <div className="bar">
+          <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
+            Speichern
+          </button>
+        </div>
+      </form>
     </section>
   )
 }
@@ -3472,6 +3637,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
   const [foodFormLayer, setFoodFormLayer] = useState(null) // portion view on top of it, see FoodForm
+  const [profileLayer, setProfileLayer] = useState(null) // daily targets on top of it, see ProfilePage
   const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
   // Details of a food or recipe from the database or the shopping list search:
   // { kind, entry, variationId, copying }, see FoodInfo and RecipeInfo.
@@ -4137,6 +4303,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function closeProfile() {
     setError(null)
+    setProfileLayer(null)
     setView('list')
   }
 
@@ -4162,6 +4329,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'foods') closeFoods()
     else if (view === 'shopping' && shoppingSearch) setShoppingSearch(false)
     else if (view === 'shopping') closeShoppingList()
+    else if (view === 'profile' && profileLayer) setProfileLayer(null)
     else if (view === 'profile') closeProfile()
   }
 
@@ -4268,6 +4436,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
         <ProfilePage
           user={user}
           activity={activity}
+          layer={profileLayer}
+          onLayerChange={setProfileLayer}
           onUserChange={onUserChange}
           onLogout={onLogout}
           onClose={goBack}
