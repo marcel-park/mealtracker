@@ -24,7 +24,9 @@ export const NUTRIENT_GROUPS = [
   {
     title: 'Vitamine',
     nutrients: [
-      { key: 'VITAMIN_A', label: 'Vitamin A', unit: 'µg' },
+      // Retinol-Aktivitäts-Äquivalent: Retinol plus β-Carotin ÷ 12 (andere Carotinoide ÷ 24), wie die
+      // DGE-Referenzwerte. EU-Etiketten geben meist das ältere Retinol-Äquivalent an (β-Carotin ÷ 6).
+      { key: 'VITAMIN_A', label: 'Vitamin A (RAE)', unit: 'µg' },
       { key: 'VITAMIN_D', label: 'Vitamin D', unit: 'µg' },
       { key: 'VITAMIN_E', label: 'Vitamin E', unit: 'mg' },
       { key: 'VITAMIN_K', label: 'Vitamin K', unit: 'µg' },
