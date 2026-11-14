@@ -3,6 +3,7 @@ import {
   addAmount,
   addRecipeItems,
   entriesFromMeal,
+  daysBefore,
   localDate,
   makeTitle,
   mealRequest,
@@ -168,5 +169,12 @@ describe('msUntilMidnight', () => {
   it('is a whole day right at midnight', () => {
     const now = new Date(2026, 10, 11, 0, 0)
     expect(msUntilMidnight(now)).toBe(new Date(2026, 10, 12).getTime() - now.getTime())
+  })
+})
+
+describe('daysBefore', () => {
+  it('counts back from the day before, over month and year ends', () => {
+    expect(daysBefore('2026-03-02', 3)).toEqual(['2026-03-01', '2026-02-28', '2026-02-27'])
+    expect(daysBefore('2026-01-01', 1)).toEqual(['2025-12-31'])
   })
 })

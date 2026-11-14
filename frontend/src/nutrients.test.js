@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NUTRIENTS,
+  averageNutrients,
   bookedNutrients,
   formatNutrient,
   hasTypedNutrients,
@@ -167,5 +168,21 @@ describe('bookedNutrients', () => {
     expect(totals.IRON).toBeCloseTo(2.16)
     expect(totals.ZINC).toBe(0)
     expect(Object.keys(totals)).toHaveLength(30)
+  })
+})
+
+describe('averageNutrients', () => {
+  const egg = { nutrients: { VITAMIN_D: 2.9 } }
+  const day = (amount) => [{ items: [{ food: egg, amount }] }]
+
+  it('averages over the days with meals, leaving out days without any', () => {
+    const average = averageNutrients([day(100), [], day(200)])
+    expect(average.days).toBe(2)
+    expect(average.amounts.VITAMIN_D).toBeCloseTo(4.35)
+    expect(average.amounts.IRON).toBe(0)
+  })
+
+  it('is null without any meals', () => {
+    expect(averageNutrients([[], []])).toBeNull()
   })
 })
