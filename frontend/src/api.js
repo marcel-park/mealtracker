@@ -7,6 +7,8 @@ export const API = {
   recipes: '/api/recipes',
   meals: '/api/meals',
   shoppingList: '/api/shopping-list',
+  tasks: '/api/tasks',
+  checklist: '/api/checklist',
   register: '/api/auth/register',
   login: '/api/auth/login',
   logout: '/api/auth/logout',
