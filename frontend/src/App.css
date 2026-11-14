@@ -1568,3 +1568,28 @@ fieldset.plain:disabled input {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ----- Totals of one meal (MealSummary), styled like the summary of the day ----- */
+
+.meal-summary {
+  margin-bottom: 16px;
+}
+
+.meal-macro-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "322 kcal" in one line, the unit beside the number */
+.meal-summary .kcal-left {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+}
+
+.meal-summary .macro-label {
+  color: var(--muted);
+  font-weight: 400;
+}

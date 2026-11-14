@@ -41,7 +41,7 @@ import {
   mealRequest,
   msUntilMidnight,
 } from './meals.js'
-import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
+import { MACROS, bookedMacros, macroTargets, mealTotals, remainingKcal } from './nutrition.js'
 import { DARK, LIGHT, SYSTEM, applyColorTheme, storedColorTheme } from './theme.js'
 import {
   NUTRIENT_DECIMALS,
@@ -961,11 +961,9 @@ function MealList({
   )
 }
 
+// Three lines next to the "×": the title over the whole width, the date and time, the kcal.
 function MealRow({ meal, onEdit, onDelete }) {
   const bookedAt = new Date(meal.bookedAt).toLocaleString(LOCALE, DATE_TIME_FORMAT)
-  const items = meal.items
-    .map((item) => `${item.food.name} ${formatQuantity(item.food, quantityFromItem(item.food, item))}`)
-    .join(', ')
 
   return (
     <div className="row">
@@ -973,9 +971,8 @@ function MealRow({ meal, onEdit, onDelete }) {
         <span className="main">
           <span className="name">{meal.title}</span>
           <span className="sub">{bookedAt}</span>
-          <span className="sub">{items}</span>
+          <span className="kcal">{Math.round(meal.kcal)} kcal</span>
         </span>
-        <span className="kcal">{Math.round(meal.kcal)} kcal</span>
       </button>
       <CrossButton label="Mahlzeit löschen" onClick={() => onDelete(meal)} />
     </div>
@@ -1162,17 +1159,48 @@ function RecipeSearchRow({ recipe, onOpen, onAdd }) {
   )
 }
 
-function MealEditor({ entries, onOpenEntry, onRemoveEntry, onAddMore, onClose }) {
+// A booked meal: its totals at the top (MealSummary), then its items, with "Weiteres hinzufügen"
+// right below them. bookedAt: when the meal was booked, shown in the title ("Mahlzeit um 13:23 Uhr").
+function MealEditor({ entries, bookedAt, onOpenEntry, onRemoveEntry, onAddMore, onClose }) {
+  const time = bookedAt
+    ? new Date(bookedAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' })
+    : null
   return (
     <section>
-      <TopBar title="Mahlzeit bearbeiten" closeLabel="Bearbeiten abbrechen" onClose={onClose} />
+      <TopBar
+        title={time ? `Mahlzeit um ${time} Uhr` : 'Mahlzeit bearbeiten'}
+        closeLabel="Bearbeiten abbrechen"
+        onClose={onClose}
+      />
+      <MealSummary entries={entries} />
       <EntryList entries={entries} onOpen={onOpenEntry} onRemove={onRemoveEntry} />
-      <div className="bar">
-        <button type="button" className="btn primary" onClick={onAddMore}>
-          Weiteres hinzufügen
-        </button>
-      </div>
+      <button type="button" className="btn add-more" onClick={onAddMore}>
+        <PlusIcon size={18} />
+        Weiteres hinzufügen
+      </button>
     </section>
+  )
+}
+
+// What one meal adds up to, in a box like the summary of the day: the kcal large in the middle,
+// below them carbs, protein and fat in grams. Only totals, no targets and no bars.
+function MealSummary({ entries }) {
+  const totals = mealTotals(entries)
+  return (
+    <div className="day-summary meal-summary">
+      <div className="kcal-left">
+        <span className="kcal-left-value">{Math.round(totals.kcal).toLocaleString(LOCALE)}</span>
+        <span className="kcal-left-label">kcal</span>
+      </div>
+      <div className="macro-bars">
+        {MACROS.map(({ key, label }) => (
+          <div key={key} className="macro">
+            <span className="macro-label">{label}</span>
+            <span className="meal-macro-value">{Math.round(totals[key]).toLocaleString(LOCALE)} g</span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -4558,6 +4586,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'edit' && !detail && (
         <MealEditor
           entries={draft.entries}
+          bookedAt={meals.find((meal) => meal.id === draft.mealId)?.bookedAt}
           onOpenEntry={openEntryDetail}
           onRemoveEntry={removeEntryFromMeal}
           onAddMore={() => setView('search')}
