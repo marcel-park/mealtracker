@@ -8,7 +8,6 @@ import {
   nutrientPartProblems,
   nutrientProfileTexts,
   nutrientTexts,
-  sameNutrientAmounts,
   statedNutrientGroups,
 } from './nutrients.js'
 
@@ -96,10 +95,6 @@ describe('nutrientAmounts', () => {
     expect(nutrientAmounts({ SUGAR: '0' }).amounts).toEqual({ SUGAR: 0 })
   })
 
-  it('rejects 0 for daily targets', () => {
-    expect(nutrientAmounts({ SUGAR: '0' }, { allowZero: false })).toEqual({ amounts: {}, invalid: ['SUGAR'] })
-  })
-
   it('rejects a trailing comma', () => {
     expect(nutrientAmounts({ SALT: '1,' }).invalid).toEqual(['SALT'])
   })
@@ -154,15 +149,6 @@ describe('formatNutrient', () => {
   it('shows up to two decimals with the unit', () => {
     expect(formatNutrient(0.06, 'mg')).toBe('0,06 mg')
     expect(formatNutrient(1500, 'mg')).toBe('1.500 mg')
-  })
-})
-
-describe('sameNutrientAmounts', () => {
-  it('compares every nutrient, a missing one as none', () => {
-    expect(sameNutrientAmounts({ IRON: 11 }, { IRON: 11 })).toBe(true)
-    expect(sameNutrientAmounts({}, undefined)).toBe(true)
-    expect(sameNutrientAmounts({ IRON: 11 }, { IRON: 15 })).toBe(false)
-    expect(sameNutrientAmounts({ IRON: 11 }, { IRON: 11, SALT: 6 })).toBe(false)
   })
 })
 

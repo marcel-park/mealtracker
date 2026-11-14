@@ -55,9 +55,9 @@ import {
   nutrientPartProblems,
   nutrientProfileTexts,
   nutrientTexts,
-  sameNutrientAmounts,
   statedNutrientGroups,
 } from './nutrients.js'
+import { AGE_GROUPS, dailyNutrientTargets } from './dailyTargets.js'
 import {
   formatQuantity,
   portionById,
@@ -84,10 +84,13 @@ import { WEEKDAYS, canSaveTask, formatWeekdays, taskEditorFor, taskRequest, togg
 import {
   HEIGHT_MAX,
   HEIGHT_MIN,
+  MONTH_NAMES,
   SEX_OPTIONS,
   STEP_GOAL_MAX,
   WEIGHT_MAX,
   WEIGHT_MIN,
+  birthDateFromParts,
+  birthDateParts,
   numberIn,
   sanitizeNumberInput,
   toFieldText,
@@ -800,15 +803,20 @@ function shownActivity(activity, user) {
   return activity.data ? activitySummary(activity.data, user) : null
 }
 
+// The calorie target of today: the one of the profile plus all activity (see activitySummary).
+function dayCalorieTarget(user, shown) {
+  return user.calorieTarget + (shown?.activityKcal ?? 0)
+}
+
 // Today at a glance. On top, side by side: steps (green once the step goal is reached), the
 // calories left, and the kcal of all activity (steps and workouts, see activitySummary). The calorie target grows by
-// that activity, and so do the nutrient targets below, as they are shares of the calories.
+// that activity, and so do the macro targets below, as they are shares of the calories.
 // meals: today's meals. activity: see useActivity.
 // Tapped anywhere (or Enter / Space), it opens the daily targets of the further nutrients
 // (onOpen, see NutrientOverview).
 function DaySummary({ user, meals, activity, onOpen }) {
   const shown = shownActivity(activity, user)
-  const target = user.calorieTarget + (shown?.activityKcal ?? 0)
+  const target = dayCalorieTarget(user, shown)
   const remaining = Math.round(remainingKcal(target, meals))
   const isOver = remaining < 0
   const targets = macroTargets({ ...user, calorieTarget: target })
@@ -853,21 +861,41 @@ function DaySummary({ user, meals, activity, onOpen }) {
 // e.g. "+233 kcal"
 const earnedKcal = (kcal) => `+${Math.round(kcal).toLocaleString(LOCALE)} kcal`
 
-// Today's amount of every further nutrient next to the user's daily target, grouped as in the
-// food form, each with a bar below. Without a target it reads "300 / 0 mg" with an empty bar.
-// Protein, carbs and fat are not repeated here, the main view shows them.
-function NutrientOverview({ user, meals, onClose }) {
+// Today's amount of every further nutrient next to the daily target, grouped as in the food form,
+// each with a bar below. The targets are computed (see dailyTargets.js) with today's calorie
+// target, which grows with the activity. Without birth date or sex in the profile there are none:
+// "300 / 0 mg" with an empty bar, and a hint. Protein, carbs and fat are not repeated here, the
+// main view shows them. activity: see useActivity. today: "YYYY-MM-DD".
+function NutrientOverview({ user, meals, activity, today, onClose }) {
   const booked = bookedNutrients(meals)
-  const targets = user.nutrientTargets ?? {}
+  const calorieTarget = Math.round(dayCalorieTarget(user, shownActivity(activity, user)))
+  const computed = dailyNutrientTargets(user, calorieTarget, today)
+  const targets = computed?.targets ?? {}
   return (
     <section>
       <TopBar title="Tagesbedarf heute" closeLabel="Schließen" onClose={onClose} />
+      {computed ? (
+        <p className="hint nutrient-note">
+          DGE/ÖGE-Referenzwerte für {TARGET_SEX_LABELS[user.sex]}, {AGE_GROUPS[computed.ageGroup].label}, bei{' '}
+          {calorieTarget.toLocaleString(LOCALE)} kcal heute.
+          {computed.isUnderAdultAge && ' Unter 19 Jahren gelten eigene Werte; gezeigt werden die ab 19.'} Berechnet
+          aus deinem Profil.
+        </p>
+      ) : (
+        <p className="hint warning nutrient-note">{MISSING_TARGETS_HINT}</p>
+      )}
       {NUTRIENT_GROUPS.map((group) => (
         <div key={group.title} className="nutrient-group">
           <h3>{group.title}</h3>
           <div className="nutrient-bars">
-            {group.nutrients.map(({ key, label, unit }) => (
-              <NutrientBar key={key} label={label} unit={unit} booked={booked[key]} target={targets[key] ?? 0} />
+            {group.nutrients.map(({ key, label, unit, limit }) => (
+              <NutrientBar
+                key={key}
+                label={limit ? `${label} (höchstens)` : label}
+                unit={unit}
+                booked={booked[key]}
+                target={targets[key] ?? 0}
+              />
             ))}
           </div>
         </div>
@@ -2365,9 +2393,8 @@ function Collapsible({ title, initiallyOpen = false, children }) {
 }
 
 // A field for each optional nutrient, grouped as in nutrients.js, two per row. texts / onChange:
-// what is typed, e.g. { VITAMIN_C: "12,5" }. labelOf: the label of a field. showUnit: an empty
-// field shows the unit it expects as placeholder.
-function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.label, showUnit = false }) {
+// what is typed, e.g. { VITAMIN_C: "12,5" }.
+function NutrientFields({ texts, onChange }) {
   return NUTRIENT_GROUPS.map((group) => (
     <div key={group.title} className="nutrient-group">
       <h3>{group.title}</h3>
@@ -2375,11 +2402,10 @@ function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.labe
         {group.nutrients.map((nutrient) => (
           <UnitNumberField
             key={nutrient.key}
-            label={labelOf(nutrient)}
+            label={nutrient.label}
             unit={nutrient.unit}
             maxDigits={NUTRIENT_MAX_DIGITS}
             decimals={NUTRIENT_DECIMALS}
-            placeholder={showUnit ? nutrient.unit : undefined}
             value={texts[nutrient.key] ?? ''}
             onChange={(text) => onChange({ ...texts, [nutrient.key]: text })}
           />
@@ -3333,12 +3359,11 @@ function wholeNumberIn(text, min, max) {
 
 // The settings of the user, saved together with one "Speichern": calorie target, step goal, how the
 // calories split into carbs, protein and fat (whole percent, together 100), and the body data the
-// calories of steps are estimated from. All of them must be filled in. Below: color theme and the
+// calories of steps and the daily nutrient targets are computed from. All of them must be filled in. Below: color theme and the
 // connection to Health Connect (Android app only), which is kept on the phone, not on the server.
-// activity: see useActivity. layer 'nutrientTargets': the daily targets are open on top (see
-// NutrientTargetsPage); the layer lives in MealTracker, so the back button closes it, and this
-// page stays mounted underneath, keeping what is typed.
-function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLogout, onClose, onError }) {
+// activity: see useActivity. The daily nutrient targets follow from the saved profile on their own
+// (see dailyTargets.js and NutrientOverview); there is nothing to set for them here.
+function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError }) {
   const [targetText, setTargetText] = useState(String(user.calorieTarget))
   const [stepGoalText, setStepGoalText] = useState(String(user.stepGoal))
   // { carbsPercent, proteinPercent, fatPercent } as typed
@@ -3348,6 +3373,7 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
   const [weightText, setWeightText] = useState(toFieldText(user.weightKg))
   const [heightText, setHeightText] = useState(toFieldText(user.heightCm))
   const [sex, setSex] = useState(user.sex)
+  const [birthDateTexts, setBirthDateTexts] = useState(() => birthDateParts(user.birthDate))
   const runAction = useActionRunner(onError)
   const themeLabelId = useId()
   const shareLabelId = useId()
@@ -3361,12 +3387,20 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
     weightKg: numberIn(weightText, WEIGHT_MIN, WEIGHT_MAX),
     heightCm: wholeNumberIn(heightText, HEIGHT_MIN, HEIGHT_MAX),
   }
+  const birthDate = birthDateFromParts(birthDateTexts, localDate(new Date()))
+  const isBirthDateTyped =
+    birthDateTexts.day !== '' && birthDateTexts.month !== '' && birthDateTexts.year.length === 4
   const percentSum = MACROS.reduce((sum, { percentField }) => sum + settings[percentField], 0)
   const isValid =
-    Object.values(settings).every((value) => !Number.isNaN(value)) && percentSum === 100 && sex !== null
+    Object.values(settings).every((value) => !Number.isNaN(value)) &&
+    percentSum === 100 &&
+    sex !== null &&
+    birthDate !== null
   const isChanged =
-    sex !== user.sex || Object.keys(settings).some((field) => settings[field] !== user[field])
-  const lacksBodyData = user.weightKg == null || user.heightCm == null || user.sex == null
+    sex !== user.sex ||
+    birthDate !== (user.birthDate ?? null) ||
+    Object.keys(settings).some((field) => settings[field] !== user[field])
+  const lacksBodyData = user.weightKg == null || user.heightCm == null || user.sex == null || user.birthDate == null
 
   function save(event) {
     event.preventDefault()
@@ -3375,7 +3409,7 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
       // The color theme is not part of it, see changeColorTheme.
       const updated = await request(API.me, {
         method: 'PUT',
-        body: JSON.stringify({ ...settings, sex }),
+        body: JSON.stringify({ ...settings, sex, birthDate }),
       })
       onUserChange(updated)
       onError(null)
@@ -3399,17 +3433,6 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
         throw error
       }
     })
-  }
-
-  if (layer === 'nutrientTargets') {
-    return (
-      <NutrientTargetsPage
-        user={user}
-        onUserChange={onUserChange}
-        onClose={() => onLayerChange(null)}
-        onError={onError}
-      />
-    )
   }
 
   return (
@@ -3454,18 +3477,20 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
         {!Number.isNaN(percentSum) && percentSum !== 100 && (
           <p className="hint warning macro-sum">Zusammen müssen es 100 % sein.</p>
         )}
-        <button type="button" className="btn wide targets-btn" onClick={() => onLayerChange('nutrientTargets')}>
-          Tagesbedarf festlegen
-        </button>
         <BodyDataFields
           weightText={weightText}
           heightText={heightText}
+          birthDateTexts={birthDateTexts}
           sex={sex}
           onWeightChange={setWeightText}
           onHeightChange={setHeightText}
+          onBirthDateChange={setBirthDateTexts}
           onSexChange={setSex}
         />
-        {lacksBodyData && <p className="hint warning body-hint">Nötig für die Schritt-kcal.</p>}
+        {isBirthDateTyped && birthDate === null && (
+          <p className="hint warning body-hint">Kein gültiges Geburtsdatum.</p>
+        )}
+        {lacksBodyData && <p className="hint warning body-hint">Nötig für die Schritt-kcal und den Tagesbedarf.</p>}
         <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
           Speichern
         </button>
@@ -3520,61 +3545,28 @@ function ProfilePage({ user, activity, layer, onLayerChange, onUserChange, onLog
   )
 }
 
-// The daily targets for the optional nutrients of foods, each optional: an empty field has no
-// target. For sugar, saturated fat and salt the value is an upper limit. Saved on their own, then
-// back to the profile.
-function NutrientTargetsPage({ user, onUserChange, onClose, onError }) {
-  const [texts, setTexts] = useState(() => nutrientTexts(user.nutrientTargets))
-  const runAction = useActionRunner(onError)
-  const { amounts, invalid } = nutrientAmounts(texts, { allowZero: false })
-  const isValid = invalid.length === 0
-  const isChanged = !sameNutrientAmounts(amounts, user.nutrientTargets)
+const MISSING_TARGETS_HINT =
+  'Trage im Profil dein Geburtsdatum ein und speichere, dann wird dein Tagesbedarf berechnet.'
 
-  // Opened from the middle of the profile: start at the top, and leave the profile at the top too.
-  useEffect(() => {
-    window.scrollTo(0, 0)
-    return () => window.scrollTo(0, 0)
-  }, [])
-
-  function save(event) {
-    event.preventDefault()
-    if (!isValid || !isChanged) return
-    runAction(async () => {
-      onUserChange(
-        await request(`${API.me}/nutrient-targets`, {
-          method: 'PUT',
-          body: JSON.stringify({ nutrientTargets: amounts }),
-        }),
-      )
-      onError(null)
-      onClose()
-    })
-  }
-
-  return (
-    <section>
-      <TopBar title="Tagesbedarf" closeLabel="Schließen" onClose={onClose} />
-      <form onSubmit={save}>
-        <p className="hint nutrient-note">Alle optional, pro Tag.</p>
-        <NutrientFields
-          texts={texts}
-          onChange={setTexts}
-          labelOf={(nutrient) => (nutrient.limit ? `${nutrient.label} (Obergrenze)` : nutrient.label)}
-          showUnit
-        />
-        {!isValid && <p className="hint warning">Werte müssen größer als 0 sein.</p>}
-        <div className="bar">
-          <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
-            Speichern
-          </button>
-        </div>
-      </form>
-    </section>
-  )
+// "Männer", "Frauen", "divers": for whom the reference values in the daily overview are.
+const TARGET_SEX_LABELS = {
+  MALE: 'Männer',
+  FEMALE: 'Frauen',
+  DIVERSE: 'divers (jeweils der höhere Wert von Männern und Frauen)',
 }
 
-// Weight and height side by side, sex below. Shared by the profile and the registration.
-function BodyDataFields({ weightText, heightText, sex, onWeightChange, onHeightChange, onSexChange }) {
+// Weight and height side by side, birth date and sex below. Shared by the profile and the
+// registration. birthDateTexts: { day, month, year } as typed, see BirthDateFields.
+function BodyDataFields({
+  weightText,
+  heightText,
+  birthDateTexts,
+  sex,
+  onWeightChange,
+  onHeightChange,
+  onBirthDateChange,
+  onSexChange,
+}) {
   return (
     <>
       <div className="body-fields">
@@ -3588,8 +3580,61 @@ function BodyDataFields({ weightText, heightText, sex, onWeightChange, onHeightC
         />
         <UnitNumberField label="Größe" unit="cm" maxDigits={3} value={heightText} onChange={onHeightChange} />
       </div>
+      <BirthDateFields texts={birthDateTexts} onChange={onBirthDateChange} />
       <SegmentedChoice label="Geschlecht" options={SEX_OPTIONS} value={sex} onChange={onSexChange} />
     </>
+  )
+}
+
+const MONTH_OPTIONS = [
+  { value: '', label: 'Monat', disabled: true },
+  ...MONTH_NAMES.map((name, index) => ({ value: String(index + 1), label: name })),
+]
+
+// The birth date as day (two digits), month (a select box) and year (four digits) side by side.
+// Day and year open the number pad and select their text when tapped, so typing replaces it.
+// texts / onChange: { day, month, year }, month "1" to "12" or "" (see bodyData.js).
+function BirthDateFields({ texts, onChange }) {
+  const labelId = useId()
+  const change = (part, text) => onChange({ ...texts, [part]: text })
+  // Selected after the tap has placed the cursor, which would otherwise undo the selection.
+  const selectAll = (event) => {
+    const input = event.currentTarget
+    setTimeout(() => input.select(), 0)
+  }
+  return (
+    <div className="field">
+      <span id={labelId}>Geburtsdatum</span>
+      <div className="birth-date" role="group" aria-labelledby={labelId}>
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="bday-day"
+          aria-label="Tag"
+          placeholder="TT"
+          value={texts.day}
+          onFocus={selectAll}
+          onChange={(event) => change('day', sanitizeNumberInput(event.target.value, 2))}
+        />
+        <SelectBox
+          label="Monat"
+          className="fill"
+          value={texts.month}
+          options={MONTH_OPTIONS}
+          onChange={(month) => change('month', month)}
+        />
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="bday-year"
+          aria-label="Jahr"
+          placeholder="JJJJ"
+          value={texts.year}
+          onFocus={selectAll}
+          onChange={(event) => change('year', sanitizeNumberInput(event.target.value, 4))}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -3661,9 +3706,10 @@ function HealthConnectSetting({ activity, onError }) {
 }
 
 // What is missing or out of range in the body data of a registration, or null.
-function bodyDataProblem({ weightKg, heightCm, sex }) {
+function bodyDataProblem({ weightKg, heightCm, birthDate, sex }) {
   if (Number.isNaN(weightKg)) return `Bitte gib dein Gewicht an (${WEIGHT_MIN}–${WEIGHT_MAX} kg).`
   if (Number.isNaN(heightCm)) return `Bitte gib deine Größe an (${HEIGHT_MIN}–${HEIGHT_MAX} cm).`
+  if (birthDate === null) return 'Bitte gib dein Geburtsdatum an (Tag, Monat, vierstelliges Jahr).'
   if (sex === null) return 'Bitte wähle dein Geschlecht.'
   return null
 }
@@ -3697,7 +3743,7 @@ function passwordProblem(password, passwordRepeat) {
 }
 
 // "Anmelden" logs in. "Registrieren" opens the registration view: the same fields plus "repeat
-// password" and the body data (weight, height, sex), with "Registrieren" as its only button and
+// password" and the body data (weight, height, birth date, sex), with "Registrieren" as its only button and
 // "×" (or the back button) back to the login. Enter in a field triggers the highlighted button.
 // The server field is pre-filled with the server used last; another address only replaces it
 // once a login there succeeded.
@@ -3706,9 +3752,11 @@ function LoginPage({ onLoggedIn }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordRepeat, setPasswordRepeat] = useState('')
-  // Required when registering: the app needs them to turn steps into calories.
+  // Required when registering: the app needs them to turn steps into calories and to compute the
+  // daily nutrient targets.
   const [weightText, setWeightText] = useState('')
   const [heightText, setHeightText] = useState('')
+  const [birthDateTexts, setBirthDateTexts] = useState(() => birthDateParts(null))
   const [sex, setSex] = useState(null)
   const [isRegistering, setIsRegistering] = useState(false)
   const [error, setError] = useState(null)
@@ -3757,6 +3805,7 @@ function LoginPage({ onLoggedIn }) {
     const bodyData = {
       weightKg: numberIn(weightText, WEIGHT_MIN, WEIGHT_MAX),
       heightCm: wholeNumberIn(heightText, HEIGHT_MIN, HEIGHT_MAX),
+      birthDate: birthDateFromParts(birthDateTexts, localDate(new Date())),
       sex,
     }
     const problem =
@@ -3857,9 +3906,11 @@ function LoginPage({ onLoggedIn }) {
           <BodyDataFields
             weightText={weightText}
             heightText={heightText}
+            birthDateTexts={birthDateTexts}
             sex={sex}
             onWeightChange={setWeightText}
             onHeightChange={setHeightText}
+            onBirthDateChange={setBirthDateTexts}
             onSexChange={setSex}
           />
         )}
@@ -4063,7 +4114,6 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [recipeBooking, setRecipeBooking] = useState(null) // booking view of a recipe, see bookingFor
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
   const [foodFormLayer, setFoodFormLayer] = useState(null) // portion view on top of it, see FoodForm
-  const [profileLayer, setProfileLayer] = useState(null) // daily targets on top of it, see ProfilePage
   const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
   // Details of a food or recipe from the database or the shopping list search:
   // { kind, entry, variationId, copying }, see FoodInfo and RecipeInfo.
@@ -4776,7 +4826,6 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function closeProfile() {
     setError(null)
-    setProfileLayer(null)
     setView('list')
   }
 
@@ -4891,7 +4940,6 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'nutrients') closeNutrients()
     else if (view === 'checklist' && tasksOpen) setTasksOpen(false)
     else if (view === 'checklist') closeChecklist()
-    else if (view === 'profile' && profileLayer) setProfileLayer(null)
     else if (view === 'profile') closeProfile()
   }
 
@@ -4928,7 +4976,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {view === 'nutrients' && <NutrientOverview user={user} meals={meals} onClose={goBack} />}
+      {view === 'nutrients' && (
+        <NutrientOverview user={user} meals={meals} activity={activity} today={today} onClose={goBack} />
+      )}
 
       {view === 'checklist' && !tasksOpen && (
         <ChecklistPage entries={checklist} onToggle={toggleTask} onManage={openTasks} onClose={goBack} />
@@ -5026,8 +5076,6 @@ function MealTracker({ user, onUserChange, onLogout }) {
         <ProfilePage
           user={user}
           activity={activity}
-          layer={profileLayer}
-          onLayerChange={setProfileLayer}
           onUserChange={onUserChange}
           onLogout={onLogout}
           onClose={goBack}
