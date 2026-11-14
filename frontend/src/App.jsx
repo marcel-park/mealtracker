@@ -1243,82 +1243,95 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
   )
 }
 
-// Foods and recipes, to look at, add and edit. Stays mounted while a form is open (hidden),
-// so the search survives. version: reloads the list when it changes (after saving).
-// onAddFoodToList, onAddRecipeToList: the cart button of a row (see ShoppingRecipeAdd for
-// recipes). addedToList: { kind, id } of the entry just put on the shopping list, whose cart
-// button shows ✓ for a moment, like "+" when booking.
+// Foods and recipes in a searchable list. Stays mounted while something is opened on top of it
+// (hidden), so the search survives. version: reloads the list when it changes (after saving).
+// Tapping a row opens its details (onOpen). The button at the right of a row depends on mode:
+// - 'manage' (food database): edit, greyed out for entries of others (onEdit); "+" in the header
+//   creates a new food or recipe (onNew);
+// - 'shop' (adding to the shopping list): the cart (onAddToList); addedToList: { kind, id } of
+//   the entry just put on the list, whose cart shows ✓ for a moment, like "+" when booking.
+// All callbacks get the kind (KIND_FOODS or KIND_RECIPES) and the entry.
 function FoodDatabase({
   hidden,
   version,
-  addedToList,
-  onOpenFood,
-  onOpenRecipe,
-  onAddFoodToList,
-  onAddRecipeToList,
+  mode,
+  addedToList = null,
+  closeLabel = 'Schließen',
+  onOpen,
+  onEdit,
+  onAddToList,
+  onNew,
   onClose,
   onError,
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const entries = useCatalog(search.kind, search, version, onError)
-  const isRecipes = search.kind === KIND_RECIPES
-  const addLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
+  const { kind } = search
+  const isRecipes = kind === KIND_RECIPES
+  const newLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
 
   return (
     <section hidden={hidden}>
-      <CatalogHeader
-        search={search}
-        onSearchChange={setSearch}
-        closeLabel="Schließen"
-        onClose={onClose}
-      >
-        <button
-          type="button"
-          className="add"
-          title={addLabel}
-          aria-label={addLabel}
-          onClick={() => (isRecipes ? onOpenRecipe(null) : onOpenFood(NEW_FOOD))}
-        >
-          <PlusIcon size={22} />
-        </button>
+      <CatalogHeader search={search} onSearchChange={setSearch} closeLabel={closeLabel} onClose={onClose}>
+        {mode === 'manage' && (
+          <button
+            type="button"
+            className="add"
+            title={newLabel}
+            aria-label={newLabel}
+            onClick={() => onNew(kind)}
+          >
+            <PlusIcon size={22} />
+          </button>
+        )}
       </CatalogHeader>
       {entries.length === 0 ? (
         <p className="empty">{isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}</p>
       ) : (
         <div className="rows">
-          {isRecipes
-            ? entries.map((recipe) => (
-                <DatabaseRow
-                  key={recipe.id}
-                  entry={recipe}
-                  sub={<RecipeSummary recipe={recipe} />}
-                  justAdded={addedToList?.kind === KIND_RECIPES && addedToList.id === recipe.id}
-                  onOpen={onOpenRecipe}
-                  onAddToList={onAddRecipeToList}
-                />
-              ))
-            : entries.map((food) => (
-                <DatabaseRow
-                  key={food.id}
-                  entry={food}
-                  sub={<KcalPer100 kcal={food.kcalPer100} unit={food.unit} />}
-                  justAdded={addedToList?.kind === KIND_FOODS && addedToList.id === food.id}
-                  onOpen={onOpenFood}
-                  onAddToList={onAddFoodToList}
-                />
-              ))}
+          {entries.map((entry) => (
+            <DatabaseRow
+              key={entry.id}
+              entry={entry}
+              sub={isRecipes ? <RecipeSummary recipe={entry} /> : <KcalPer100 kcal={entry.kcalPer100} unit={entry.unit} />}
+              onOpen={() => onOpen(kind, entry)}
+            >
+              {mode === 'manage' ? (
+                <button
+                  type="button"
+                  className="weigh-btn"
+                  title={entry.owned ? 'Bearbeiten' : 'Gehört dir nicht'}
+                  aria-label={`${entry.name} bearbeiten`}
+                  disabled={!entry.owned}
+                  onClick={() => onEdit(kind, entry)}
+                >
+                  <PencilIcon />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="weigh-btn"
+                  title="Zur Einkaufsliste"
+                  aria-label={`${entry.name} zur Einkaufsliste hinzufügen`}
+                  onClick={() => onAddToList(kind, entry)}
+                >
+                  {addedToList?.kind === kind && addedToList.id === entry.id ? '✓' : <CartIcon size={22} />}
+                </button>
+              )}
+            </DatabaseRow>
+          ))}
         </div>
       )}
     </section>
   )
 }
 
-// A food or recipe in the database list; sub is the second line (kcal, portions). The row opens
-// the form, the cart button puts the entry on the shopping list (justAdded: shows ✓ instead).
-function DatabaseRow({ entry, sub, justAdded = false, onOpen, onAddToList }) {
+// A food or recipe in a database list; sub is the second line (kcal, portions), children the
+// button at the right. Tapping the row opens the details.
+function DatabaseRow({ entry, sub, onOpen, children }) {
   return (
     <div className="row">
-      <button type="button" className="row-open" onClick={() => onOpen(entry)}>
+      <button type="button" className="row-open" onClick={onOpen}>
         <span className="main">
           <span className="name">
             {entry.name}
@@ -1327,25 +1340,8 @@ function DatabaseRow({ entry, sub, justAdded = false, onOpen, onAddToList }) {
           <span className="sub">{sub}</span>
         </span>
       </button>
-      <button
-        type="button"
-        className="weigh-btn"
-        title="Zur Einkaufsliste"
-        aria-label={`${entry.name} zur Einkaufsliste hinzufügen`}
-        onClick={() => onAddToList(entry)}
-      >
-        {justAdded ? '✓' : <CartIcon size={22} />}
-      </button>
+      {children}
     </div>
-  )
-}
-
-// Who may change an entry, as a line above a read-only form.
-function NotOwnedHint({ what }) {
-  return (
-    <p className="hint read-only-hint">
-      Dieses {what} gehört dir nicht. Du kannst es verwenden, aber nicht ändern.
-    </p>
   )
 }
 
@@ -1354,7 +1350,7 @@ const FOOD_UNIT_OPTIONS = [
   { value: FOOD_UNIT_ML, label: 'Milliliter' },
 ]
 
-// Only the owner can edit; everybody else sees the values read-only.
+// Creating or editing a food of the user's own (foods of others only have details, see FoodInfo).
 //
 // Nutrition values are per 100 g or 100 ml, as the unit select next to the calories says. The unit
 // may change even when the food is used (booked, or in a recipe): the amounts there keep their
@@ -1367,7 +1363,6 @@ const FOOD_UNIT_OPTIONS = [
 // meanwhile, so nothing typed is lost.
 function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   const isNew = food.id === null
-  const readOnly = !food.owned
   const [name, setName] = useState(toText(food.name))
   const [unit, setUnit] = useState(food.unit)
   const [kcal, setKcal] = useState(toText(food.kcalPer100))
@@ -1379,7 +1374,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   const newPortionCount = useRef(0) // for the keys of new portions, see foods.js
   // The name of a new food is focused when the form opens, but not again when it comes back from
   // the portion view: autoFocus would jump to the top and open the keyboard once more.
-  const [focusName, setFocusName] = useState(!readOnly && isNew)
+  const [focusName, setFocusName] = useState(isNew)
 
   // Field names as the backend expects them.
   const values = {
@@ -1400,7 +1395,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
 
   function submit(event) {
     event.preventDefault()
-    if (isValid && !readOnly) onSave(food.id, values)
+    if (isValid) onSave(food.id, values)
   }
 
   // key null: a new portion
@@ -1431,16 +1426,11 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
     )
   }
 
-  let title = 'Lebensmittel bearbeiten'
-  if (isNew) title = 'Lebensmittel hinzufügen'
-  else if (readOnly) title = 'Lebensmittel'
-
   return (
     <section>
-      <TopBar title={title} closeLabel="Schließen" onClose={onClose} />
-      {readOnly && <NotOwnedHint what="Lebensmittel" />}
+      <TopBar title={isNew ? 'Lebensmittel hinzufügen' : 'Lebensmittel bearbeiten'} closeLabel="Schließen" onClose={onClose} />
       <form onSubmit={submit}>
-        <fieldset className="plain" disabled={readOnly}>
+        <fieldset className="plain">
           <label className="field">
             <span>Name</span>
             <input
@@ -1462,7 +1452,6 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
                 className="wide"
                 value={unit}
                 options={FOOD_UNIT_OPTIONS}
-                disabled={readOnly}
                 onChange={setUnit}
               />
             </div>
@@ -1470,7 +1459,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           <NumberField label={`Protein pro 100 ${symbol}`} value={protein} onChange={setProtein} />
           <NumberField label={`Kohlenhydrate pro 100 ${symbol}`} value={carbs} onChange={setCarbs} />
           <NumberField label={`Fett pro 100 ${symbol}`} value={fat} onChange={setFat} />
-          <VisibilitySwitch published={published} disabled={readOnly} onChange={setPublished} />
+          <VisibilitySwitch published={published} onChange={setPublished} />
           {becomesPrivate && (
             <p className="hint switch-hint">
               Verwendet schon jemand anderes dieses Lebensmittel, bleibt es für alle öffentlich und
@@ -1483,47 +1472,35 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
         <div className="section-head">
           <h2>Portionen</h2>
         </div>
-        {/* Without portions the owner sees just "Portion hinzufügen" below. */}
-        {portions.length === 0 ? (
-          readOnly && <p className="empty">Keine Portionen.</p>
-        ) : (
+        {/* Without portions there is just "Portion hinzufügen" below. */}
+        {portions.length > 0 && (
           <div className="rows">
             {portions.map((portion) => (
               <PortionRow
                 key={portion.key}
                 portion={portion}
                 unit={unit}
-                onEdit={readOnly ? undefined : () => openPortion(portion.key)}
-                onFavorite={
-                  readOnly ? undefined : () => setPortions((current) => setFavoritePortion(current, portion.key))
-                }
+                onEdit={() => openPortion(portion.key)}
+                onFavorite={() => setPortions((current) => setFavoritePortion(current, portion.key))}
               />
             ))}
           </div>
         )}
-        {!readOnly && (
-          <button
-            type="button"
-            className="btn add-more"
-            onClick={() => openPortion(null)}
-          >
-            <PlusIcon size={18} />
-            Portion hinzufügen
-          </button>
-        )}
+        <button type="button" className="btn add-more" onClick={() => openPortion(null)}>
+          <PlusIcon size={18} />
+          Portion hinzufügen
+        </button>
 
-        {!readOnly && (
-          <div className="bar">
-            {!isNew && (
-              <button type="button" className="btn danger-outline" onClick={() => onDelete(food)}>
-                Löschen
-              </button>
-            )}
-            <button type="submit" className="btn primary" disabled={!isValid}>
-              Speichern
+        <div className="bar">
+          {!isNew && (
+            <button type="button" className="btn danger-outline" onClick={() => onDelete(food)}>
+              Löschen
             </button>
-          </div>
-        )}
+          )}
+          <button type="submit" className="btn primary" disabled={!isValid}>
+            Speichern
+          </button>
+        </div>
       </form>
     </section>
   )
@@ -1537,7 +1514,11 @@ function PortionRow({ portion, unit, onEdit, onFavorite }) {
       <div className="row-open">
         <span className="main">
           <span className="name">{portion.name}</span>
-          <span className="sub">{formatAmount(portion.amount, unit)}</span>
+          <span className="sub">
+            {formatAmount(portion.amount, unit)}
+            {/* read-only (no buttons): the star's meaning in words */}
+            {!onEdit && portion.favorite && ' · Standardportion'}
+          </span>
         </span>
       </div>
       {onEdit && (
@@ -1764,7 +1745,7 @@ function CopyRecipeDialog({ recipeName, isAdjusted, onCopy, onClose }) {
 
   return (
     <FormDialog
-      title="Als eigenes Rezept speichern"
+      title="In eigenen Rezepten speichern"
       confirmLabel="Speichern"
       canConfirm={canConfirm}
       onConfirm={() => onCopy({ name, asVariation: isAdjusted && asVariation, variationName })}
@@ -1819,14 +1800,13 @@ function editableQuantity(item) {
   return unitQuantity(item.originalAmount || DEFAULT_AMOUNT)
 }
 
-// Name, portions, visibility and the foods of a recipe, or one of its variations (owner only).
-// Tapping a food changes its amount. Switching between original and variations drops unsaved
-// changes. Recipes of others are shown read-only.
+// Name, portions, visibility and the foods of a recipe of the user's own, or one of its
+// variations (recipes of others only have details, see RecipeInfo). Tapping a food changes its
+// amount. Switching between original and variations drops unsaved changes.
 //
 // Buttons, stacked at the bottom: a new recipe is saved as it is. A changed original is either
 // saved as a new variation or overwritten (red, with a confirmation). A variation is saved into
-// itself. "Löschen" (red, with a confirmation) comes last. A recipe of somebody else can only be
-// copied: "In eigene Rezepte speichern" (onCopy, see CopyRecipeDialog).
+// itself. "Löschen" (red, with a confirmation) comes last.
 function RecipeEditor({
   editor,
   onChange,
@@ -1836,13 +1816,11 @@ function RecipeEditor({
   onSaveAsVariation,
   onOverwrite,
   onDelete,
-  onCopy,
   onClose,
 }) {
   const servingsId = useId()
   const { recipe, variationId, items, layer } = editor
   const isNew = editor.id === null
-  const readOnly = !editor.owned
   const isVariation = variationId !== null
   const variations = recipe?.variations ?? []
   const servings = parseFloat(editor.servingsText)
@@ -1883,7 +1861,7 @@ function RecipeEditor({
   // Enter saves only where there is just one way to save.
   function submit(event) {
     event.preventDefault()
-    if (isValid && !readOnly && !isSavedOriginal) onSave()
+    if (isValid && !isSavedOriginal) onSave()
   }
 
   if (layer?.type === 'amount') {
@@ -1901,15 +1879,13 @@ function RecipeEditor({
 
   let title = 'Rezept bearbeiten'
   if (isNew) title = 'Rezept anlegen'
-  else if (readOnly) title = 'Rezept'
   else if (isVariation) title = 'Variation bearbeiten'
 
   return (
     <section>
       <TopBar title={title} closeLabel="Schließen" onClose={onClose} />
-      {readOnly && <NotOwnedHint what="Rezept" />}
       <form onSubmit={submit}>
-        {!readOnly && variations.length > 0 && (
+        {variations.length > 0 && (
           <div className="field">
             {/* e.g. "Variation von Bratkartoffeln": the original's name as saved */}
             <span>{isVariation ? `Variation von ${recipe.name}` : 'Variation'}</span>
@@ -1925,7 +1901,7 @@ function RecipeEditor({
             />
           </div>
         )}
-        <fieldset className="plain" disabled={readOnly}>
+        <fieldset className="plain">
           <label className="field">
             <span>{isVariation ? 'Name der Variation' : 'Name'}</span>
             <input
@@ -2016,63 +1992,48 @@ function RecipeEditor({
                 key={item.food.id}
                 item={item}
                 showDeviation={isVariation}
-                onOpen={readOnly ? undefined : () => onChange({ layer: { type: 'amount', foodId: item.food.id } })}
-                onRemove={readOnly ? undefined : () => remove(item)}
+                onOpen={() => onChange({ layer: { type: 'amount', foodId: item.food.id } })}
+                onRemove={() => remove(item)}
               />
             ))}
           </div>
         )}
-        {!readOnly && (
-          <button type="button" className="btn add-more" onClick={onAddFoods}>
-            <PlusIcon size={18} />
-            Lebensmittel hinzufügen
-          </button>
-        )}
+        <button type="button" className="btn add-more" onClick={onAddFoods}>
+          <PlusIcon size={18} />
+          Lebensmittel hinzufügen
+        </button>
 
-        {!readOnly && (
-          <div className={isNew ? 'bar' : 'bar stacked'}>
-            {isSavedOriginal ? (
-              <>
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={!isValid || !changes.items}
-                  onClick={() => onChange({ layer: { type: 'saveVariation' } })}
-                >
-                  Variation erstellen
-                </button>
-                <button
-                  type="button"
-                  className="btn danger"
-                  disabled={!isValid || !changes.any}
-                  onClick={onOverwrite}
-                >
-                  Original überschreiben
-                </button>
-              </>
-            ) : (
-              <button type="submit" className="btn primary" disabled={!isValid}>
-                {isVariation ? 'Variation speichern' : 'Rezept speichern'}
+        <div className={isNew ? 'bar' : 'bar stacked'}>
+          {isSavedOriginal ? (
+            <>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!isValid || !changes.items}
+                onClick={() => onChange({ layer: { type: 'saveVariation' } })}
+              >
+                Variation erstellen
               </button>
-            )}
-            {!isNew && (
-              <button type="button" className="btn danger" onClick={onDelete}>
-                {isVariation ? 'Variation löschen' : 'Rezept löschen'}
+              <button
+                type="button"
+                className="btn danger"
+                disabled={!isValid || !changes.any}
+                onClick={onOverwrite}
+              >
+                Original überschreiben
               </button>
-            )}
-          </div>
-        )}
-        {readOnly && (
-          <div className="bar">
-            <button
-              type="button"
-              className="btn primary"
-              onClick={() => onChange({ layer: { type: 'copy' } })}
-            >
-              In eigene Rezepte speichern
+            </>
+          ) : (
+            <button type="submit" className="btn primary" disabled={!isValid}>
+              {isVariation ? 'Variation speichern' : 'Rezept speichern'}
             </button>
-          </div>
-        )}
+          )}
+          {!isNew && (
+            <button type="button" className="btn danger" onClick={onDelete}>
+              {isVariation ? 'Variation löschen' : 'Rezept löschen'}
+            </button>
+          )}
+        </div>
       </form>
 
       {layer?.type === 'saveVariation' && (
@@ -2082,12 +2043,128 @@ function RecipeEditor({
           onClose={() => onChange({ layer: null })}
         />
       )}
-      {layer?.type === 'copy' && (
+    </section>
+  )
+}
+
+// ----- Details (food database and shopping list search) -----
+
+// One value of the details, its name above it. wide: over the whole width of the card.
+function Info({ label, wide = false, children }) {
+  return (
+    <div className={wide ? 'info wide' : 'info'}>
+      <span className="info-label">{label}</span>
+      <span className="info-value">{children}</span>
+    </div>
+  )
+}
+
+const visibilityLabel = (published) => (published ? 'Öffentlich' : 'Privat')
+
+// What a food is, as text: name, kcal and nutrients per 100 g / ml, unit, visibility, portions.
+// Nothing to change here; owners edit with the pencil in the list (FoodForm).
+function FoodInfo({ food, onClose }) {
+  const per100 = `pro 100 ${unitSymbol(food.unit)}`
+  return (
+    <section>
+      <TopBar title="Lebensmittel" closeLabel="Schließen" onClose={onClose} />
+      <div className="info-card">
+        <Info label="Name" wide>
+          {food.name}
+        </Info>
+        <Info label={`Kcal ${per100}`}>{formatNumber(food.kcalPer100)}</Info>
+        <Info label="Einheit">{FOOD_UNIT_OPTIONS.find((option) => option.value === food.unit)?.label}</Info>
+        <Info label={`Protein ${per100}`}>{formatNumber(food.protein)} g</Info>
+        <Info label={`Kohlenhydrate ${per100}`}>{formatNumber(food.carbs)} g</Info>
+        <Info label={`Fett ${per100}`}>{formatNumber(food.fat)} g</Info>
+        <Info label="Sichtbarkeit">{visibilityLabel(food.published)}</Info>
+      </div>
+
+      <div className="section-head">
+        <h2>Portionen</h2>
+      </div>
+      {food.portions.length === 0 ? (
+        <p className="empty">Keine Portionen.</p>
+      ) : (
+        <div className="rows">
+          {food.portions.map((portion) => (
+            <PortionRow key={portion.id} portion={portion} unit={food.unit} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// What a recipe is, as text: name, portions, kcal per portion, visibility and the ingredients.
+// The owner can look at the variations (select at the top, like in the editor); editing goes
+// through the pencil in the list (RecipeEditor). A recipe of somebody else can be copied: "In
+// eigenen Rezepten speichern" (onCopy, see CopyRecipeDialog). copying: that dialog is open
+// (onCopying(true / false)), kept outside so the back button closes it.
+function RecipeInfo({ recipe, variationId, copying, onSelectVariation, onCopying, onCopy, onClose }) {
+  const variation = variationOf(recipe, variationId)
+  const isVariation = variation !== null
+  const variations = recipe.owned ? (recipe.variations ?? []) : []
+  const items = itemsOf(recipe, variation)
+  const totals = totalsOf(items)
+  const servings = servingsOf(recipe, variation)
+
+  return (
+    <section>
+      <TopBar title={isVariation ? 'Variation' : 'Rezept'} closeLabel="Schließen" onClose={onClose} />
+      {variations.length > 0 && (
+        <div className="field">
+          <span>{isVariation ? `Variation von ${recipe.name}` : 'Variation'}</span>
+          <SelectBox
+            label="Original oder Variation"
+            className="wide"
+            value={String(variationId ?? '')}
+            options={[
+              { value: '', label: 'Original' },
+              ...variations.map((other) => ({ value: String(other.id), label: other.name })),
+            ]}
+            onChange={(value) => onSelectVariation(value === '' ? null : Number(value))}
+          />
+        </div>
+      )}
+      <div className="info-card">
+        <Info label={isVariation ? 'Name der Variation' : 'Name'} wide>
+          {isVariation ? variation.name : recipe.name}
+        </Info>
+        <Info label="Portionen gesamt">{formatNumber(servings)}</Info>
+        <Info label="Kcal pro Portion">{formatNumber(Math.round(totals.kcal / servings))}</Info>
+        {isVariation ? (
+          <Info label="Gesamtgewicht">{formatNumber(variation.weightG ?? totals.amount)} g</Info>
+        ) : (
+          <Info label="Sichtbarkeit">{visibilityLabel(recipe.published)}</Info>
+        )}
+      </div>
+
+      <div className="section-head">
+        <h2>Zutaten</h2>
+        <span className="section-meta">
+          {items.length > 0 && `${formatNumber(totals.amount)} g · ${formatKcal(totals.kcal)}`}
+        </span>
+      </div>
+      <div className="rows">
+        {items.map((item) => (
+          <IngredientRow key={item.food.id} item={item} showDeviation={isVariation} />
+        ))}
+      </div>
+
+      {!recipe.owned && (
+        <div className="bar">
+          <button type="button" className="btn primary" onClick={() => onCopying(true)}>
+            In eigenen Rezepten speichern
+          </button>
+        </div>
+      )}
+      {copying && (
         <CopyRecipeDialog
           recipeName={recipe.name}
           isAdjusted={false}
           onCopy={onCopy}
-          onClose={() => onChange({ layer: null })}
+          onClose={() => onCopying(false)}
         />
       )}
     </section>
@@ -2106,7 +2183,7 @@ const BOOKING_UNITS = [
 // added, also just for this one booking. Once something is changed, a save button appears: changes
 // to the original become a new variation ("Variation erstellen"), changes to a variation update
 // that variation ("Variation speichern"). Recipes of
-// others have no variations; they can be copied ("In eigene Rezepte speichern") and then booked
+// others have no variations; they can be copied ("In eigenen Rezepten speichern") and then booked
 // and varied as the user's own.
 function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariation, onCopy, onClose }) {
   const { recipe, unit, quantityText, servingsText, weightText, items, variationId, layer } = booking
@@ -2329,7 +2406,7 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
               disabled={!isValid}
               onClick={() => onChange({ layer: { type: 'copy' } })}
             >
-              In eigene Rezepte speichern
+              In eigenen Rezepten speichern
             </button>
           )}
           <button type="submit" className="btn primary" disabled={!isValid}>
@@ -2363,7 +2440,8 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
 // back; pressing an unchecked entry for a moment lifts it, then it can be dragged up or down to a
 // new place; tapping it opens its quantity; "×" removes it (after asking). items: as the server
 // sends them, already in order (unchecked first). null while loading.
-function ShoppingListPage({ items, onToggle, onEdit, onMoveTo, onRemove, onReset, onClose }) {
+// "Zurücksetzen" and "Hinzufügen" (onAdd: the search with carts) share the bottom bar.
+function ShoppingListPage({ items, onToggle, onEdit, onMoveTo, onRemove, onReset, onAdd, onClose }) {
   // The entry being dragged: { id, from, dy, height }, from its place among the unchecked entries,
   // dy how far it is dragged, height of one entry (all are equally high).
   const [drag, setDrag] = useState(null)
@@ -2408,9 +2486,12 @@ function ShoppingListPage({ items, onToggle, onEdit, onMoveTo, onRemove, onReset
           ))}
         </div>
       )}
-      <div className="bar">
-        <button type="button" className="btn danger wide" disabled={!items?.length} onClick={onReset}>
-          Einkaufsliste zurücksetzen
+      <div className="bar halves">
+        <button type="button" className="btn danger" disabled={!items?.length} onClick={onReset}>
+          Zurücksetzen
+        </button>
+        <button type="button" className="btn primary" onClick={onAdd}>
+          Hinzufügen
         </button>
       </div>
     </section>
@@ -3355,6 +3436,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [foodForm, setFoodForm] = useState(null) // food shown in the food database form
   const [foodFormLayer, setFoodFormLayer] = useState(null) // portion view on top of it, see FoodForm
   const [recipeEditor, setRecipeEditor] = useState(null) // recipe editor, see NEW_EDITOR
+  // Details of a food or recipe from the database or the shopping list search:
+  // { kind, entry, variationId, copying }, see FoodInfo and RecipeInfo.
+  const [catalogDetail, setCatalogDetail] = useState(null)
   // Food search on top of the recipe editor or the booking view: null or { target, entries,
   // previewing }, target 'editor' | 'booking'; entries are the foods about to be added.
   const [recipeSearch, setRecipeSearch] = useState(null)
@@ -3362,6 +3446,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [shoppingList, setShoppingList] = useState(null) // items of the shopping list, null until loaded
   // Putting a database entry on the shopping list: null, { food } or { recipe }.
   const [shoppingAdd, setShoppingAdd] = useState(null)
+  const [shoppingSearch, setShoppingSearch] = useState(false) // the search to add to the list is open
   const [shoppingEdit, setShoppingEdit] = useState(null) // shopping list entry whose quantity is changed
   // { kind, id } of the database entry just put on the shopping list: its cart shows ✓ for a moment.
   const [addedToList, setAddedToList] = useState(null)
@@ -3611,6 +3696,45 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
+  // ----- food database: details -----
+
+  function openCatalogDetail(kind, entry) {
+    setNotice(null)
+    setCatalogDetail({ kind, entry, variationId: null, copying: false })
+  }
+
+  function updateCatalogDetail(changes) {
+    setCatalogDetail((current) => ({ ...current, ...changes }))
+  }
+
+  // A recipe of somebody else becomes the user's own private copy; the details then show it.
+  function copyDetailRecipe({ name }) {
+    const source = catalogDetail.entry
+    runAction(async () => {
+      const copy = await request(API.recipes, {
+        method: 'POST',
+        body: JSON.stringify(
+          recipeRequest({
+            name,
+            servingsText: String(source.servings),
+            published: false,
+            items: itemsOf(source, null),
+          }),
+        ),
+      })
+      setCatalogDetail({ kind: KIND_RECIPES, entry: copy, variationId: null, copying: false })
+      setNotice(`„${copy.name}“ ist jetzt dein eigenes Rezept.`)
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
+  // The pencil in the database list (own entries only) and "+" for a new one.
+  function openEditor(kind, entry) {
+    if (kind === KIND_RECIPES) openRecipe(entry)
+    else openFood(entry ?? NEW_FOOD)
+  }
+
   // ----- food database: foods -----
 
   function openFood(food) {
@@ -3792,29 +3916,6 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
-  // A recipe of somebody else, shown read-only, becomes the user's own private copy; the editor
-  // then shows that copy, ready to be changed.
-  function copyEditorRecipe({ name }) {
-    const { recipe: source } = recipeEditor
-    runAction(async () => {
-      const copy = await request(API.recipes, {
-        method: 'POST',
-        body: JSON.stringify(
-          recipeRequest({
-            name,
-            servingsText: String(source.servings),
-            published: false,
-            items: itemsOf(source, null),
-          }),
-        ),
-      })
-      setRecipeEditor(editorFor(copy))
-      setNotice(`„${copy.name}“ ist jetzt dein eigenes Rezept.`)
-      reloadCatalog()
-      setError(null)
-    })
-  }
-
   // Deletes the variation shown in the editor (back to the original), or the whole recipe.
   function askDeleteRecipe() {
     const editor = recipeEditor
@@ -3988,6 +4089,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function closeShoppingList() {
     setError(null)
+    setShoppingSearch(false)
     setView('list')
   }
 
@@ -4012,6 +4114,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (recipeBooking) setRecipeBooking(null)
     else if (recipeEditor?.layer) updateEditor({ layer: null })
     else if (recipeEditor) setRecipeEditor(null)
+    else if (catalogDetail?.copying) updateCatalogDetail({ copying: false })
+    else if (catalogDetail) setCatalogDetail(null)
     else if (shoppingAdd) setShoppingAdd(null)
     else if (shoppingEdit) setShoppingEdit(null)
     else if (foodFormLayer) setFoodFormLayer(null)
@@ -4019,6 +4123,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'preview') setView('search')
     else if (view === 'search' || view === 'edit') discardDraft()
     else if (view === 'foods') closeFoods()
+    else if (view === 'shopping' && shoppingSearch) setShoppingSearch(false)
     else if (view === 'shopping') closeShoppingList()
     else if (view === 'profile') closeProfile()
   }
@@ -4065,7 +4170,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {view === 'shopping' && !shoppingEdit && (
+      {view === 'shopping' && !shoppingEdit && !shoppingSearch && (
         <ShoppingListPage
           items={shoppingList}
           onToggle={toggleShoppingItem}
@@ -4073,8 +4178,53 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onMoveTo={moveShoppingItem}
           onRemove={askRemoveShoppingItem}
           onReset={askResetShoppingList}
+          onAdd={() => {
+            setError(null)
+            setShoppingSearch(true)
+          }}
           onClose={goBack}
         />
+      )}
+
+      {/* Adding to the shopping list: the database with carts instead of pencils. */}
+      {view === 'shopping' && shoppingSearch && (
+        <>
+          <FoodDatabase
+            hidden={catalogDetail !== null || shoppingAdd !== null}
+            version={catalogVersion}
+            mode="shop"
+            addedToList={addedToList}
+            closeLabel="Zurück zur Einkaufsliste"
+            onOpen={openCatalogDetail}
+            onAddToList={(kind, entry) => {
+              setNotice(null)
+              setShoppingAdd(kind === KIND_RECIPES ? { recipe: entry } : { food: entry })
+            }}
+            onClose={goBack}
+            onError={setError}
+          />
+          {shoppingAdd?.food && (
+            <FoodDetail
+              food={shoppingAdd.food}
+              initial={initialAmountInput(shoppingAdd.food)}
+              confirmLabel="Zur Einkaufsliste hinzufügen"
+              onConfirm={(food, quantity) =>
+                addToShoppingList([{ food, ...quantity }], { kind: KIND_FOODS, id: food.id })
+              }
+              onClose={goBack}
+            />
+          )}
+          {shoppingAdd?.recipe && (
+            <ShoppingRecipeAdd
+              key={shoppingAdd.recipe.id}
+              recipe={shoppingAdd.recipe}
+              onConfirm={(items, use) =>
+                addToShoppingList(items, { kind: KIND_RECIPES, id: use.recipeId }, use)
+              }
+              onClose={goBack}
+            />
+          )}
+        </>
       )}
 
       {view === 'profile' && (
@@ -4141,43 +4291,15 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'foods' && (
         <>
           <FoodDatabase
-            hidden={foodForm !== null || recipeEditor !== null || shoppingAdd !== null}
+            hidden={foodForm !== null || recipeEditor !== null || catalogDetail !== null}
             version={catalogVersion}
-            addedToList={addedToList}
-            onOpenFood={openFood}
-            onOpenRecipe={openRecipe}
-            onAddFoodToList={(food) => {
-              setNotice(null)
-              setShoppingAdd({ food })
-            }}
-            onAddRecipeToList={(recipe) => {
-              setNotice(null)
-              setShoppingAdd({ recipe })
-            }}
+            mode="manage"
+            onOpen={openCatalogDetail}
+            onEdit={openEditor}
+            onNew={(kind) => openEditor(kind, null)}
             onClose={goBack}
             onError={setError}
           />
-          {shoppingAdd?.food && (
-            <FoodDetail
-              food={shoppingAdd.food}
-              initial={initialAmountInput(shoppingAdd.food)}
-              confirmLabel="Zur Einkaufsliste hinzufügen"
-              onConfirm={(food, quantity) =>
-                addToShoppingList([{ food, ...quantity }], { kind: KIND_FOODS, id: food.id })
-              }
-              onClose={goBack}
-            />
-          )}
-          {shoppingAdd?.recipe && (
-            <ShoppingRecipeAdd
-              key={shoppingAdd.recipe.id}
-              recipe={shoppingAdd.recipe}
-              onConfirm={(items, use) =>
-                addToShoppingList(items, { kind: KIND_RECIPES, id: use.recipeId }, use)
-              }
-              onClose={goBack}
-            />
-          )}
           {foodForm && (
             <FoodForm
               key={foodForm.id ?? 'new'}
@@ -4199,11 +4321,26 @@ function MealTracker({ user, onUserChange, onLogout }) {
               onSaveAsVariation={saveEditorAsVariation}
               onOverwrite={() => saveOriginal(true)}
               onDelete={askDeleteRecipe}
-              onCopy={copyEditorRecipe}
               onClose={goBack}
             />
           )}
         </>
+      )}
+
+      {/* Details from the database or the shopping list search, over the list (kept mounted). */}
+      {(view === 'foods' || (view === 'shopping' && shoppingSearch)) && catalogDetail?.kind === KIND_FOODS && (
+        <FoodInfo food={catalogDetail.entry} onClose={goBack} />
+      )}
+      {(view === 'foods' || (view === 'shopping' && shoppingSearch)) && catalogDetail?.kind === KIND_RECIPES && (
+        <RecipeInfo
+          recipe={catalogDetail.entry}
+          variationId={catalogDetail.variationId}
+          copying={catalogDetail.copying}
+          onSelectVariation={(variationId) => updateCatalogDetail({ variationId })}
+          onCopying={(copying) => updateCatalogDetail({ copying })}
+          onCopy={copyDetailRecipe}
+          onClose={goBack}
+        />
       )}
 
       {/* Adds foods to the recipe editor or the booking view. Recipes cannot contain recipes,
