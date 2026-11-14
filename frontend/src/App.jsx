@@ -50,8 +50,10 @@ import {
   bookedNutrients,
   formatNutrient,
   formatNutrientAmount,
+  hasTypedNutrients,
   nutrientAmounts,
   nutrientPartProblems,
+  nutrientProfileTexts,
   nutrientTexts,
   sameNutrientAmounts,
   statedNutrientGroups,
@@ -475,7 +477,17 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
 // Search field with the filter row below it. Both stick to the top while the list scrolls.
 // Filter row: "only confirmed" toggle, whose entries, foods or recipes; the two selects share the
 // width. children: extra buttons at the end (the "+" of the food database).
-function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked = false, children }) {
+// filtersLocked: the filters are fixed by the view (see NutrientProfileSearch); they show what
+// applies, greyed out, and cannot be changed.
+function CatalogHeader({
+  search,
+  onSearchChange,
+  closeLabel,
+  onClose,
+  kindLocked = false,
+  filtersLocked = false,
+  children,
+}) {
   const { query, scope, confirmedOnly, kind } = search
   const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
 
@@ -494,14 +506,13 @@ function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked
         />
       </div>
       <div className="catalog-filter">
-        {/* Disabled until foods and recipes can be confirmed; the backend filter exists. */}
         <button
           type="button"
           className="toggle-btn"
           aria-pressed={confirmedOnly}
-          title="Nur bestätigte: kommt bald"
+          title={filtersLocked ? 'Nur bestätigte (hier immer an)' : 'Nur bestätigte'}
           aria-label="Nur bestätigte"
-          disabled
+          disabled={filtersLocked}
           onClick={() => onSearchChange({ ...search, confirmedOnly: !confirmedOnly })}
         >
           <SealIcon size={22} />
@@ -511,6 +522,7 @@ function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked
           className="fill"
           value={scope ?? ''}
           options={SCOPE_OPTIONS}
+          disabled={filtersLocked}
           onChange={(value) => onSearchChange({ ...search, scope: value === '' ? null : value })}
         />
         <SelectBox
@@ -518,7 +530,7 @@ function CatalogHeader({ search, onSearchChange, closeLabel, onClose, kindLocked
           className="fill fill-more"
           value={kindLocked ? KIND_FOODS : kind}
           options={CATALOG_KINDS}
-          disabled={kindLocked}
+          disabled={kindLocked || filtersLocked}
           onChange={(value) => onSearchChange({ ...search, kind: value })}
         />
         {children}
@@ -894,7 +906,8 @@ function MealList({
   onEdit,
   onDelete,
   onOpenChecklist,
-  isChecklistDone,
+  hasOpenShopping,
+  hasOpenTasks,
   onOpenFoods,
   onOpenShoppingList,
   onOpenProfile,
@@ -904,20 +917,21 @@ function MealList({
     <section>
       <div className="list-head">
         <div className="toolbar">
+          {/* Orange while something is left to do; otherwise like the other buttons, never green. */}
           <button
             type="button"
-            className="tool-btn"
-            title="Einkaufsliste"
-            aria-label="Einkaufsliste"
+            className={hasOpenShopping ? 'tool-btn attention' : 'tool-btn'}
+            title={hasOpenShopping ? 'Einkaufsliste: noch nicht alles abgehakt' : 'Einkaufsliste'}
+            aria-label={hasOpenShopping ? 'Einkaufsliste, noch offen' : 'Einkaufsliste'}
             onClick={onOpenShoppingList}
           >
             <CartIcon />
           </button>
           <button
             type="button"
-            className={isChecklistDone ? 'tool-btn done' : 'tool-btn'}
-            title={isChecklistDone ? 'Checkliste: alles erledigt' : 'Checkliste'}
-            aria-label="Checkliste"
+            className={hasOpenTasks ? 'tool-btn attention' : 'tool-btn'}
+            title={hasOpenTasks ? 'Checkliste: Aufgaben offen' : 'Checkliste'}
+            aria-label={hasOpenTasks ? 'Checkliste, Aufgaben offen' : 'Checkliste'}
             onClick={onOpenChecklist}
           >
             <ChecklistIcon />
@@ -1473,7 +1487,13 @@ const FOOD_UNIT_OPTIONS = [
 // favorite. They are saved together with the food. The layer lives in MealTracker, so the back
 // button closes the portion view; everything else stays in this component, which stays mounted
 // meanwhile, so nothing typed is lost.
-function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
+//
+// "Nährstoffprofil ableiten", first in "Weitere Nährwerte", opens the search of confirmed public
+// foods (layer { type: 'derive' }, see NutrientProfileSearch). The picked food's unit, kcal, macros
+// and optional nutrients are copied into the fields: a hard copy, no reference, so they can be
+// changed afterwards and a later change of the source does not reach this food. If something is
+// typed already, onAsk (the ConfirmDialog of MealTracker) asks before it is replaced.
+function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose, onError }) {
   const isNew = food.id === null
   const [name, setName] = useState(toText(food.name))
   const [unit, setUnit] = useState(food.unit)
@@ -1488,6 +1508,9 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   // The name of a new food is focused when the form opens, but not again when it comes back from
   // the portion view: autoFocus would jump to the top and open the keyboard once more.
   const [focusName, setFocusName] = useState(isNew)
+  // "Weitere Nährwerte" is open again when the form comes back from the profile search.
+  const [nutrientsOpen, setNutrientsOpen] = useState(false)
+  const [derivedFrom, setDerivedFrom] = useState(null) // name of the food whose profile was copied
 
   const { amounts: nutrients, invalid: invalidNutrients } = nutrientAmounts(nutrientTextsByKey)
   // Field names as the backend expects them.
@@ -1522,6 +1545,48 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
   function openPortion(key) {
     setFocusName(false)
     onLayerChange({ type: 'portion', key })
+  }
+
+  function openProfileSearch() {
+    setFocusName(false)
+    setNutrientsOpen(true)
+    onLayerChange({ type: 'derive' })
+  }
+
+  function copyProfile(source) {
+    const profile = nutrientProfileTexts(source)
+    setUnit(profile.unit)
+    setKcal(profile.kcal)
+    setProtein(profile.protein)
+    setCarbs(profile.carbs)
+    setFat(profile.fat)
+    setNutrientTextsByKey(profile.nutrients)
+    setDerivedFrom(source.name)
+  }
+
+  function pickProfile(source) {
+    onLayerChange(null)
+    if (!hasTypedNutrients({ kcal, protein, carbs, fat, nutrients: nutrientTextsByKey })) {
+      copyProfile(source)
+      return
+    }
+    const unitNote = source.unit !== unit ? ` Die Einheit wird ${unitName(source.unit)}.` : ''
+    onAsk({
+      title: 'Nährstoffprofil übernehmen?',
+      text: `Die Nährwerte von „${source.name}“ ersetzen alle eingetragenen Nährwerte.${unitNote}`,
+      confirmLabel: 'Übernehmen',
+      tone: 'primary',
+      onConfirm: () => {
+        copyProfile(source)
+        onAsk(null)
+      },
+    })
+  }
+
+  if (layer?.type === 'derive') {
+    return (
+      <NutrientProfileSearch onPick={pickProfile} onClose={() => onLayerChange(null)} onError={onError} />
+    )
   }
 
   if (layer?.type === 'portion') {
@@ -1579,7 +1644,14 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           <NumberField label={`Protein pro 100 ${symbol}`} value={protein} onChange={setProtein} />
           <NumberField label={`Kohlenhydrate pro 100 ${symbol}`} value={carbs} onChange={setCarbs} />
           <NumberField label={`Fett pro 100 ${symbol}`} value={fat} onChange={setFat} />
-          <Collapsible title="Weitere Nährwerte">
+          <Collapsible title="Weitere Nährwerte" initiallyOpen={nutrientsOpen}>
+            <button type="button" className="btn add-more derive-profile" onClick={openProfileSearch}>
+              <PlusIcon size={18} />
+              Nährstoffprofil ableiten
+            </button>
+            {derivedFrom !== null && (
+              <p className="hint nutrient-note">Nährwerte von „{derivedFrom}“ übernommen.</p>
+            )}
             <p className="hint nutrient-note">Alle optional, pro 100 {symbol}.</p>
             <NutrientFields texts={nutrientTextsByKey} onChange={setNutrientTextsByKey} />
           </Collapsible>
@@ -1633,6 +1705,44 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onClose }) {
           </button>
         </div>
       </form>
+    </section>
+  )
+}
+
+// The search behind "Nährstoffprofil ableiten": only confirmed public foods, as their values come
+// from an official source. The filter row shows this, greyed out, and cannot be changed; only the
+// text can be searched. Tapping a food picks it (onPick).
+const PROFILE_SEARCH = { ...NEW_SEARCH, scope: 'PUBLIC', confirmedOnly: true, kind: KIND_FOODS }
+
+function NutrientProfileSearch({ onPick, onClose, onError }) {
+  const [query, setQuery] = useState('')
+  const search = { ...PROFILE_SEARCH, query }
+  const foods = useCatalog(KIND_FOODS, search, 0, onError)
+
+  return (
+    <section>
+      <CatalogHeader
+        search={search}
+        onSearchChange={(changed) => setQuery(changed.query)}
+        kindLocked
+        filtersLocked
+        closeLabel="Abbrechen"
+        onClose={onClose}
+      />
+      {foods.length === 0 ? (
+        <p className="empty">Kein bestätigtes Lebensmittel gefunden.</p>
+      ) : (
+        <div className="rows">
+          {foods.map((food) => (
+            <DatabaseRow
+              key={food.id}
+              entry={food}
+              sub={<KcalPer100 kcal={food.kcalPer100} unit={food.unit} />}
+              onOpen={() => onPick(food)}
+            />
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -2182,8 +2292,9 @@ function RecipeEditor({
 
 // One value of the details, its name above it. wide: over the whole width of the card.
 // A heading that opens and closes the content below it, closed at first.
-function Collapsible({ title, children }) {
-  const [open, setOpen] = useState(false)
+// initiallyOpen: open when it appears, e.g. when a form comes back from a view on top of it.
+function Collapsible({ title, initiallyOpen = false, children }) {
+  const [open, setOpen] = useState(initiallyOpen)
   const contentId = useId()
   return (
     <div className="collapsible">
@@ -3923,8 +4034,10 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // { kind, id } of the database entry just put on the shopping list: its cart shows ✓ for a moment.
   const [addedToList, setAddedToList] = useState(null)
   const [checklist, setChecklist] = useState(null) // today's checklist entries, null until loaded
-  // Today has tasks and all of them are done: the checklist button turns green.
-  const isChecklistDone = checklist !== null && checklist.length > 0 && checklist.every((entry) => entry.done)
+  // Something left to do turns its button in the main view orange: a task of today not done yet,
+  // an entry on the shopping list not ticked off. Empty or all done: the normal colour.
+  const hasOpenTasks = checklist?.some((entry) => !entry.done) ?? false
+  const hasOpenShopping = shoppingList?.some((item) => !item.checked) ?? false
   const [tasksOpen, setTasksOpen] = useState(false) // "Aufgaben verwalten" is open
   const [tasks, setTasks] = useState(null) // all tasks, null while loading
   const [taskEditor, setTaskEditor] = useState(null) // task form, see taskEditorFor
@@ -3970,6 +4083,22 @@ function MealTracker({ user, onUserChange, onLogout }) {
       isCurrent = false
     }
   }, [mealsUrl, checklistUrl])
+
+  // The shopping list is loaded at start too, for the colour of the cart in the main view.
+  // Afterwards every change answers with the whole list (see changeShoppingList).
+  useEffect(() => {
+    let isCurrent = true
+    request(API.shoppingList)
+      .then((items) => {
+        if (isCurrent) setShoppingList(items)
+      })
+      .catch((error) => {
+        if (isCurrent) setError(error.message)
+      })
+    return () => {
+      isCurrent = false
+    }
+  }, [])
 
   const reloadCatalog = () => setCatalogVersion((version) => version + 1)
 
@@ -4743,7 +4872,8 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onEdit={editMeal}
           onDelete={askDeleteMeal}
           onOpenChecklist={openChecklist}
-          isChecklistDone={isChecklistDone}
+          hasOpenShopping={hasOpenShopping}
+          hasOpenTasks={hasOpenTasks}
           onOpenFoods={openFoods}
           onOpenShoppingList={openShoppingList}
           onOpenProfile={openProfile}
@@ -4930,7 +5060,9 @@ function MealTracker({ user, onUserChange, onLogout }) {
               onLayerChange={setFoodFormLayer}
               onSave={saveFood}
               onDelete={askDeleteFood}
+              onAsk={setConfirm}
               onClose={goBack}
+              onError={setError}
             />
           )}
           {recipeEditor && !recipeSearch && (

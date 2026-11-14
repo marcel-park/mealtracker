@@ -31,7 +31,9 @@ export const NUTRIENT_GROUPS = [
       { key: 'VITAMIN_C', label: 'Vitamin C', unit: 'mg' },
       { key: 'VITAMIN_B1', label: 'Vitamin B1 (Thiamin)', unit: 'mg' },
       { key: 'VITAMIN_B2', label: 'Vitamin B2 (Riboflavin)', unit: 'mg' },
-      { key: 'VITAMIN_B3', label: 'Vitamin B3 (Niacin)', unit: 'mg' },
+      // Niacin-Äquivalent: das Niacin des Lebensmittels plus das, was der Körper aus seinem Tryptophan
+      // bildet (60 mg Tryptophan = 1 mg Niacin). So geben es der BLS und die DGE-Referenzwerte an.
+      { key: 'VITAMIN_B3', label: 'Vitamin B3 (Niacin-Äquivalent)', unit: 'mg' },
       { key: 'VITAMIN_B5', label: 'Vitamin B5 (Pantothensäure)', unit: 'mg' },
       { key: 'VITAMIN_B6', label: 'Vitamin B6', unit: 'mg' },
       { key: 'VITAMIN_B7', label: 'Vitamin B7 (Biotin)', unit: 'µg' },
@@ -68,6 +70,27 @@ export function nutrientTexts(amounts) {
   return Object.fromEntries(
     Object.entries(amounts ?? {}).map(([key, amount]) => [key, String(amount).replace('.', ',')]),
   )
+}
+
+// The nutrient profile of a food as the fields of the food form hold it, for "Nährstoffprofil
+// ableiten": the unit, kcal and macros per 100 g / ml, and every optional nutrient that is stated.
+// The values are copied, not referenced: a later change of the source does not reach the copy.
+// Nutrients the source does not state stay empty (unknown).
+export function nutrientProfileTexts(food) {
+  return {
+    unit: food.unit,
+    kcal: String(food.kcalPer100),
+    protein: String(food.protein),
+    carbs: String(food.carbs),
+    fat: String(food.fat),
+    nutrients: nutrientTexts(food.nutrients),
+  }
+}
+
+// Whether a nutrient field of the food form holds anything (kcal, macros, optional nutrients):
+// copying a profile would replace it, so the form asks first.
+export function hasTypedNutrients({ kcal, protein, carbs, fat, nutrients }) {
+  return [kcal, protein, carbs, fat, ...Object.values(nutrients)].some((text) => text.trim() !== '')
 }
 
 // The typed texts as amounts for the backend, empty fields left out. invalid: keys whose text is
