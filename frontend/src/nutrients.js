@@ -1,5 +1,5 @@
-// The optional nutrients of a food besides kcal, protein, carbs and fat, and the user's daily
-// target for each. Keys as the backend names them (enum Nutrient); the units are fixed, as on
+// The optional nutrients of a food besides kcal, protein, carbs and fat (the user's daily target
+// for each is computed, see dailyTargets.js). Keys as the backend names them (enum Nutrient); the units are fixed, as on
 // nutrition labels. A food states them per 100 g or 100 ml; only stated ones are sent and stored,
 // a missing one is unknown, not 0.
 
@@ -94,25 +94,18 @@ export function hasTypedNutrients({ kcal, protein, carbs, fat, nutrients }) {
 }
 
 // The typed texts as amounts for the backend, empty fields left out. invalid: keys whose text is
-// no number (a trailing comma) or below min (0 for foods; daily targets must be above 0).
-export function nutrientAmounts(texts, { allowZero = true } = {}) {
+// no number (a trailing comma) or below 0.
+export function nutrientAmounts(texts) {
   const amounts = {}
   const invalid = []
   for (const { key } of NUTRIENTS) {
     const text = (texts[key] ?? '').trim()
     if (text === '') continue
     const amount = text.endsWith(',') ? NaN : Number(text.replace(',', '.'))
-    if (Number.isNaN(amount) || amount < 0 || (!allowZero && amount === 0)) invalid.push(key)
+    if (Number.isNaN(amount) || amount < 0) invalid.push(key)
     else amounts[key] = amount
   }
   return { amounts, invalid }
-}
-
-// Whether two sets of amounts are the same; undefined counts as none.
-export function sameNutrientAmounts(a, b) {
-  const first = a ?? {}
-  const second = b ?? {}
-  return NUTRIENTS.every(({ key }) => first[key] === second[key])
 }
 
 // What a part exceeds, as the backend checks it (FoodRequest): sugar the carbs, each fatty acid

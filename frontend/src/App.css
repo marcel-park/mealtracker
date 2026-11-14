@@ -1327,6 +1327,22 @@ fieldset.plain:disabled input {
   min-width: 0;
 }
 
+/* birth date: day, month, year side by side */
+.birth-date {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) 6rem;
+  gap: 8px;
+}
+
+.birth-date input {
+  min-width: 0;
+  text-align: center;
+}
+
+.birth-date .select-trigger {
+  height: 100%;
+}
+
 .body-hint {
   margin: -8px 0 16px;
 }
@@ -1463,7 +1479,7 @@ fieldset.plain:disabled input {
   flex: 1;
 }
 
-/* ----- Optional nutrients (FoodForm, FoodInfo, NutrientTargetsPage) ----- */
+/* ----- Optional nutrients (FoodForm, FoodInfo, NutrientOverview) ----- */
 
 /* a heading row that opens and closes what follows; the chevron turns when open */
 .collapsible {
@@ -1533,10 +1549,6 @@ fieldset.plain:disabled input {
 
 .part-problem {
   margin: 12px 0 0;
-}
-
-.targets-btn {
-  margin-bottom: 16px;
 }
 
 /* the summary on the main view opens the daily targets */
