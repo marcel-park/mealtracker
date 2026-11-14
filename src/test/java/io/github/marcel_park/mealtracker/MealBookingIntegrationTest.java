@@ -113,6 +113,96 @@ class MealBookingIntegrationTest {
     // Portions against the real schema (Flyway V6): the unique name per food (case- and
     // accent-insensitive by collation), the flush order in FoodService.applyPortions, and the unit
     // change of a booked food.
+    // Through the whole stack on MariaDB: one task per weekday, and on each day of the week of 16
+    // to 22 November 2026 (Monday to Sunday) only the task of that day is on the checklist.
+    @Test
+    void checklist_listsEachTaskOnItsWeekdayOnly() throws Exception {
+        String token = register();
+        String[] days = {"MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"};
+        for (String day : days) {
+            mockMvc.perform(as(token, post("/api/tasks"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"%s\",\"weekdays\":[\"%s\"],\"items\":[]}".formatted(day, day)))
+                    .andExpect(status().isCreated());
+        }
+
+        LocalDate monday = LocalDate.of(2026, 11, 16);
+        for (int i = 0; i < days.length; i++) {
+            mockMvc.perform(as(token, get("/api/checklist")).param("date", monday.plusDays(i).toString()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(1))
+                    .andExpect(jsonPath("$[0].task.name").value(days[i]));
+        }
+    }
+
+    @Test
+    void checklist_tickingOffBooksTheTaskAsAMeal_deletingTheMealOpensItAgain() throws Exception {
+        String token = register();
+        long powderId = createFood(token, "Proteinpulver (IT)", 380);
+        LocalDate day = LocalDate.of(2026, 11, 14); // a Saturday
+        MvcResult created = mockMvc.perform(as(token, post("/api/tasks"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Shake (IT)","weekdays":["SATURDAY","SUNDAY"],"items":[{"foodId":%d,"amount":30}]}
+                                """.formatted(powderId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.weekdays[0]").value("SATURDAY"))
+                .andReturn();
+        long taskId = idOf(created);
+
+        // Ticking off books a meal titled like the task, linked to it
+        MvcResult done = mockMvc.perform(as(token, put("/api/checklist/" + taskId + "/done"))
+                        .param("date", day.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].done").value(true))
+                .andReturn();
+        Number mealId = JsonPath.read(done.getResponse().getContentAsString(), "$[0].mealId");
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath("$[0].title").value("Shake (IT)"))
+                .andExpect(jsonPath("$[0].taskId").value(taskId))
+                .andExpect(jsonPath("$[0].kcal").value(114.0));
+
+        // Such a meal cannot be changed, only deleted, which opens the task again
+        mockMvc.perform(as(token, put("/api/meals/" + mealId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"X\",\"items\":[{\"foodId\":%d,\"amount\":10}]}".formatted(powderId)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(as(token, delete("/api/meals/" + mealId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, get("/api/checklist")).param("date", day.toString()))
+                .andExpect(jsonPath("$[0].done").value(false));
+
+        // Ticking it on again deletes the meal it booked
+        mockMvc.perform(as(token, put("/api/checklist/" + taskId + "/done")).param("date", day.toString()))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, delete("/api/checklist/" + taskId + "/done")).param("date", day.toString()))
+                .andExpect(jsonPath("$[0].done").value(false));
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath("$.length()").value(0));
+
+        // Not on the checklist on a Monday, and cannot be ticked off there
+        mockMvc.perform(as(token, get("/api/checklist")).param("date", "2026-11-16"))
+                .andExpect(jsonPath("$.length()").value(0));
+        mockMvc.perform(as(token, put("/api/checklist/" + taskId + "/done")).param("date", "2026-11-16"))
+                .andExpect(status().isBadRequest());
+
+        // The food is used by the task: deleting it only takes away its owner
+        mockMvc.perform(as(token, delete("/api/foods/" + powderId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, get("/api/foods/" + powderId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.owned").value(false));
+
+        // Deleting the task keeps the meals it booked, as ordinary meals
+        mockMvc.perform(as(token, put("/api/checklist/" + taskId + "/done")).param("date", day.toString()))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, delete("/api/tasks/" + taskId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath("$[0].title").value("Shake (IT)"))
+                .andExpect(jsonPath("$[0].taskId").doesNotExist());
+    }
+
     @Test
     void nutrients_areSavedWithTheFood_andReplacedAsAWhole() throws Exception {
         String token = register();

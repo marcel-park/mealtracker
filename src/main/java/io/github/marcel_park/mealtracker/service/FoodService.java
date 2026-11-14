@@ -17,6 +17,7 @@ import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
 import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
+import io.github.marcel_park.mealtracker.repository.TaskItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,8 +41,8 @@ import java.util.stream.Collectors;
 // - Only the owner may edit or delete a food. Changes to a public food show up everywhere it is
 //   used, in meals and recipes of other users too: that is the deal with public foods.
 // - A food that is still used somewhere is never really deleted, or made private behind the back
-//   of others. It loses its owner instead and stays public for good, so the meals, recipes and
-//   shopping lists that contain it keep working. See delete() and update().
+//   of others. It loses its owner instead and stays public for good, so the meals, recipes,
+//   shopping lists and tasks that contain it keep working. See delete() and update().
 // - The unit (g or ml) may change at any time, even of a used food. Booked amounts stay the same
 //   numbers in the new unit (100 g become 100 ml), and so do their kcal. That is meant for owners
 //   correcting a mistake; the app points it out before saving.
@@ -62,6 +63,7 @@ public class FoodService {
     private final RecipeItemRepository recipeItemRepository;
     private final RecipeVariationItemRepository variationItemRepository;
     private final ShoppingListItemRepository shoppingListItemRepository;
+    private final TaskItemRepository taskItemRepository;
     private final RecipeRepository recipeRepository;
     private final UserRepository userRepository;
 
@@ -69,12 +71,14 @@ public class FoodService {
                        RecipeItemRepository recipeItemRepository,
                        RecipeVariationItemRepository variationItemRepository,
                        ShoppingListItemRepository shoppingListItemRepository,
+                       TaskItemRepository taskItemRepository,
                        RecipeRepository recipeRepository, UserRepository userRepository) {
         this.foodRepository = foodRepository;
         this.mealItemRepository = mealItemRepository;
         this.recipeItemRepository = recipeItemRepository;
         this.variationItemRepository = variationItemRepository;
         this.shoppingListItemRepository = shoppingListItemRepository;
+        this.taskItemRepository = taskItemRepository;
         this.recipeRepository = recipeRepository;
         this.userRepository = userRepository;
     }
@@ -139,7 +143,7 @@ public class FoodService {
         return FoodResponse.from(foodRepository.saveAndFlush(food), userId, used);
     }
 
-    // Still in a meal, recipe, recipe variation or shopping list of anybody, the owner's own
+    // Still in a meal, recipe, recipe variation, shopping list or task of anybody, the owner's own
     // included: the food
     // only loses its owner. It disappears from the owner's "own" foods but stays available, and
     // public, to all. Only a food nothing refers to is really deleted.
@@ -176,14 +180,15 @@ public class FoodService {
         return food;
     }
 
-    // In a meal, recipe, variation or shopping list of anybody, the owner's own included.
+    // In a meal, recipe, variation, shopping list or task of anybody, the owner's own included.
     private boolean isUsed(Long foodId) {
         return mealItemRepository.existsByFoodId(foodId) || recipeItemRepository.existsByFoodId(foodId)
                 || variationItemRepository.existsByFoodId(foodId)
-                || shoppingListItemRepository.existsByFoodId(foodId);
+                || shoppingListItemRepository.existsByFoodId(foodId)
+                || taskItemRepository.existsByFoodId(foodId);
     }
 
-    // isUsed() for a whole list of foods, with four queries instead of four per food.
+    // isUsed() for a whole list of foods, with five queries instead of five per food.
     private Set<Long> findUsedIds(Collection<Long> foodIds) {
         if (foodIds.isEmpty()) {
             return Set.of(); // "in ()" is no valid SQL
@@ -192,6 +197,7 @@ public class FoodService {
         usedIds.addAll(recipeItemRepository.findUsedFoodIds(foodIds));
         usedIds.addAll(variationItemRepository.findUsedFoodIds(foodIds));
         usedIds.addAll(shoppingListItemRepository.findUsedFoodIds(foodIds));
+        usedIds.addAll(taskItemRepository.findUsedFoodIds(foodIds));
         return usedIds;
     }
 
@@ -199,7 +205,8 @@ public class FoodService {
         return mealItemRepository.existsByFoodIdAndMealUserIdNot(food.getId(), userId)
                 || recipeItemRepository.existsByFoodIdAndRecipeOwnerIdNot(food.getId(), userId)
                 || variationItemRepository.existsByFoodIdAndVariationRecipeOwnerIdNot(food.getId(), userId)
-                || shoppingListItemRepository.existsByFoodIdAndUserIdNot(food.getId(), userId);
+                || shoppingListItemRepository.existsByFoodIdAndUserIdNot(food.getId(), userId)
+                || taskItemRepository.existsByFoodIdAndTaskUserIdNot(food.getId(), userId);
     }
 
     private void apply(FoodRequest request, Food food) {
@@ -312,6 +319,8 @@ public class FoodService {
         variationItemRepository.findByPortionId(portionId)
                 .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
         shoppingListItemRepository.findByPortionId(portionId)
+                .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
+        taskItemRepository.findByPortionId(portionId)
                 .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
     }
 

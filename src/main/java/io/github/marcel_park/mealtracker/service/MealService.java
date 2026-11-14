@@ -4,11 +4,13 @@ import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
+import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
 import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
+import io.github.marcel_park.mealtracker.repository.TaskCompletionRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,8 @@ import java.util.stream.Collectors;
 // Every method takes the id of the logged-in user and only ever touches that user's meals.
 // A meal of another user is reported as "not found", so its existence is not revealed either.
 // Foods can only be added if the user may see them (own or public ones, see FoodService).
+// A meal booked by ticking off a task (see ChecklistService) can only be deleted as a whole;
+// deleting it opens the task again.
 // A recipe is booked by the app as its foods with scaled amounts, so meals know no recipes. The
 // request only says which recipes (and variations) were booked, for the preselection next time.
 @Service
@@ -30,21 +34,21 @@ public class MealService {
     private final FoodService foodService;
     private final UserRepository userRepository;
     private final RecipeService recipeService;
+    private final TaskCompletionRepository completionRepository;
 
     public MealService(MealRepository mealRepository, FoodService foodService, UserRepository userRepository,
-                       RecipeService recipeService) {
+                       RecipeService recipeService, TaskCompletionRepository completionRepository) {
         this.mealRepository = mealRepository;
         this.foodService = foodService;
         this.userRepository = userRepository;
         this.recipeService = recipeService;
+        this.completionRepository = completionRepository;
     }
 
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
     @Transactional(readOnly = true)
     public List<MealResponse> findAll(Long userId) {
-        return mealRepository.findAllByUserIdOrderByBookedAtDesc(userId).stream()
-                .map(meal -> toResponse(meal, userId))
-                .toList();
+        return toResponses(mealRepository.findAllByUserIdOrderByBookedAtDesc(userId), userId);
     }
 
     // The meals booked on that day, from 0:00 up to 0:00 of the next day, newest first. The main
@@ -52,10 +56,9 @@ public class MealService {
     // its local date, and bookedAt is the server's local time: both have to be in the same zone.
     @Transactional(readOnly = true)
     public List<MealResponse> findBookedOn(Long userId, LocalDate day) {
-        return mealRepository.findAllBookedBetween(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay())
-                .stream()
-                .map(meal -> toResponse(meal, userId))
-                .toList();
+        return toResponses(
+                mealRepository.findAllBookedBetween(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay()),
+                userId);
     }
 
     @Transactional
@@ -67,7 +70,7 @@ public class MealService {
         RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
                 .values()
                 .forEach(requested -> meal.addItem(requested.food(), requested.quantity()));
-        MealResponse response = toResponse(mealRepository.save(meal), userId);
+        MealResponse response = toResponse(mealRepository.save(meal), userId, null);
         recipeService.markUsed(userId, request.recipes());
         return response;
     }
@@ -75,6 +78,9 @@ public class MealService {
     @Transactional
     public MealResponse update(Long userId, Long id, MealRequest request) {
         Meal meal = getEntity(userId, id);
+        if (completionRepository.existsByMealId(id)) {
+            throw new InvalidRequestException("Meal with id " + id + " was booked by a task and can only be deleted");
+        }
         meal.setTitle(request.title());
 
         // Update the item list in place instead of clear() + addItem() for every requested food:
@@ -103,12 +109,15 @@ public class MealService {
 
         // No save() needed: the meal was loaded in this transaction, so Hibernate writes all
         // changes, including added and removed items, on commit.
-        return toResponse(meal, userId);
+        return toResponse(meal, userId, null);
     }
 
+    // A meal booked by a task: the task is open again.
     @Transactional
     public void delete(Long userId, Long id) {
-        mealRepository.delete(getEntity(userId, id));
+        Meal meal = getEntity(userId, id);
+        completionRepository.deleteByMealId(id);
+        mealRepository.delete(meal);
     }
 
     private Meal getEntity(Long userId, Long id) {
@@ -116,13 +125,27 @@ public class MealService {
                 .orElseThrow(() -> new NotFoundException("Meal", id));
     }
 
-    private MealResponse toResponse(Meal meal, Long userId) {
+    // With the task of each meal, found with one query for all of them.
+    private List<MealResponse> toResponses(List<Meal> meals, Long userId) {
+        if (meals.isEmpty()) {
+            return List.of(); // "in ()" is no valid SQL
+        }
+        Map<Long, Long> taskIds = completionRepository.findAllByMealIdIn(meals.stream().map(Meal::getId).toList())
+                .stream()
+                .collect(Collectors.toMap(completion -> completion.getMeal().getId(),
+                        completion -> completion.getTask().getId()));
+        return meals.stream()
+                .map(meal -> toResponse(meal, userId, taskIds.get(meal.getId())))
+                .toList();
+    }
+
+    private MealResponse toResponse(Meal meal, Long userId, Long taskId) {
         List<MealItemResponse> items = meal.getItems().stream()
                 .map(item -> toItemResponse(item, userId))
                 .toList();
         double totalKcal = items.stream().mapToDouble(MealItemResponse::kcal).sum();
         return new MealResponse(
-                meal.getId(), meal.getTitle(), meal.getBookedAt(), totalKcal, items);
+                meal.getId(), meal.getTitle(), meal.getBookedAt(), totalKcal, items, taskId);
     }
 
     private MealItemResponse toItemResponse(MealItem item, Long userId) {

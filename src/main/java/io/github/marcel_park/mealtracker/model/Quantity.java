@@ -54,6 +54,11 @@ public class Quantity {
         return count.setScale(COUNT_SCALE, RoundingMode.HALF_UP);
     }
 
+    // The same quantity as a new object, for another entity: embeddables are not to be shared.
+    public Quantity copy() {
+        return new Quantity(amount, portion, portionCount);
+    }
+
     public boolean isPortion() {
         return portion != null;
     }

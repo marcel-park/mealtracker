@@ -5,14 +5,18 @@ import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
 import io.github.marcel_park.mealtracker.dto.RecipeUseRequest;
+import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
 import io.github.marcel_park.mealtracker.model.Quantity;
+import io.github.marcel_park.mealtracker.model.Task;
+import io.github.marcel_park.mealtracker.model.TaskCompletion;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
+import io.github.marcel_park.mealtracker.repository.TaskCompletionRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -21,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -35,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -55,6 +61,9 @@ class MealServiceTest {
     @Mock
     private RecipeService recipeService;
 
+    @Mock
+    private TaskCompletionRepository completionRepository;
+
     private MealService service;
 
     // The logged-in user on whose behalf every call is made.
@@ -67,7 +76,7 @@ class MealServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MealService(mealRepository, foodService, userRepository, recipeService);
+        service = new MealService(mealRepository, foodService, userRepository, recipeService, completionRepository);
     }
 
     // ---------- test data ----------
@@ -108,6 +117,21 @@ class MealServiceTest {
             List<MealResponse> result = service.findAll(USER_ID);
 
             assertThat(result).extracting(MealResponse::id).containsExactly(2L, 1L);
+        }
+
+        @Test
+        void findAll_mapsTheTaskThatBookedAMeal() {
+            Meal shake = meal(2L, "Proteinshake");
+            Task task = new Task();
+            task.setId(9L);
+            when(mealRepository.findAllByUserIdOrderByBookedAtDesc(USER_ID))
+                    .thenReturn(List.of(shake, meal(1L, "Frühstück")));
+            when(completionRepository.findAllByMealIdIn(List.of(2L, 1L)))
+                    .thenReturn(List.of(new TaskCompletion(task, LocalDate.of(2026, 11, 14), shake)));
+
+            List<MealResponse> result = service.findAll(USER_ID);
+
+            assertThat(result).extracting(MealResponse::taskId).containsExactly(9L, null);
         }
 
         @Test
@@ -361,6 +385,18 @@ class MealServiceTest {
         }
 
         @Test
+        void update_mealOfATask_isRejectedAndNothingChanges() {
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+            when(completionRepository.existsByMealId(1L)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.update(USER_ID, 1L, request("Neu", item(1L, 50))))
+                    .isInstanceOf(InvalidRequestException.class);
+
+            assertThat(existing.getTitle()).isEqualTo("Haferflocken, Milch");
+            assertThat(existing.getItems()).hasSize(2);
+        }
+
+        @Test
         void update_passesBookedRecipesOnForThePreselection() {
             when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
             List<RecipeUseRequest> uses = List.of(new RecipeUseRequest(5L, null));
@@ -538,6 +574,18 @@ class MealServiceTest {
             service.delete(USER_ID, 1L);
 
             verify(mealRepository).delete(existing);
+        }
+
+        @Test
+        void delete_opensTheTaskThatBookedTheMealFirst() {
+            Meal existing = meal(1L, "Proteinshake");
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+
+            service.delete(USER_ID, 1L);
+
+            InOrder inOrder = inOrder(completionRepository, mealRepository);
+            inOrder.verify(completionRepository).deleteByMealId(1L);
+            inOrder.verify(mealRepository).delete(existing);
         }
 
         @Test

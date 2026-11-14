@@ -76,7 +76,7 @@ class MealControllerTest {
     private static MealResponse meal(Long id) {
         return new MealResponse(id, "Haferflocken, Milch", BOOKED_AT, 686.0, List.of(
                 new MealItemResponse(food(1L, "Haferflocken", 372), 150.0, 558.0),
-                new MealItemResponse(food(2L, "Milch", 64), 200.0, 128.0)));
+                new MealItemResponse(food(2L, "Milch", 64), 200.0, 128.0)), null);
     }
 
     // ---------- GET /api/meals ----------
@@ -172,7 +172,7 @@ class MealControllerTest {
     @Test
     void list_itemInPortions_hasPortionAndCountNextToTheAmount() throws Exception {
         when(service.findAll(USER_ID)).thenReturn(List.of(new MealResponse(1L, "Ei", BOOKED_AT, 216.0, List.of(
-                new MealItemResponse(food(3L, "Ei", 144), 150.0, 5L, new BigDecimal("2.50"), 216.0)))));
+                new MealItemResponse(food(3L, "Ei", 144), 150.0, 5L, new BigDecimal("2.50"), 216.0)), null)));
 
         mockMvc.perform(get("/api/meals"))
                 .andExpect(status().isOk())
