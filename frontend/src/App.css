@@ -758,6 +758,47 @@ fieldset.plain:disabled input {
   background: var(--surface);
 }
 
+/* steps | calories left | activity, the sides narrower than the middle */
+.day-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.day-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.day-side-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.day-side-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.day-side-kcal {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* what activity earned, and the steps once the step goal is reached */
+.earned {
+  color: var(--ok);
+}
+
 .kcal-left {
   display: flex;
   flex-direction: column;
@@ -1255,4 +1296,41 @@ fieldset.plain:disabled input {
 
 .icon-btn.star.favorite {
   color: var(--favorite);
+}
+
+/* ----- Profile: body data and Health Connect ----- */
+
+/* weight and height side by side */
+.body-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.body-fields .field {
+  min-width: 0;
+}
+
+.body-fields input {
+  min-width: 0;
+}
+
+.body-hint {
+  margin: -8px 0 16px;
+}
+
+.health-field {
+  margin-top: 8px;
+}
+
+.health-field .btn {
+  align-self: flex-start;
+}
+
+/* "Verbunden" with "Trennen" next to it */
+.health-connected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
