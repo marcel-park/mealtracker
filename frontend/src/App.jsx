@@ -741,8 +741,8 @@ function shownActivity(activity, user) {
   return activity.data ? activitySummary(activity.data, user) : null
 }
 
-// Today at a glance. On top, side by side: steps (green once the step goal is reached) with the
-// kcal they earned, the calories left, and the kcal of all activity. The calorie target grows by
+// Today at a glance. On top, side by side: steps (green once the step goal is reached), the
+// calories left, and the kcal of all activity (steps and workouts, see activitySummary). The calorie target grows by
 // that activity, and so do the nutrient targets below, as they are shares of the calories.
 // meals: today's meals. activity: see useActivity.
 function DaySummary({ user, meals, activity }) {
@@ -762,7 +762,6 @@ function DaySummary({ user, meals, activity }) {
           <span className={reachedStepGoal ? 'day-side-value earned' : 'day-side-value'}>
             {shown ? Math.round(shown.steps).toLocaleString(LOCALE) : '–'}
           </span>
-          <span className="day-side-kcal earned">{shown ? earnedKcal(shown.stepKcal) : '–'}</span>
         </div>
         <div className="kcal-left" role="status" aria-label="Kalorien heute">
           <span className={isOver ? 'kcal-left-value over' : 'kcal-left-value'}>
@@ -772,7 +771,7 @@ function DaySummary({ user, meals, activity }) {
         </div>
         <div className="day-side">
           <span className="day-side-label">Aktivität</span>
-          <span className="day-side-value earned">{shown ? earnedKcal(shown.activityKcal) : '–'}</span>
+          <span className="day-side-value activity earned">{shown ? earnedKcal(shown.activityKcal) : '–'}</span>
         </div>
       </div>
       <div className="macro-bars">
@@ -1826,7 +1825,8 @@ function editableQuantity(item) {
 //
 // Buttons, stacked at the bottom: a new recipe is saved as it is. A changed original is either
 // saved as a new variation or overwritten (red, with a confirmation). A variation is saved into
-// itself. "Löschen" (red, with a confirmation) comes last.
+// itself. "Löschen" (red, with a confirmation) comes last. A recipe of somebody else can only be
+// copied: "In eigene Rezepte speichern" (onCopy, see CopyRecipeDialog).
 function RecipeEditor({
   editor,
   onChange,
@@ -1836,6 +1836,7 @@ function RecipeEditor({
   onSaveAsVariation,
   onOverwrite,
   onDelete,
+  onCopy,
   onClose,
 }) {
   const servingsId = useId()
@@ -2061,12 +2062,31 @@ function RecipeEditor({
             )}
           </div>
         )}
+        {readOnly && (
+          <div className="bar">
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => onChange({ layer: { type: 'copy' } })}
+            >
+              In eigene Rezepte speichern
+            </button>
+          </div>
+        )}
       </form>
 
       {layer?.type === 'saveVariation' && (
         <SaveVariationDialog
           recipeName={recipe.name}
           onSave={onSaveAsVariation}
+          onClose={() => onChange({ layer: null })}
+        />
+      )}
+      {layer?.type === 'copy' && (
+        <CopyRecipeDialog
+          recipeName={recipe.name}
+          isAdjusted={false}
+          onCopy={onCopy}
           onClose={() => onChange({ layer: null })}
         />
       )}
@@ -2086,7 +2106,7 @@ const BOOKING_UNITS = [
 // added, also just for this one booking. Once something is changed, a save button appears: changes
 // to the original become a new variation ("Variation erstellen"), changes to a variation update
 // that variation ("Variation speichern"). Recipes of
-// others have no variations; they can be copied ("Als eigenes Rezept speichern") and then booked
+// others have no variations; they can be copied ("In eigene Rezepte speichern") and then booked
 // and varied as the user's own.
 function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariation, onCopy, onClose }) {
   const { recipe, unit, quantityText, servingsText, weightText, items, variationId, layer } = booking
@@ -2309,7 +2329,7 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
               disabled={!isValid}
               onClick={() => onChange({ layer: { type: 'copy' } })}
             >
-              Als eigenes Rezept speichern
+              In eigene Rezepte speichern
             </button>
           )}
           <button type="submit" className="btn primary" disabled={!isValid}>
@@ -3772,6 +3792,29 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
+  // A recipe of somebody else, shown read-only, becomes the user's own private copy; the editor
+  // then shows that copy, ready to be changed.
+  function copyEditorRecipe({ name }) {
+    const { recipe: source } = recipeEditor
+    runAction(async () => {
+      const copy = await request(API.recipes, {
+        method: 'POST',
+        body: JSON.stringify(
+          recipeRequest({
+            name,
+            servingsText: String(source.servings),
+            published: false,
+            items: itemsOf(source, null),
+          }),
+        ),
+      })
+      setRecipeEditor(editorFor(copy))
+      setNotice(`„${copy.name}“ ist jetzt dein eigenes Rezept.`)
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
   // Deletes the variation shown in the editor (back to the original), or the whole recipe.
   function askDeleteRecipe() {
     const editor = recipeEditor
@@ -4156,6 +4199,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
               onSaveAsVariation={saveEditorAsVariation}
               onOverwrite={() => saveOriginal(true)}
               onDelete={askDeleteRecipe}
+              onCopy={copyEditorRecipe}
               onClose={goBack}
             />
           )}
