@@ -1400,3 +1400,50 @@ fieldset.plain:disabled input {
   background: var(--surface);
   box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
 }
+
+/* ----- Details of a food or recipe (FoodInfo, RecipeInfo) -----
+   Values as text in a card, two per row, each with its name above it; nothing to tap. */
+.info-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 16px;
+  margin-bottom: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.info.wide {
+  grid-column: 1 / -1;
+}
+
+.info-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.info-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* the pencil of entries the user does not own */
+.weigh-btn:disabled {
+  background: var(--line);
+  color: var(--muted);
+}
+
+/* two buttons sharing the bottom bar half and half */
+.bar.halves > .btn {
+  flex: 1;
+}
