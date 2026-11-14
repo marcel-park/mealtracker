@@ -3,8 +3,10 @@ import {
   NUTRIENTS,
   bookedNutrients,
   formatNutrient,
+  hasTypedNutrients,
   nutrientAmounts,
   nutrientPartProblems,
+  nutrientProfileTexts,
   nutrientTexts,
   sameNutrientAmounts,
   statedNutrientGroups,
@@ -15,6 +17,60 @@ describe('NUTRIENTS', () => {
     const keys = NUTRIENTS.map(({ key }) => key)
     expect(keys).toHaveLength(30)
     expect(new Set(keys).size).toBe(30)
+  })
+})
+
+describe('nutrientProfileTexts', () => {
+  const carrot = {
+    id: 7,
+    name: 'Möhre (Karotte)',
+    unit: 'G',
+    kcalPer100: 36,
+    protein: 0.94,
+    carbs: 7.2,
+    fat: 0.24,
+    nutrients: { VITAMIN_A: 835.5, POTASSIUM: 320 },
+    portions: [{ id: 3, name: 'Stück', amount: 60, favorite: true }],
+    published: true,
+    confirmed: true,
+  }
+
+  it('copies unit, kcal, macros and the stated nutrients as field texts', () => {
+    expect(nutrientProfileTexts(carrot)).toEqual({
+      unit: 'G',
+      kcal: '36',
+      protein: '0.94',
+      carbs: '7.2',
+      fat: '0.24',
+      nutrients: { VITAMIN_A: '835,5', POTASSIUM: '320' },
+    })
+  })
+
+  it('takes nothing else of the source, and no reference to it', () => {
+    const profile = nutrientProfileTexts(carrot)
+    expect(Object.keys(profile)).not.toContain('name')
+    expect(Object.keys(profile)).not.toContain('portions')
+    profile.nutrients.IRON = '1'
+    expect(carrot.nutrients).not.toHaveProperty('IRON')
+  })
+
+  it('leaves the optional nutrients empty when the source states none', () => {
+    expect(nutrientProfileTexts({ ...carrot, nutrients: {} }).nutrients).toEqual({})
+  })
+})
+
+describe('hasTypedNutrients', () => {
+  const empty = { kcal: '', protein: '', carbs: '', fat: '', nutrients: {} }
+
+  it('is false for an empty form, blanks included', () => {
+    expect(hasTypedNutrients(empty)).toBe(false)
+    expect(hasTypedNutrients({ ...empty, kcal: ' ', nutrients: { IRON: '' } })).toBe(false)
+  })
+
+  it('is true once kcal, a macro or an optional nutrient is typed', () => {
+    expect(hasTypedNutrients({ ...empty, kcal: '0' })).toBe(true)
+    expect(hasTypedNutrients({ ...empty, fat: '3,5' })).toBe(true)
+    expect(hasTypedNutrients({ ...empty, nutrients: { IRON: '1,2' } })).toBe(true)
   })
 })
 

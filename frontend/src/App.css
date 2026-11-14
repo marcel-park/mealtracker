@@ -12,6 +12,7 @@
   --on-accent: #ffffff;
   --danger: #b3382c;
   --ok: #1e7a3c;
+  --attention: #d96a00; /* something to do: unticked shopping entries, open tasks */
   --favorite: #c98a00; /* the star of the default portion */
 
   --gutter: 16px; /* side padding of the app, the bottom bar and the dialog backdrop */
@@ -38,6 +39,7 @@
   --on-accent: #0f1522;
   --danger: #ff8d80;
   --ok: #6fd08c;
+  --attention: #ffa24c;
   --favorite: #f2c14e;
 
   color-scheme: dark;
@@ -1633,9 +1635,14 @@ fieldset.plain:disabled input {
   color: var(--on-accent);
 }
 
-/* the checklist button once all of today's tasks are done */
-.tool-btn.done {
-  color: var(--ok);
+/* cart and checklist while something is left to do (unticked entries, open tasks): orange icon */
+.tool-btn.attention {
+  color: var(--attention); /* only the icon, the frame stays as on the other buttons */
+}
+
+/* "Nährstoffprofil ableiten": first in "Weitere Nährwerte", like "Lebensmittel hinzufügen" */
+.btn.add-more.derive-profile {
+  margin: 0 0 12px;
 }
 
 /* a section heading written as it is, not in capitals ("Zu buchende Lebensmittel") */
