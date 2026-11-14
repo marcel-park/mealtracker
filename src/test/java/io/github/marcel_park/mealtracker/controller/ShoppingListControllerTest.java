@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItem;
@@ -56,7 +57,7 @@ class ShoppingListControllerTest {
 
     private static final List<ShoppingListItemResponse> LIST = List.of(new ShoppingListItemResponse(
             5L,
-            new FoodResponse(3L, "Ei", FoodUnit.G, 144, 12, 1, 10, List.of(), false, true, false, true),
+            new FoodResponse(3L, "Ei", FoodUnit.G, 144, 12, 1, 10, Map.of(), List.of(), false, true, false, true),
             150.0, 50L, new BigDecimal("2.50"), true));
 
     @Test

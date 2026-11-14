@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
@@ -246,7 +247,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, ColorTheme.SYSTEM, false, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, Map.of(), null, null, null, ColorTheme.SYSTEM, false, false));
     }
 
     @Test
@@ -290,5 +291,17 @@ class UserServiceTest {
         assertThat(user.getColorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(result.colorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(user.getCalorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
+    }
+
+    @Test
+    void setNutrientTargets_replacesAllTargets() {
+        User user = existingUser("max@example.com", "geheim123");
+        user.setNutrientTargets(Map.of(Nutrient.IRON, 15.0, Nutrient.ZINC, 10.0));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        UserResponse result = service.setNutrientTargets(1L, Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
+
+        assertThat(user.getNutrientTargets()).isEqualTo(Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
+        assertThat(result.nutrientTargets()).isEqualTo(Map.of(Nutrient.IRON, 11.0, Nutrient.SALT, 6.0));
     }
 }

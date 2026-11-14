@@ -209,6 +209,7 @@ public class FoodService {
         food.setProtein(request.protein());
         food.setCarbs(request.carbs());
         food.setFat(request.fat());
+        food.setNutrients(request.nutrients());
         food.setPublished(request.published());
     }
 

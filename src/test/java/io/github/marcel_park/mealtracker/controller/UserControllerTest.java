@@ -4,6 +4,7 @@ import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.dto.UserResponse;
 import io.github.marcel_park.mealtracker.dto.UserSettingsRequest;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
@@ -20,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,7 +51,7 @@ class UserControllerTest {
 
     private static final UserResponse PROFILE =
             new UserResponse(USER_ID, "max@example.com", 1800, 40, 30, 30, 10_000,
-                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false, false);
+                    Map.of(Nutrient.VITAMIN_D, 20.0), new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false, false);
 
     @Test
     void get_returnsProfileOfTheLoggedInUser() throws Exception {
@@ -129,6 +131,37 @@ class UserControllerTest {
             """)
     void setColorTheme_invalidRequest_returns400(String violation, String body) throws Exception {
         mockMvc.perform(put("/api/users/me/color-theme")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(userService);
+    }
+
+    @Test
+    void setNutrientTargets_passesThemOnForTheLoggedInUser() throws Exception {
+        Map<Nutrient, Double> targets = Map.of(Nutrient.VITAMIN_D, 20.0, Nutrient.SALT, 6.0);
+        when(userService.setNutrientTargets(USER_ID, targets)).thenReturn(PROFILE);
+
+        mockMvc.perform(put("/api/users/me/nutrient-targets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nutrientTargets\":{\"VITAMIN_D\":20,\"SALT\":6}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nutrientTargets.VITAMIN_D").value(20.0));
+
+        verify(userService).setNutrientTargets(USER_ID, targets);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+            unknown nutrient | {"nutrientTargets":{"VITAMIN_X":1}}
+            target 0         | {"nutrientTargets":{"VITAMIN_C":0}}
+            negative target  | {"nutrientTargets":{"VITAMIN_C":-1}}
+            target missing   | {"nutrientTargets":{"VITAMIN_C":null}}
+            targets missing  | {}
+            """)
+    void setNutrientTargets_invalidRequest_returns400(String violation, String body) throws Exception {
+        mockMvc.perform(put("/api/users/me/nutrient-targets")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());

@@ -3,10 +3,13 @@ package io.github.marcel_park.mealtracker.dto;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
+// nutrients: only the stated optional ones, see Nutrient.
 // owned: the requesting user owns the food and may edit it. published: everybody can see it.
 // portions: the favorite (the default when booking) first, then in the order they were added.
 // used: the food is in a meal, recipe or variation of anybody. The app then warns that changing the
@@ -19,6 +22,7 @@ public record FoodResponse(
         double protein,
         double carbs,
         double fat,
+        Map<Nutrient, Double> nutrients,
         List<FoodPortionResponse> portions,
         boolean owned,
         boolean published,
@@ -42,6 +46,7 @@ public record FoodResponse(
                 food.getProtein(),
                 food.getCarbs(),
                 food.getFat(),
+                Nutrient.inOrder(food.getNutrients()),
                 food.getPortions().stream().sorted(PORTION_ORDER).map(FoodPortionResponse::from).toList(),
                 food.isOwnedBy(userId),
                 food.isPublic(),

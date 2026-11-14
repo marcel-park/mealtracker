@@ -23,6 +23,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.hasItems;
 import static org.mockito.ArgumentMatchers.any;
@@ -54,7 +55,7 @@ class RecipeControllerTest {
             """;
 
     private static RecipeResponse chili() {
-        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, List.of(), true, false, false, false);
+        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, Map.of(), List.of(), true, false, false, false);
         return new RecipeResponse(5L, "Chili", 4, true, false, false, 400, 400,
                 List.of(new RecipeItemResponse(beans, 400, 400)),
                 List.of(new VariationResponse(9L, "Mehr Bohnen", null, 1800.0,
@@ -163,7 +164,7 @@ class RecipeControllerTest {
 
     @Test
     void createVariation_returns201() throws Exception {
-        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, List.of(), true, false, false, false);
+        FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, Map.of(), List.of(), true, false, false, false);
         when(service.createVariation(eq(1L), eq(5L), any())).thenReturn(
                 new VariationResponse(9L, "Mehr Bohnen", null, 1800.0, List.of(new VariationItemResponse(beans, 600))));
 

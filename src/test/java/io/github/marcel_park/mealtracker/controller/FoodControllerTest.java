@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
+import io.github.marcel_park.mealtracker.model.Nutrient;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
 import io.github.marcel_park.mealtracker.service.AuthTokenService;
@@ -27,6 +28,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,13 +62,13 @@ class FoodControllerTest {
     private AuthTokenService authTokenService;
 
     private static final String VALID_BODY = """
-            {"name":"Haferflocken","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":7,"published":false,"unit":"G","portions":[]}
+            {"name":"Haferflocken","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":7,"nutrients":{},"published":false,"unit":"G","portions":[]}
             """;
 
     @Test
     void list_returnsFoodsAsJson() throws Exception {
         when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), true, false, false, false)));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(status().isOk())
@@ -95,7 +97,7 @@ class FoodControllerTest {
     @Test
     void create_validRequest_returns201WithBody() throws Exception {
         when(service.create(eq(1L), any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), true, false, false, false));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
 
         mockMvc.perform(post("/api/foods")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -133,7 +135,7 @@ class FoodControllerTest {
     @Test
     void update_validRequest_returns200() throws Exception {
         when(service.update(any(), any(), any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), true, false, false, false));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
 
         mockMvc.perform(put("/api/foods/1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -154,7 +156,7 @@ class FoodControllerTest {
 
     @Test
     void get_existingId_returnsAllFieldsAsJson() throws Exception {
-        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), true, false, false, false));
+        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
 
         mockMvc.perform(get("/api/foods/1"))
                 .andExpect(status().isOk())
@@ -179,7 +181,7 @@ class FoodControllerTest {
     @Test
     void update_invalidRequest_returns400WithFieldErrorsAndDoesNotCallService() throws Exception {
         String invalid = """
-                {"name":"   ","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":-1,"published":false,"unit":"G","portions":[]}
+                {"name":"   ","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":-1,"nutrients":{},"published":false,"unit":"G","portions":[]}
                 """;
 
         mockMvc.perform(put("/api/foods/1")
@@ -246,7 +248,7 @@ class FoodControllerTest {
     @Test
     void list_returnsOwnershipFlags() throws Exception {
         when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), false, true, false, false)));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), false, true, false, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(jsonPath("$[0].owned").value(false))
@@ -302,7 +304,7 @@ class FoodControllerTest {
 
     @Test
     void get_returnsUnitPortionsAndUsedFlag() throws Exception {
-        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Bier", FoodUnit.ML, 42, 0.5, 3, 0,
+        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Bier", FoodUnit.ML, 42, 0.5, 3, 0, Map.of(),
                 List.of(new FoodPortionResponse(4L, "Flasche", 330, true)), true, false, false, true));
 
         mockMvc.perform(get("/api/foods/1"))
@@ -326,20 +328,61 @@ class FoodControllerTest {
                 .andExpect(jsonPath("$.message").value("same name"));
     }
 
+    @Test
+    void create_withNutrients_passesThemToService() throws Exception {
+        mockMvc.perform(post("/api/foods")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(withNutrients("{\"VITAMIN_D\":11,\"OMEGA_3\":2.5,\"IODINE\":34}")))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<FoodRequest> request = ArgumentCaptor.forClass(FoodRequest.class);
+        verify(service).create(eq(1L), request.capture());
+        assertThat(request.getValue().nutrients()).isEqualTo(
+                Map.of(Nutrient.VITAMIN_D, 11.0, Nutrient.OMEGA_3, 2.5, Nutrient.IODINE, 34.0));
+    }
+
+    @Test
+    void create_unknownNutrient_returns400() throws Exception {
+        mockMvc.perform(post("/api/foods")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(withNutrients("{\"VITAMIN_X\":1}")))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void get_returnsNutrients() throws Exception {
+        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Lachs", FoodUnit.G, 200, 20, 2, 13,
+                Map.of(Nutrient.VITAMIN_D, 11.0), List.of(), true, false, false, false));
+
+        mockMvc.perform(get("/api/foods/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nutrients.VITAMIN_D").value(11.0));
+    }
+
     // ---------- FoodRequest validation (POST) ----------
 
     private static String body(String name, String kcalPer100, String protein, String carbs, String fat) {
         return """
-                {"name":%s,"kcalPer100":%s,"protein":%s,"carbs":%s,"fat":%s,"published":false,"unit":"G","portions":[]}
+                {"name":%s,"kcalPer100":%s,"protein":%s,"carbs":%s,"fat":%s,"nutrients":{},"published":false,"unit":"G","portions":[]}
                 """.formatted(name, kcalPer100, protein, carbs, fat);
     }
 
     // A valid food with the given JSON values for unit and portions.
     private static String withUnitAndPortions(String unit, String portions) {
         return """
-                {"name":"Haferflocken","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":7,"published":false,
+                {"name":"Haferflocken","kcalPer100":372,"protein":13.5,"carbs":58.7,"fat":7,"nutrients":{},"published":false,
                  "unit":%s,"portions":%s}
                 """.formatted(unit, portions);
+    }
+
+    // A valid salmon (2 g carbs, 13 g fat) with the given JSON value for nutrients.
+    private static String withNutrients(String nutrients) {
+        return """
+                {"name":"Lachs","kcalPer100":200,"protein":20,"carbs":2,"fat":13,"nutrients":%s,"published":false,
+                 "unit":"G","portions":[]}
+                """.formatted(nutrients);
     }
 
     // Each body breaks exactly one constraint of FoodRequest; the third value is the field that must be reported.
@@ -370,7 +413,20 @@ class FoodControllerTest {
                 Arguments.of("portion amount 0",
                         withUnitAndPortions("\"G\"", "[{\"name\":\"Packung\",\"amount\":0}]"), "portions[0].amount"),
                 Arguments.of("portion amount missing",
-                        withUnitAndPortions("\"G\"", "[{\"name\":\"Packung\"}]"), "portions[0].amount"));
+                        withUnitAndPortions("\"G\"", "[{\"name\":\"Packung\"}]"), "portions[0].amount"),
+                Arguments.of("nutrients missing", withNutrients("null"), "nutrients"),
+                Arguments.of("negative nutrient", withNutrients("{\"FIBER\":-0.1}"), "nutrients[FIBER]"),
+                Arguments.of("nutrient without value", withNutrients("{\"FIBER\":null}"), "nutrients[FIBER]"),
+                Arguments.of("more sugar than carbs", withNutrients("{\"SUGAR\":2.1}"), "nutrientParts"),
+                Arguments.of("more saturated fat than fat", withNutrients("{\"SATURATED_FAT\":13.1}"), "nutrientParts"),
+                Arguments.of("more monounsaturated fat than fat",
+                        withNutrients("{\"MONOUNSATURATED_FAT\":13.1}"), "nutrientParts"),
+                Arguments.of("more polyunsaturated fat than fat",
+                        withNutrients("{\"POLYUNSATURATED_FAT\":13.1}"), "nutrientParts"),
+                Arguments.of("more omega-3 than polyunsaturated fat",
+                        withNutrients("{\"POLYUNSATURATED_FAT\":3,\"OMEGA_3\":3.1}"), "nutrientParts"),
+                Arguments.of("more omega-3 than fat, polyunsaturated fat unknown",
+                        withNutrients("{\"OMEGA_3\":13.1}"), "nutrientParts"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -394,7 +450,13 @@ class FoodControllerTest {
                 Arguments.of("name with exactly 100 chars", body("\"" + "a".repeat(100) + "\"", "372", "13.5", "58.7", "7")),
                 Arguments.of("millilitres", withUnitAndPortions("\"ML\"", "[]")),
                 Arguments.of("portion name with exactly 20 chars, favorite omitted",
-                        withUnitAndPortions("\"G\"", "[{\"name\":\"" + "a".repeat(20) + "\",\"amount\":0.5}]")));
+                        withUnitAndPortions("\"G\"", "[{\"name\":\"" + "a".repeat(20) + "\",\"amount\":0.5}]")),
+                Arguments.of("nutrient 0", withNutrients("{\"VITAMIN_C\":0}")),
+                // Each fatty acid on its own may reach the fat, even if they add up to more (rounding on labels)
+                Arguments.of("parts equal to their whole", withNutrients("""
+                        {"SUGAR":2,"SATURATED_FAT":13,"MONOUNSATURATED_FAT":13,"POLYUNSATURATED_FAT":3,"OMEGA_3":3}
+                        """)),
+                Arguments.of("omega-3 up to the fat, polyunsaturated fat unknown", withNutrients("{\"OMEGA_3\":13}")));
     }
 
     @ParameterizedTest(name = "{0}")

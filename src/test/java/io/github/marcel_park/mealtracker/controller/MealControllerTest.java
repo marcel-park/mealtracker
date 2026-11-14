@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -68,7 +69,7 @@ class MealControllerTest {
     private static final LocalDateTime BOOKED_AT = LocalDateTime.of(2026, 11, 3, 12, 30, 15);
 
     private static FoodResponse food(Long id, String name, double kcalPer100) {
-        return new FoodResponse(id, name, FoodUnit.G, kcalPer100, 10, 50, 5, List.of(),
+        return new FoodResponse(id, name, FoodUnit.G, kcalPer100, 10, 50, 5, Map.of(), List.of(),
                 true, false, false, true);
     }
 
