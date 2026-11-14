@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NUTRIENTS,
+  bookedNutrients,
   formatNutrient,
   nutrientAmounts,
   nutrientPartProblems,
@@ -106,5 +107,23 @@ describe('sameNutrientAmounts', () => {
     expect(sameNutrientAmounts({}, undefined)).toBe(true)
     expect(sameNutrientAmounts({ IRON: 11 }, { IRON: 15 })).toBe(false)
     expect(sameNutrientAmounts({ IRON: 11 }, { IRON: 11, SALT: 6 })).toBe(false)
+  })
+})
+
+describe('bookedNutrients', () => {
+  const egg = { nutrients: { VITAMIN_D: 2.9, IRON: 1.8 } }
+  const milk = { nutrients: { VITAMIN_D: 0.1 } }
+  const oats = {}
+
+  it('adds up the amounts of all items per 100 g or ml', () => {
+    const meals = [
+      { items: [{ food: egg, amount: 120 }, { food: milk, amount: 200 }] },
+      { items: [{ food: oats, amount: 50 }] },
+    ]
+    const totals = bookedNutrients(meals)
+    expect(totals.VITAMIN_D).toBeCloseTo(3.68)
+    expect(totals.IRON).toBeCloseTo(2.16)
+    expect(totals.ZINC).toBe(0)
+    expect(Object.keys(totals)).toHaveLength(30)
   })
 })
