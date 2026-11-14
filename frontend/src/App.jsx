@@ -44,6 +44,19 @@ import {
   msUntilMidnight,
 } from './meals.js'
 import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
+import { activitySummary } from './activity.js'
+import {
+  HEIGHT_MAX,
+  HEIGHT_MIN,
+  SEX_OPTIONS,
+  STEP_GOAL_MAX,
+  WEIGHT_MAX,
+  WEIGHT_MIN,
+  numberIn,
+  sanitizeNumberInput,
+  toFieldText,
+} from './bodyData.js'
+import * as healthConnect from './healthConnect.js'
 import {
   NEW_EDITOR,
   UNIT_GRAM,
@@ -180,6 +193,18 @@ function DatabaseIcon() {
       <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
       <path d="M4.5 5.5v13c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-13" />
       <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
+    </svg>
+  )
+}
+
+// Two arrows in a circle.
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" {...iconProps}>
+      <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
+      <path d="M4 4v4h4" />
+      <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
+      <path d="M20 20v-4h-4" />
     </svg>
   )
 }
@@ -676,22 +701,47 @@ function ConfirmDialog({ title, text, confirmLabel, tone = 'danger', onConfirm, 
   )
 }
 
-// Today at a glance: on top the calories left of the target (red with "zu viel" once it is
-// exceeded), below side by side one bar each for carbs, protein and fat, filled by what is booked
-// of their target (red above 100 %). meals: today's meals.
-function DaySummary({ user, meals }) {
-  const remaining = Math.round(remainingKcal(user.calorieTarget, meals))
+// What the main view shows of today's activity (see useActivity). null: nothing known (browser,
+// still loading, or reading failed without data from earlier today), shown as "–". Not connected:
+// 0 steps and +0 kcal, the same as a day without activity.
+function shownActivity(activity, user) {
+  if (activity.status === 'disconnected') return { steps: 0, stepKcal: 0, activityKcal: 0 }
+  return activity.data ? activitySummary(activity.data, user) : null
+}
+
+// Today at a glance. On top, side by side: steps (green once the step goal is reached) with the
+// kcal they earned, the calories left, and the kcal of all activity. The calorie target grows by
+// that activity, and so do the nutrient targets below, as they are shares of the calories.
+// meals: today's meals. activity: see useActivity.
+function DaySummary({ user, meals, activity }) {
+  const shown = shownActivity(activity, user)
+  const target = user.calorieTarget + (shown?.activityKcal ?? 0)
+  const remaining = Math.round(remainingKcal(target, meals))
   const isOver = remaining < 0
-  const targets = macroTargets(user)
+  const targets = macroTargets({ ...user, calorieTarget: target })
   const booked = bookedMacros(meals)
+  const reachedStepGoal = shown !== null && shown.steps >= user.stepGoal
 
   return (
     <div className="day-summary">
-      <div className="kcal-left" role="status" aria-label="Kalorien heute">
-        <span className={isOver ? 'kcal-left-value over' : 'kcal-left-value'}>
-          {Math.abs(remaining).toLocaleString(LOCALE)}
-        </span>
-        <span className="kcal-left-label">{isOver ? 'kcal zu viel' : 'kcal übrig'}</span>
+      <div className="day-top">
+        <div className="day-side">
+          <span className="day-side-label">Schritte</span>
+          <span className={reachedStepGoal ? 'day-side-value earned' : 'day-side-value'}>
+            {shown ? Math.round(shown.steps).toLocaleString(LOCALE) : '–'}
+          </span>
+          <span className="day-side-kcal earned">{shown ? earnedKcal(shown.stepKcal) : '–'}</span>
+        </div>
+        <div className="kcal-left" role="status" aria-label="Kalorien heute">
+          <span className={isOver ? 'kcal-left-value over' : 'kcal-left-value'}>
+            {Math.abs(remaining).toLocaleString(LOCALE)}
+          </span>
+          <span className="kcal-left-label">{isOver ? 'kcal zu viel' : 'kcal übrig'}</span>
+        </div>
+        <div className="day-side">
+          <span className="day-side-label">Aktivität</span>
+          <span className="day-side-value earned">{shown ? earnedKcal(shown.activityKcal) : '–'}</span>
+        </div>
       </div>
       <div className="macro-bars">
         {MACROS.map(({ key, label }) => (
@@ -701,6 +751,9 @@ function DaySummary({ user, meals }) {
     </div>
   )
 }
+
+// e.g. "+233 kcal"
+const earnedKcal = (kcal) => `+${Math.round(kcal).toLocaleString(LOCALE)} kcal`
 
 // One nutrient: its name, a bar filled by the share of the target that is booked, and below it
 // "30 / 200 g". With a target of 0 g any booked amount counts as too much.
@@ -730,11 +783,21 @@ function MacroBar({ label, booked, target }) {
   )
 }
 
-function MealList({ user, meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenProfile }) {
+// onRefresh: reads the activity again and reloads the meals.
+function MealList({ user, meals, activity, onAdd, onEdit, onDelete, onRefresh, onOpenFoods, onOpenProfile }) {
   return (
     <section>
       <div className="list-head">
         <div className="toolbar">
+          <button
+            type="button"
+            className="tool-btn"
+            title="Aktualisieren"
+            aria-label="Aktualisieren"
+            onClick={onRefresh}
+          >
+            <RefreshIcon />
+          </button>
           <button
             type="button"
             className="tool-btn"
@@ -754,7 +817,7 @@ function MealList({ user, meals, onAdd, onEdit, onDelete, onOpenFoods, onOpenPro
             <AvatarIcon />
           </button>
         </div>
-        <DaySummary user={user} meals={meals} />
+        <DaySummary user={user} meals={meals} activity={activity} />
       </div>
 
       {meals.length > 0 && (
@@ -2192,10 +2255,11 @@ function NumberField({ label, value, onChange }) {
   )
 }
 
-// A whole number with its unit, e.g. "2.000 kcal" or "40 %". While focused it shows only the
-// digits, selected so typing replaces them; only digits can be typed, at most maxDigits. A text
-// field, as a number field cannot show the unit. value / onChange: the digits as text.
-function WholeNumberField({ label, unit, maxDigits, value, onChange }) {
+// A number with its unit, e.g. "2.000 kcal", "40 %" or "80,5 kg". While focused it shows only the
+// number, selected so typing replaces it. Only digits can be typed, at most maxDigits, and with
+// decimals > 0 a decimal comma with that many digits after it. A text field, as a number field
+// cannot show the unit. value / onChange: the number as typed, e.g. "80,5".
+function UnitNumberField({ label, unit, maxDigits, decimals = 0, value, onChange }) {
   const [isFocused, setIsFocused] = useState(false)
   const inputRef = useRef(null)
 
@@ -2210,16 +2274,22 @@ function WholeNumberField({ label, unit, maxDigits, value, onChange }) {
       <input
         ref={inputRef}
         type="text"
-        inputMode="numeric"
+        inputMode={decimals > 0 ? 'decimal' : 'numeric'}
         enterKeyHint="done"
         autoComplete="off"
-        value={isFocused || value === '' ? value : `${Number(value).toLocaleString(LOCALE)} ${unit}`}
+        value={isFocused || value === '' ? value : `${formatTyped(value, decimals)} ${unit}`}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
-        onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, maxDigits))}
+        onChange={(event) => onChange(sanitizeNumberInput(event.target.value, maxDigits, decimals))}
       />
     </label>
   )
+}
+
+// "10000" -> "10.000", "80,5" -> "80,5" (a trailing comma is dropped)
+function formatTyped(text, decimals) {
+  const value = Number(text.replace(',', '.'))
+  return Number.isNaN(value) ? text : value.toLocaleString(LOCALE, { maximumFractionDigits: decimals })
 }
 
 // A whole number from min to max typed into a field, or NaN.
@@ -2228,26 +2298,39 @@ function wholeNumberIn(text, min, max) {
   return text.trim() !== '' && Number.isInteger(value) && value >= min && value <= max ? value : NaN
 }
 
-// Calorie target and, below it, how it splits into carbs, protein and fat (whole percent, together
-// 100). One "Speichern" saves all of it. The grams are shown in the main view.
-function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
+// The settings of the user, saved together with one "Speichern": calorie target, step goal, how the
+// calories split into carbs, protein and fat (whole percent, together 100), and the body data the
+// calories of steps are estimated from. All of them must be filled in. Below: color theme and the
+// connection to Health Connect (Android app only), which is kept on the phone, not on the server.
+// activity: see useActivity.
+function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError }) {
   const [targetText, setTargetText] = useState(String(user.calorieTarget))
+  const [stepGoalText, setStepGoalText] = useState(String(user.stepGoal))
   // { carbsPercent, proteinPercent, fatPercent } as typed
   const [percentTexts, setPercentTexts] = useState(() =>
     Object.fromEntries(MACROS.map(({ percentField }) => [percentField, String(user[percentField])])),
   )
+  const [weightText, setWeightText] = useState(toFieldText(user.weightKg))
+  const [heightText, setHeightText] = useState(toFieldText(user.heightCm))
+  const [sex, setSex] = useState(user.sex)
   const runAction = useActionRunner(onError)
   const themeLabelId = useId()
 
   const settings = {
     calorieTarget: wholeNumberIn(targetText, 1, MAX_CALORIE_TARGET),
+    stepGoal: wholeNumberIn(stepGoalText, 1, STEP_GOAL_MAX),
     ...Object.fromEntries(
       MACROS.map(({ percentField }) => [percentField, wholeNumberIn(percentTexts[percentField], 0, 100)]),
     ),
+    weightKg: numberIn(weightText, WEIGHT_MIN, WEIGHT_MAX),
+    heightCm: wholeNumberIn(heightText, HEIGHT_MIN, HEIGHT_MAX),
   }
   const percentSum = MACROS.reduce((sum, { percentField }) => sum + settings[percentField], 0)
-  const isValid = Object.values(settings).every((value) => !Number.isNaN(value)) && percentSum === 100
-  const isChanged = Object.keys(settings).some((field) => settings[field] !== user[field])
+  const isValid =
+    Object.values(settings).every((value) => !Number.isNaN(value)) && percentSum === 100 && sex !== null
+  const isChanged =
+    sex !== user.sex || Object.keys(settings).some((field) => settings[field] !== user[field])
+  const lacksBodyData = user.weightKg == null || user.heightCm == null || user.sex == null
 
   function save(event) {
     event.preventDefault()
@@ -2256,7 +2339,7 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
       // The color theme cannot be changed yet, so the current value is sent back unchanged.
       const updated = await request(API.me, {
         method: 'PUT',
-        body: JSON.stringify({ ...settings, colorTheme: user.colorTheme }),
+        body: JSON.stringify({ ...settings, sex, colorTheme: user.colorTheme }),
       })
       onUserChange(updated)
       onError(null)
@@ -2273,16 +2356,23 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
       </p>
 
       <form onSubmit={save}>
-        <WholeNumberField
+        <UnitNumberField
           label="Kalorienziel"
           unit="kcal"
           maxDigits={String(MAX_CALORIE_TARGET).length}
           value={targetText}
           onChange={setTargetText}
         />
+        <UnitNumberField
+          label="Schrittziel"
+          unit="Schritte"
+          maxDigits={String(STEP_GOAL_MAX).length}
+          value={stepGoalText}
+          onChange={setStepGoalText}
+        />
         <div className="macro-fields">
           {MACROS.map(({ key, label, percentField }) => (
-            <WholeNumberField
+            <UnitNumberField
               key={key}
               label={label}
               unit="%"
@@ -2295,6 +2385,15 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
         {!Number.isNaN(percentSum) && percentSum !== 100 && (
           <p className="hint warning macro-sum">Zusammen müssen es 100 % sein.</p>
         )}
+        <BodyDataFields
+          weightText={weightText}
+          heightText={heightText}
+          sex={sex}
+          onWeightChange={setWeightText}
+          onHeightChange={setHeightText}
+          onSexChange={setSex}
+        />
+        {lacksBodyData && <p className="hint warning body-hint">Nötig für die Schritt-kcal.</p>}
         <button type="submit" className="btn primary wide" disabled={!isValid || !isChanged}>
           Speichern
         </button>
@@ -2320,6 +2419,8 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
         <span className="hint">Kommt bald.</span>
       </div>
 
+      <HealthConnectSetting activity={activity} onError={onError} />
+
       <div className="bar">
         <button type="button" className="btn danger wide" onClick={onLogout}>
           Abmelden
@@ -2327,6 +2428,101 @@ function ProfilePage({ user, onUserChange, onLogout, onClose, onError }) {
       </div>
     </section>
   )
+}
+
+// Weight and height side by side, sex below. Shared by the profile and the registration.
+function BodyDataFields({ weightText, heightText, sex, onWeightChange, onHeightChange, onSexChange }) {
+  return (
+    <>
+      <div className="body-fields">
+        <UnitNumberField
+          label="Gewicht"
+          unit="kg"
+          maxDigits={3}
+          decimals={1}
+          value={weightText}
+          onChange={onWeightChange}
+        />
+        <UnitNumberField label="Größe" unit="cm" maxDigits={3} value={heightText} onChange={onHeightChange} />
+      </div>
+      <SegmentedChoice label="Geschlecht" options={SEX_OPTIONS} value={sex} onChange={onSexChange} />
+    </>
+  )
+}
+
+// Connecting Health Connect, which brings in the steps and workouts of the watch. Android only.
+// Connected means: read access granted and switched on here; "Trennen" only stops reading, the
+// permission itself can be withdrawn in Health Connect.
+function HealthConnectSetting({ activity, onError }) {
+  const [availability, setAvailability] = useState(null) // see healthConnect.availability
+  const [isDenied, setIsDenied] = useState(false)
+  const runAction = useActionRunner(onError)
+
+  useEffect(() => {
+    let isCurrent = true
+    healthConnect
+      .availability()
+      .then((result) => isCurrent && setAvailability(result))
+      .catch(() => isCurrent && setAvailability('notInstalled'))
+    return () => {
+      isCurrent = false
+    }
+  }, [])
+
+  function connect() {
+    runAction(async () => {
+      setIsDenied(!(await activity.connect()))
+    })
+  }
+
+  let content
+  if (availability === 'unsupported') {
+    content = <span className="hint">Nur in der Android-App verfügbar.</span>
+  } else if (availability === 'notInstalled') {
+    content = (
+      <>
+        <span className="hint">Health Connect ist nicht installiert.</span>
+        <button type="button" className="btn" onClick={healthConnect.openStorePage}>
+          Health Connect installieren
+        </button>
+      </>
+    )
+  } else if (activity.status === 'disconnected') {
+    content = (
+      <>
+        <span className="hint">
+          {isDenied ? 'Zugriff nicht erlaubt.' : 'Schritte und Workouts deiner Uhr übernehmen.'}
+        </span>
+        <button type="button" className="btn" onClick={connect}>
+          Verbinden
+        </button>
+      </>
+    )
+  } else if (availability === 'available') {
+    content = (
+      <div className="health-connected">
+        <span>Verbunden</span>
+        <button type="button" className="btn" onClick={() => runAction(activity.disconnect)}>
+          Trennen
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="field health-field">
+      <span>Health Connect</span>
+      {content}
+    </div>
+  )
+}
+
+// What is missing or out of range in the body data of a registration, or null.
+function bodyDataProblem({ weightKg, heightCm, sex }) {
+  if (Number.isNaN(weightKg)) return `Bitte gib dein Gewicht an (${WEIGHT_MIN}–${WEIGHT_MAX} kg).`
+  if (Number.isNaN(heightCm)) return `Bitte gib deine Größe an (${HEIGHT_MIN}–${HEIGHT_MAX} cm).`
+  if (sex === null) return 'Bitte wähle dein Geschlecht.'
+  return null
 }
 
 // German messages for the answers of the login and register endpoints. 403 only means
@@ -2357,8 +2553,8 @@ function passwordProblem(password, passwordRepeat) {
   return null
 }
 
-// "Anmelden" logs in. "Registrieren" first only shows the "repeat password" field and registers
-// on the second click. Enter in a field triggers the highlighted button.
+// "Anmelden" logs in. "Registrieren" first only shows the "repeat password" field and the body
+// data (weight, height, sex) and registers on the second click. Enter in a field triggers the highlighted button.
 // The server field is pre-filled with the server used last; another address only replaces it
 // once a login there succeeded.
 function LoginPage({ onLoggedIn }) {
@@ -2366,13 +2562,18 @@ function LoginPage({ onLoggedIn }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordRepeat, setPasswordRepeat] = useState('')
+  // Required when registering: the app needs them to turn steps into calories.
+  const [weightText, setWeightText] = useState('')
+  const [heightText, setHeightText] = useState('')
+  const [sex, setSex] = useState(null)
   const [isRegistering, setIsRegistering] = useState(false)
   const [error, setError] = useState(null)
   const runAction = useActionRunner(setError)
 
   const hasCredentials = email.trim() !== '' && password !== ''
 
-  function authenticate(path) {
+  // body: what is sent besides email and password (the body data when registering).
+  function authenticate(path, body = {}) {
     const serverUrl = normalizeServerUrl(server)
     if (serverUrl === null) {
       setError('Bitte gib eine gültige Serveradresse ein, z. B. https://mealtracker.example.org.')
@@ -2383,7 +2584,7 @@ function LoginPage({ onLoggedIn }) {
       try {
         response = await requestAt(serverUrl, path, {
           method: 'POST',
-          body: JSON.stringify({ email: email.trim(), password }),
+          body: JSON.stringify({ email: email.trim(), password, ...body }),
         })
       } catch (error) {
         throw new Error(authErrorMessage(error, path), { cause: error })
@@ -2407,15 +2608,20 @@ function LoginPage({ onLoggedIn }) {
       setError(null)
       return
     }
+    const bodyData = {
+      weightKg: numberIn(weightText, WEIGHT_MIN, WEIGHT_MAX),
+      heightCm: wholeNumberIn(heightText, HEIGHT_MIN, HEIGHT_MAX),
+      sex,
+    }
     const problem =
-      email.trim() === ''
-        ? 'Bitte gib eine E-Mail-Adresse ein.'
-        : passwordProblem(password, passwordRepeat)
+      (email.trim() === '' && 'Bitte gib eine E-Mail-Adresse ein.') ||
+      passwordProblem(password, passwordRepeat) ||
+      bodyDataProblem(bodyData)
     if (problem) {
       setError(problem)
       return
     }
-    authenticate(API.register)
+    authenticate(API.register, bodyData)
   }
 
   const primaryAction = isRegistering ? register : logIn
@@ -2496,6 +2702,16 @@ function LoginPage({ onLoggedIn }) {
             />
             <span className="hint">Mindestens {MIN_PASSWORD_LENGTH} Zeichen.</span>
           </label>
+        )}
+        {isRegistering && (
+          <BodyDataFields
+            weightText={weightText}
+            heightText={heightText}
+            sex={sex}
+            onWeightChange={setWeightText}
+            onHeightChange={setHeightText}
+            onSexChange={setSex}
+          />
         )}
         <div className="login-actions">
           <button type="button" className={isRegistering ? 'btn' : 'btn primary'} onClick={logIn}>
@@ -2625,6 +2841,55 @@ function useToday() {
   return today
 }
 
+// Today's steps and workouts from Health Connect (see healthConnect.js), read when the app starts,
+// when it comes back to the foreground, on a new day and on refresh().
+// status: 'unsupported' (browser), 'disconnected', 'loading', 'ok' or 'failed' (reading did not
+// work; data is then what was read last today, if anything). data: see healthConnect.readDay.
+function useActivity(today) {
+  const [state, setState] = useState(() => ({
+    status: healthConnect.isSupported() ? 'loading' : 'unsupported',
+    data: null,
+  }))
+
+  const load = useCallback(async () => {
+    if (!healthConnect.isSupported()) return { status: 'unsupported', data: null }
+    if (!(await healthConnect.isConnected())) return { status: 'disconnected', data: null }
+    try {
+      return { status: 'ok', data: await healthConnect.readDay(today) }
+    } catch {
+      return { status: 'failed', data: await healthConnect.lastRead(today) }
+    }
+  }, [today])
+
+  // State is only set once reading is done; a late answer for another day is ignored.
+  useEffect(() => {
+    let isCurrent = true
+    const update = () => load().then((loaded) => isCurrent && setState(loaded))
+    update()
+    const resume = IS_NATIVE ? CapacitorApp.addListener('resume', update) : null
+    return () => {
+      isCurrent = false
+      resume?.then((handle) => handle.remove())
+    }
+  }, [load])
+
+  const refresh = useCallback(() => load().then(setState), [load])
+
+  // true if access was granted; reads right away then.
+  async function connect() {
+    const granted = await healthConnect.connect()
+    if (granted) await refresh()
+    return granted
+  }
+
+  async function disconnect() {
+    await healthConnect.disconnect()
+    setState({ status: 'disconnected', data: null })
+  }
+
+  return { ...state, refresh, connect, disconnect }
+}
+
 // The app after login. Keyed by the user id in App, so nothing carries over to another account.
 function MealTracker({ user, onUserChange, onLogout }) {
   const [view, setView] = useState('list') // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'profile'
@@ -2652,6 +2917,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // meals stay in the database.
   const today = useToday()
   const mealsUrl = `${API.meals}?date=${today}`
+  const activity = useActivity(today)
 
   const loadMeals = useCallback(async () => {
     setMeals(await request(mealsUrl))
@@ -3173,9 +3439,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
         <MealList
           user={user}
           meals={meals}
+          activity={activity}
           onAdd={startNewMeal}
           onEdit={editMeal}
           onDelete={askDeleteMeal}
+          onRefresh={() => runAction(() => Promise.all([activity.refresh(), loadMeals()]))}
           onOpenFoods={openFoods}
           onOpenProfile={openProfile}
         />
@@ -3184,6 +3452,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'profile' && (
         <ProfilePage
           user={user}
+          activity={activity}
           onUserChange={onUserChange}
           onLogout={onLogout}
           onClose={goBack}
