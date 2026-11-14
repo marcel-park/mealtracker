@@ -782,10 +782,9 @@ fieldset.plain:disabled input {
   white-space: nowrap;
 }
 
-.day-side-kcal {
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+/* "+233 kcal" a little smaller than the step count, it is the longer of the two */
+.day-side-value.activity {
+  font-size: 1rem;
 }
 
 /* what activity earned, and the steps once the step goal is reached */
