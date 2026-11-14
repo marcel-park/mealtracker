@@ -272,10 +272,17 @@ class MealBookingIntegrationTest {
         mockMvc.perform(as(token, put("/api/users/me"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"calorieTarget":1800,"colorTheme":"DARK",
+                                {"calorieTarget":1800,
                                  "carbsPercent":50,"proteinPercent":25,"fatPercent":25,
                                  "stepGoal":8000,"weightKg":72.5,"heightCm":168,"sex":"FEMALE"}
                                 """))
+                .andExpect(status().isOk());
+        // New accounts follow the device; the theme is set on its own
+        mockMvc.perform(as(token, get("/api/users/me")))
+                .andExpect(jsonPath("$.colorTheme").value("SYSTEM"));
+        mockMvc.perform(as(token, put("/api/users/me/color-theme"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"colorTheme\":\"DARK\"}"))
                 .andExpect(status().isOk());
         mockMvc.perform(as(token, get("/api/users/me")))
                 .andExpect(status().isOk())

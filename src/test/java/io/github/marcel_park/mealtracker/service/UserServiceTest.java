@@ -118,7 +118,7 @@ class UserServiceTest {
                     .extracting(UserResponse::carbsPercent, UserResponse::proteinPercent, UserResponse::fatPercent)
                     .containsExactly(40, 30, 30);
             assertThat(user.stepGoal()).isEqualTo(User.DEFAULT_STEP_GOAL);
-            assertThat(user.colorTheme()).isEqualTo(ColorTheme.LIGHT);
+            assertThat(user.colorTheme()).isEqualTo(ColorTheme.SYSTEM);
             assertThat(user.admin()).isFalse();
         }
 
@@ -246,7 +246,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, ColorTheme.LIGHT, false, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, ColorTheme.SYSTEM, false, false));
     }
 
     @Test
@@ -259,11 +259,12 @@ class UserServiceTest {
     }
 
     @Test
-    void updateSettings_setsAllSettingsAndBodyData() {
+    void updateSettings_setsAllSettingsAndBodyData_butNotTheColorTheme() {
         User user = existingUser("max@example.com", "geheim123");
+        user.setColorTheme(ColorTheme.DARK);
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
-        UserResponse result = service.updateSettings(1L, new UserSettingsRequest(1800, ColorTheme.DARK,
+        UserResponse result = service.updateSettings(1L, new UserSettingsRequest(1800,
                 50, 25, 25, 8000, new BigDecimal("72.0"), 168, Sex.FEMALE));
 
         assertThat(user)
@@ -275,7 +276,19 @@ class UserServiceTest {
                 .containsExactly(8000, new BigDecimal("72.0"), 168, Sex.FEMALE);
         assertThat(result)
                 .extracting(UserResponse::calorieTarget, UserResponse::carbsPercent,
-                        UserResponse::proteinPercent, UserResponse::fatPercent, UserResponse::colorTheme)
-                .containsExactly(1800, 50, 25, 25, ColorTheme.DARK);
+                        UserResponse::proteinPercent, UserResponse::fatPercent)
+                .containsExactly(1800, 50, 25, 25);
+    }
+
+    @Test
+    void setColorTheme_changesOnlyTheTheme() {
+        User user = existingUser("max@example.com", "geheim123");
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        UserResponse result = service.setColorTheme(1L, ColorTheme.LIGHT);
+
+        assertThat(user.getColorTheme()).isEqualTo(ColorTheme.LIGHT);
+        assertThat(result.colorTheme()).isEqualTo(ColorTheme.LIGHT);
+        assertThat(user.getCalorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
     }
 }

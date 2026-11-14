@@ -63,10 +63,10 @@ public class User {
     @Column(length = 10)
     private Sex sex;
 
-    // Stored as plain VARCHAR "LIGHT" / "DARK", see ColorThemeConverter.
+    // Stored as plain VARCHAR "SYSTEM" / "LIGHT" / "DARK", see ColorThemeConverter.
     @Convert(converter = ColorThemeConverter.class)
     @Column(name = "color_theme", nullable = false, length = 10)
-    private ColorTheme colorTheme = ColorTheme.LIGHT;
+    private ColorTheme colorTheme = ColorTheme.SYSTEM;
 
     // Share the shopping list with friends. Comes with the friends feature; nothing sets it yet.
     @Column(name = "share_shopping_list", nullable = false)

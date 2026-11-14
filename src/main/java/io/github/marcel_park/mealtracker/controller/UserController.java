@@ -1,5 +1,6 @@
 package io.github.marcel_park.mealtracker.controller;
 
+import io.github.marcel_park.mealtracker.dto.ColorThemeRequest;
 import io.github.marcel_park.mealtracker.dto.UserResponse;
 import io.github.marcel_park.mealtracker.dto.UserSettingsRequest;
 import io.github.marcel_park.mealtracker.security.CurrentUser;
@@ -32,5 +33,12 @@ public class UserController {
     public UserResponse updateSettings(@AuthenticationPrincipal CurrentUser user,
                                        @Valid @RequestBody UserSettingsRequest request) {
         return userService.updateSettings(user.userId(), request);
+    }
+
+    // Applied by the app right away, so it is saved on its own, not with the other settings.
+    @PutMapping("/color-theme")
+    public UserResponse setColorTheme(@AuthenticationPrincipal CurrentUser user,
+                                      @Valid @RequestBody ColorThemeRequest request) {
+        return userService.setColorTheme(user.userId(), request.colorTheme());
     }
 }
