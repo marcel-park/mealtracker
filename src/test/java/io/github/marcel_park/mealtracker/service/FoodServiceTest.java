@@ -11,13 +11,19 @@ import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
+import io.github.marcel_park.mealtracker.model.Meal;
+import io.github.marcel_park.mealtracker.model.MealItem;
+import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.Recipe;
+import io.github.marcel_park.mealtracker.model.RecipeItem;
+import io.github.marcel_park.mealtracker.model.ShoppingListItem;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
 import io.github.marcel_park.mealtracker.repository.MealItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
+import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -28,6 +34,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -61,6 +68,9 @@ class FoodServiceTest {
     private RecipeVariationItemRepository variationItemRepository;
 
     @Mock
+    private ShoppingListItemRepository shoppingListItemRepository;
+
+    @Mock
     private RecipeRepository recipeRepository;
 
     @Mock
@@ -76,7 +86,7 @@ class FoodServiceTest {
     @BeforeEach
     void setUp() {
         service = new FoodService(repository, mealItemRepository, recipeItemRepository,
-                variationItemRepository, recipeRepository, userRepository);
+                variationItemRepository, shoppingListItemRepository, recipeRepository, userRepository);
     }
 
     // ---------- test data ----------
@@ -196,20 +206,22 @@ class FoodServiceTest {
         }
 
         @Test
-        void marksFoodsUsedInAMealRecipeOrVariation_withOneQueryPerKindForTheWholeList() {
+        void marksFoodsUsedInAMealRecipeVariationOrShoppingList_withOneQueryPerKindForTheWholeList() {
             when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of(
                     food(1L, "Brot", me, false),
                     food(2L, "Milch", me, false),
                     food(3L, "Quark", me, false),
-                    food(4L, "Butter", me, false)));
-            List<Long> ids = List.of(1L, 2L, 3L, 4L);
+                    food(4L, "Butter", me, false),
+                    food(5L, "Käse", me, false)));
+            List<Long> ids = List.of(1L, 2L, 3L, 4L, 5L);
             when(mealItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(1L));
             when(recipeItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(2L));
             when(variationItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(3L));
+            when(shoppingListItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(5L));
 
             List<FoodResponse> result = service.find(USER_ID, null, null, false);
 
-            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, false);
+            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, false, true);
             verify(mealItemRepository, never()).existsByFoodId(anyLong());
         }
 
@@ -219,7 +231,8 @@ class FoodServiceTest {
 
             assertThat(service.find(USER_ID, null, null, false)).isEmpty();
 
-            verifyNoInteractions(mealItemRepository, recipeItemRepository, variationItemRepository);
+            verifyNoInteractions(mealItemRepository, recipeItemRepository, variationItemRepository,
+                    shoppingListItemRepository);
         }
     }
 
@@ -433,6 +446,20 @@ class FoodServiceTest {
         }
 
         @Test
+        void makingPublicFoodPrivate_onShoppingListOfOther_keepsOriginalAndReturnsPrivateCopy() {
+            Food existing = food(1L, "Haferflocken", me, true);
+            stubFind(existing);
+            when(shoppingListItemRepository.existsByFoodIdAndUserIdNot(1L, USER_ID)).thenReturn(true);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request("Haferflocken", false));
+
+            assertThat(existing.getOwner()).isNull();
+            assertThat(existing.isPublic()).isTrue();
+            assertThat(result.published()).isFalse();
+        }
+
+        @Test
         void publicFoodOfOtherUser_isForbiddenAndSavesNothing() {
             stubFind(food(1L, "Haferflocken", other, true));
 
@@ -610,6 +637,49 @@ class FoodServiceTest {
         }
 
         @Test
+        void removedPortion_turnsItsItemsIntoAmounts_beforeThePortionIsDeleted() {
+            Food existing = food(1L, "Ei", me, false);
+            FoodPortion egg = savedPortion(existing, 10L, "Stück", 60, true);
+            MealItem mealItem = new MealItem(new Meal(), existing, Quantity.ofPortions(egg, new BigDecimal("2.5")));
+            RecipeItem recipeItem = new RecipeItem(new Recipe(), existing, Quantity.ofPortions(egg, BigDecimal.ONE));
+            ShoppingListItem listItem = new ShoppingListItem(me, existing, Quantity.ofPortions(egg, new BigDecimal("6")), 0);
+            when(mealItemRepository.findByPortionId(10L)).thenReturn(List.of(mealItem));
+            when(recipeItemRepository.findByPortionId(10L)).thenReturn(List.of(recipeItem));
+            when(shoppingListItemRepository.findByPortionId(10L)).thenReturn(List.of(listItem));
+            stubFind(existing);
+            stubSaveReturnsArgument();
+            // The portion must still be there when the converted items are flushed.
+            List<Boolean> portionPresentAtFlush = new ArrayList<>();
+            doAnswer(inv -> portionPresentAtFlush.add(existing.getPortions().contains(egg)))
+                    .when(repository).flush();
+
+            service.update(USER_ID, 1L, request(FoodUnit.G, List.of()));
+
+            assertThat(mealItem.getQuantity().isPortion()).isFalse();
+            assertThat(mealItem.getAmount()).isEqualTo(150.0);
+            assertThat(recipeItem.getQuantity().getAmount()).isEqualTo(60.0);
+            assertThat(listItem.getQuantity().getAmount()).isEqualTo(360.0);
+            assertThat(existing.getPortions()).isEmpty();
+            assertThat(portionPresentAtFlush).startsWith(true);
+        }
+
+        @Test
+        void changedPortionAmount_isACorrection_itemsStayPortionsAndFollowIt() {
+            Food existing = food(1L, "Ei", me, false);
+            FoodPortion egg = savedPortion(existing, 10L, "Stück", 60, true);
+            MealItem mealItem = new MealItem(new Meal(), existing, Quantity.ofPortions(egg, new BigDecimal("2")));
+            stubFind(existing);
+            stubSaveReturnsArgument();
+
+            service.update(USER_ID, 1L, request(FoodUnit.G, List.of(
+                    new FoodPortionRequest(10L, "Stück", 55.0, true))));
+
+            assertThat(mealItem.getQuantity().isPortion()).isTrue();
+            assertThat(mealItem.getAmount()).isEqualTo(110.0);
+            verify(mealItemRepository, never()).findByPortionId(anyLong());
+        }
+
+        @Test
         void sameNameTwice_ignoringCaseAndSpaces_isRejected() {
             Food existing = food(1L, "Quark", me, false);
             stubFind(existing);
@@ -753,6 +823,19 @@ class FoodServiceTest {
 
             verify(repository, never()).delete(any());
             assertThat(existing.getOwner()).isNull();
+        }
+
+        @Test
+        void foodOnlyOnAShoppingList_onlyLosesItsOwner() {
+            Food existing = food(1L, "Haferflocken", me, false);
+            stubFind(existing);
+            when(shoppingListItemRepository.existsByFoodId(1L)).thenReturn(true);
+
+            service.delete(USER_ID, 1L);
+
+            verify(repository, never()).delete(any());
+            assertThat(existing.getOwner()).isNull();
+            assertThat(existing.isPublic()).isTrue();
         }
 
         @Test

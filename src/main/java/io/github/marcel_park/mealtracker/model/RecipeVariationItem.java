@@ -17,22 +17,24 @@ public class RecipeVariationItem {
     @MapsId("foodId")
     private Food food;
 
-    // Absolute amount in the variation, in the unit of the food (g or ml); 0 means the ingredient
-    // is left out.
-    @Column(nullable = false)
-    private double amount;
+    // How much of the food in the variation, see Quantity. 0 (as amount or as portions) means the
+    // ingredient is left out.
+    @Embedded
+    private Quantity quantity;
 
     public RecipeVariationItem() {}
 
-    public RecipeVariationItem(RecipeVariation variation, Food food, double amount) {
+    public RecipeVariationItem(RecipeVariation variation, Food food, Quantity quantity) {
         this.variation = variation;
         this.food = food;
-        this.amount = amount;
+        this.quantity = quantity;
     }
 
     public RecipeVariationItemId getId() { return id; }
     public RecipeVariation getVariation() { return variation; }
     public Food getFood() { return food; }
-    public double getAmount() { return amount; }
-    public void setAmount(double amount) { this.amount = amount; }
+    public Quantity getQuantity() { return quantity; }
+    public void setQuantity(Quantity quantity) { this.quantity = quantity; }
+    // In the unit of the food, also for portion items.
+    public double getAmount() { return quantity.resolvedAmount(); }
 }

@@ -49,7 +49,7 @@ class AuthControllerTest {
 
     private static final AuthResponse AUTH_RESPONSE = new AuthResponse("the-token",
             new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, 10_000,
-                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false));
+                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false, false));
 
     private static final String CREDENTIALS = """
             {"email":"max@example.com","password":"geheim123"}

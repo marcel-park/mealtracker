@@ -49,7 +49,7 @@ class UserControllerTest {
 
     private static final UserResponse PROFILE =
             new UserResponse(USER_ID, "max@example.com", 1800, 40, 30, 30, 10_000,
-                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false);
+                    new BigDecimal("80.5"), 180, Sex.MALE, ColorTheme.LIGHT, false, false);
 
     @Test
     void get_returnsProfileOfTheLoggedInUser() throws Exception {

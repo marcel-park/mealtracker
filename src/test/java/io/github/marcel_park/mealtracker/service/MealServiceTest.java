@@ -7,8 +7,10 @@ import io.github.marcel_park.mealtracker.dto.MealResponse;
 import io.github.marcel_park.mealtracker.dto.RecipeUseRequest;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
+import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
+import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -21,7 +23,9 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -248,6 +252,42 @@ class MealServiceTest {
         }
 
         @Test
+        void create_itemInPortions_keepsPortionAndCount_andResolvesTheAmount() {
+            Food egg = food(5L, "Ei", 144.0);
+            FoodPortion piece = egg.addPortion("Stück", 60, true);
+            ReflectionTestUtils.setField(piece, "id", 50L);
+            when(foodService.getVisibleEntity(USER_ID, 5L)).thenReturn(egg);
+            when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            MealResponse result = service.create(USER_ID, request("Ei",
+                    new MealItemRequest(5L, null, 50L, new BigDecimal("2.5"))));
+
+            MealItemResponse item = result.items().get(0);
+            assertThat(item.amount()).isEqualTo(150.0);
+            assertThat(item.portionId()).isEqualTo(50L);
+            assertThat(item.portionCount()).isEqualByComparingTo("2.5");
+            assertThat(item.kcal()).isEqualTo(216.0);
+        }
+
+        @Test
+        void create_sameFoodInPortionsAndInGrams_isAddedUpInTheFirstListedPortion() {
+            Food egg = food(5L, "Ei", 144.0);
+            FoodPortion piece = egg.addPortion("Stück", 60, true);
+            ReflectionTestUtils.setField(piece, "id", 50L);
+            when(foodService.getVisibleEntity(USER_ID, 5L)).thenReturn(egg);
+            when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(USER_ID, request("Ei",
+                    new MealItemRequest(5L, null, 50L, new BigDecimal("2")), item(5L, 30)));
+
+            ArgumentCaptor<Meal> captor = ArgumentCaptor.forClass(Meal.class);
+            verify(mealRepository).save(captor.capture());
+            Quantity quantity = captor.getValue().getItems().get(0).getQuantity();
+            assertThat(quantity.getPortion()).isSameAs(piece);
+            assertThat(quantity.getPortionCount()).isEqualByComparingTo("2.5");
+        }
+
+        @Test
         void create_setsLoggedInUserAsOwner() {
             User owner = new User();
             owner.setId(USER_ID);
@@ -431,6 +471,20 @@ class MealServiceTest {
 
             assertThat(existing.getItems()).containsExactly(oatsItem, milkItem);
             assertThat(oatsItem.getAmount()).isEqualTo(150.0);
+        }
+
+        @Test
+        void update_keptFoodNowInPortions_switchesTheItemToPortions() {
+            FoodPortion bag = oats.addPortion("Beutel", 50, true);
+            ReflectionTestUtils.setField(bag, "id", 60L);
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+
+            service.update(USER_ID, 1L, request("Haferflocken, Milch",
+                    new MealItemRequest(1L, null, 60L, new BigDecimal("3")), item(2L, 200)));
+
+            assertThat(oatsItem.getQuantity().getPortion()).isSameAs(bag);
+            assertThat(oatsItem.getAmount()).isEqualTo(150.0);
+            verify(foodService, never()).getVisibleEntity(USER_ID, 1L);
         }
 
         @Test

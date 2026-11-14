@@ -9,12 +9,14 @@ import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
+import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
 import io.github.marcel_park.mealtracker.repository.MealItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
+import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,14 +40,17 @@ import java.util.stream.Collectors;
 // - Only the owner may edit or delete a food. Changes to a public food show up everywhere it is
 //   used, in meals and recipes of other users too: that is the deal with public foods.
 // - A food that is still used somewhere is never really deleted, or made private behind the back
-//   of others. It loses its owner instead and stays public for good, so the meals and recipes
-//   that contain it keep working. See delete() and update().
+//   of others. It loses its owner instead and stays public for good, so the meals, recipes and
+//   shopping lists that contain it keep working. See delete() and update().
 // - The unit (g or ml) may change at any time, even of a used food. Booked amounts stay the same
 //   numbers in the new unit (100 g become 100 ml), and so do their kcal. That is meant for owners
 //   correcting a mistake; the app points it out before saving.
 // - Portions are part of the food: they are saved with it (the request lists all of them), only
 //   the owner changes them, and they go when the food goes. A food without owner keeps its
 //   portions, but nobody can change them any more. A food with portions has exactly one favorite.
+// - Items can be booked as a number of portions (see Quantity). Changing the amount of a portion
+//   is taken as a correction and changes all of them. Before a portion is removed, its items are
+//   turned into amounts in g or ml, so they keep what they hold.
 @Service
 public class FoodService {
 
@@ -56,17 +61,20 @@ public class FoodService {
     private final MealItemRepository mealItemRepository;
     private final RecipeItemRepository recipeItemRepository;
     private final RecipeVariationItemRepository variationItemRepository;
+    private final ShoppingListItemRepository shoppingListItemRepository;
     private final RecipeRepository recipeRepository;
     private final UserRepository userRepository;
 
     public FoodService(FoodRepository foodRepository, MealItemRepository mealItemRepository,
                        RecipeItemRepository recipeItemRepository,
                        RecipeVariationItemRepository variationItemRepository,
+                       ShoppingListItemRepository shoppingListItemRepository,
                        RecipeRepository recipeRepository, UserRepository userRepository) {
         this.foodRepository = foodRepository;
         this.mealItemRepository = mealItemRepository;
         this.recipeItemRepository = recipeItemRepository;
         this.variationItemRepository = variationItemRepository;
+        this.shoppingListItemRepository = shoppingListItemRepository;
         this.recipeRepository = recipeRepository;
         this.userRepository = userRepository;
     }
@@ -131,7 +139,8 @@ public class FoodService {
         return FoodResponse.from(foodRepository.saveAndFlush(food), userId, used);
     }
 
-    // Still in a meal, recipe or recipe variation of anybody, the owner's own included: the food
+    // Still in a meal, recipe, recipe variation or shopping list of anybody, the owner's own
+    // included: the food
     // only loses its owner. It disappears from the owner's "own" foods but stays available, and
     // public, to all. Only a food nothing refers to is really deleted.
     @Transactional
@@ -167,13 +176,14 @@ public class FoodService {
         return food;
     }
 
-    // In a meal, recipe or variation of anybody, the owner's own included.
+    // In a meal, recipe, variation or shopping list of anybody, the owner's own included.
     private boolean isUsed(Long foodId) {
         return mealItemRepository.existsByFoodId(foodId) || recipeItemRepository.existsByFoodId(foodId)
-                || variationItemRepository.existsByFoodId(foodId);
+                || variationItemRepository.existsByFoodId(foodId)
+                || shoppingListItemRepository.existsByFoodId(foodId);
     }
 
-    // isUsed() for a whole list of foods, with three queries instead of three per food.
+    // isUsed() for a whole list of foods, with four queries instead of four per food.
     private Set<Long> findUsedIds(Collection<Long> foodIds) {
         if (foodIds.isEmpty()) {
             return Set.of(); // "in ()" is no valid SQL
@@ -181,13 +191,15 @@ public class FoodService {
         Set<Long> usedIds = new HashSet<>(mealItemRepository.findUsedFoodIds(foodIds));
         usedIds.addAll(recipeItemRepository.findUsedFoodIds(foodIds));
         usedIds.addAll(variationItemRepository.findUsedFoodIds(foodIds));
+        usedIds.addAll(shoppingListItemRepository.findUsedFoodIds(foodIds));
         return usedIds;
     }
 
     private boolean isUsedByOthers(Food food, Long userId) {
         return mealItemRepository.existsByFoodIdAndMealUserIdNot(food.getId(), userId)
                 || recipeItemRepository.existsByFoodIdAndRecipeOwnerIdNot(food.getId(), userId)
-                || variationItemRepository.existsByFoodIdAndVariationRecipeOwnerIdNot(food.getId(), userId);
+                || variationItemRepository.existsByFoodIdAndVariationRecipeOwnerIdNot(food.getId(), userId)
+                || shoppingListItemRepository.existsByFoodIdAndUserIdNot(food.getId(), userId);
     }
 
     private void apply(FoodRequest request, Food food) {
@@ -210,7 +222,8 @@ public class FoodService {
     //
     // The unique key is checked row by row, and Hibernate orders the statements of one flush its
     // own way (INSERTs before DELETEs). So the changes reach the database in steps, each flushed:
-    // 1. removed portions are deleted, so a new portion may take the name of a removed one;
+    // 1. items booked with removed portions become amounts (see turnItemsIntoAmounts), then the
+    //    portions are deleted, so a new portion may take the name of a removed one;
     // 2. renamed portions get a temporary name (" " + id: no stored name starts with a space), so
     //    renames may run in chains and swaps ("Packung" <-> "Becher") in one request;
     // 3. kept portions get their requested values;
@@ -244,7 +257,15 @@ public class FoodService {
         }
         FoodPortionRequest favorite = chooseFavorite(requests, keepIds);
 
-        if (food.getPortions().removeIf(portion -> !keptIds.contains(portion.getId()))) {
+        List<FoodPortion> removed = food.getPortions().stream()
+                .filter(portion -> !keptIds.contains(portion.getId()))
+                .toList();
+        if (!removed.isEmpty()) {
+            removed.forEach(this::turnItemsIntoAmounts);
+            // Hibernate deletes orphans before it updates anything else in a flush, so the items
+            // are written first, on their own.
+            flushIfPersisted(food);
+            food.getPortions().removeAll(removed);
             flushIfPersisted(food);
         }
         List<FoodPortionRequest> kept = requests.stream()
@@ -276,6 +297,21 @@ public class FoodService {
                 food.addPortion(request.name().trim(), request.amount(), request == favorite);
             }
         }
+    }
+
+    // Items booked as a number of the portion get the amount they hold right now, before the
+    // portion goes. Unsaved portions (no id) have no items.
+    private void turnItemsIntoAmounts(FoodPortion portion) {
+        if (portion.getId() == null) return;
+        Long portionId = portion.getId();
+        mealItemRepository.findByPortionId(portionId)
+                .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
+        recipeItemRepository.findByPortionId(portionId)
+                .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
+        variationItemRepository.findByPortionId(portionId)
+                .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
+        shoppingListItemRepository.findByPortionId(portionId)
+                .forEach(item -> item.setQuantity(Quantity.ofAmount(item.getQuantity().resolvedAmount())));
     }
 
     // A portion name as the unique key compares it: trimmed, without accents, in lower case.

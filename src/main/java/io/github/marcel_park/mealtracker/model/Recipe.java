@@ -54,15 +54,20 @@ public class Recipe {
         return published || isOwnedBy(userId);
     }
 
-    // Same food twice: the amounts are added up (primary key recipe_id, food_id).
-    public void addItem(Food food, double amount) {
+    // Primary key (recipe_id, food_id), so each food only once.
+    // Same food twice: added up in the unit of the item already there, see Quantity.plus.
+    public void addItem(Food food, Quantity quantity) {
         for (RecipeItem item : items) {
             if (item.getFood().getId().equals(food.getId())) {
-                item.setAmount(item.getAmount() + amount);
+                item.setQuantity(item.getQuantity().plus(quantity));
                 return;
             }
         }
-        items.add(new RecipeItem(this, food, amount));
+        items.add(new RecipeItem(this, food, quantity));
+    }
+
+    public void addItem(Food food, double amount) {
+        addItem(food, Quantity.ofAmount(amount));
     }
 
     public Long getId() { return id; }

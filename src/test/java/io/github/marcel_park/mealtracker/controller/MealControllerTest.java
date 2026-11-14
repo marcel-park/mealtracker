@@ -23,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -149,6 +150,37 @@ class MealControllerTest {
     }
 
     @Test
+    void create_itemInPortions_passesPortionAndCountToService() throws Exception {
+        when(service.create(eq(USER_ID), any())).thenReturn(meal(1L));
+
+        mockMvc.perform(post("/api/meals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Ei","items":[{"foodId":3,"portionId":5,"portionCount":2.25}]}
+                                """))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<MealRequest> captor = ArgumentCaptor.forClass(MealRequest.class);
+        verify(service).create(eq(USER_ID), captor.capture());
+        MealItemRequest item = captor.getValue().items().get(0);
+        assertThat(item.amount()).isNull();
+        assertThat(item.portionId()).isEqualTo(5L);
+        assertThat(item.portionCount()).isEqualByComparingTo("2.25");
+    }
+
+    @Test
+    void list_itemInPortions_hasPortionAndCountNextToTheAmount() throws Exception {
+        when(service.findAll(USER_ID)).thenReturn(List.of(new MealResponse(1L, "Ei", BOOKED_AT, 216.0, List.of(
+                new MealItemResponse(food(3L, "Ei", 144), 150.0, 5L, new BigDecimal("2.50"), 216.0)))));
+
+        mockMvc.perform(get("/api/meals"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].items[0].amount").value(150.0))
+                .andExpect(jsonPath("$[0].items[0].portionId").value(5))
+                .andExpect(jsonPath("$[0].items[0].portionCount").value(2.5));
+    }
+
+    @Test
     void create_unknownFood_returns404WithErrorBody() throws Exception {
         when(service.create(eq(USER_ID), any())).thenThrow(new NotFoundException("Food", 99L));
 
@@ -180,6 +212,13 @@ class MealControllerTest {
             null foodId       | {"title":"Snack","items":[{"foodId":null,"amount":150}]} | items[0].foodId
             amount 0         | {"title":"Snack","items":[{"foodId":1,"amount":0}]}  | items[0].amount
             negative amount  | {"title":"Snack","items":[{"foodId":1,"amount":-5}]} | items[0].amount
+            no quantity      | {"title":"Snack","items":[{"foodId":1}]}             | items[0].quantityComplete
+            portion no count | {"title":"Snack","items":[{"foodId":1,"portionId":5}]} | items[0].quantityComplete
+            count no portion | {"title":"Snack","items":[{"foodId":1,"portionCount":2}]} | items[0].quantityComplete
+            amount and portion | {"title":"Snack","items":[{"foodId":1,"amount":100,"portionId":5,"portionCount":2}]} | items[0].quantityComplete
+            count 0          | {"title":"Snack","items":[{"foodId":1,"portionId":5,"portionCount":0}]} | items[0].portionCount
+            count 3 decimals | {"title":"Snack","items":[{"foodId":1,"portionId":5,"portionCount":1.255}]} | items[0].portionCount
+            count too large  | {"title":"Snack","items":[{"foodId":1,"portionId":5,"portionCount":10000}]} | items[0].portionCount
             """)
     void create_invalidRequest_returns400WithFieldErrorAndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {

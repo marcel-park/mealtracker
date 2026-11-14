@@ -1,20 +1,19 @@
 package io.github.marcel_park.mealtracker.service;
 
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
-import io.github.marcel_park.mealtracker.dto.MealItemRequest;
 import io.github.marcel_park.mealtracker.dto.MealItemResponse;
 import io.github.marcel_park.mealtracker.dto.MealRequest;
 import io.github.marcel_park.mealtracker.dto.MealResponse;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.MealItem;
+import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -65,9 +64,9 @@ public class MealService {
         // A reference is enough to set the foreign key; it does not load the user.
         meal.setUser(userRepository.getReferenceById(userId));
         meal.setTitle(request.title());
-        for (MealItemRequest item : request.items()) {
-            meal.addItem(foodService.getVisibleEntity(userId, item.foodId()), item.amount());
-        }
+        RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
+                .values()
+                .forEach(requested -> meal.addItem(requested.food(), requested.quantity()));
         MealResponse response = toResponse(mealRepository.save(meal), userId);
         recipeService.markUsed(userId, request.recipes());
         return response;
@@ -82,17 +81,21 @@ public class MealService {
         // meal_item's primary key is (meal_id, food_id) and Hibernate flushes INSERTs before
         // DELETEs, so removing a food and adding it back in one transaction would insert a
         // duplicate key.
-        Map<Long, Double> requestedAmounts = sumAmountsByFoodId(request.items());
-        meal.getItems().removeIf(item -> !requestedAmounts.containsKey(item.getFood().getId()));
-
+        // Foods already in the meal are not loaded again; the user saw them when booking.
         Map<Long, MealItem> keptItems = meal.getItems().stream()
                 .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        requestedAmounts.forEach((foodId, amount) -> {
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> keptItems.containsKey(foodId)
+                        ? keptItems.get(foodId).getFood()
+                        : foodService.getVisibleEntity(userId, foodId));
+        meal.getItems().removeIf(item -> !requested.containsKey(item.getFood().getId()));
+
+        requested.forEach((foodId, wanted) -> {
             MealItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmount(amount);
+                keptItem.setQuantity(wanted.quantity());
             } else {
-                meal.addItem(foodService.getVisibleEntity(userId, foodId), amount);
+                meal.addItem(wanted.food(), wanted.quantity());
             }
         });
 
@@ -113,17 +116,6 @@ public class MealService {
                 .orElseThrow(() -> new NotFoundException("Meal", id));
     }
 
-    // A request may list the same food more than once, but a meal can hold each food only once
-    // (primary key), so the amounts are added up. LinkedHashMap keeps the request order, which
-    // is the order in which new items are added.
-    private Map<Long, Double> sumAmountsByFoodId(List<MealItemRequest> items) {
-        Map<Long, Double> amounts = new LinkedHashMap<>();
-        for (MealItemRequest item : items) {
-            amounts.merge(item.foodId(), item.amount(), Double::sum);
-        }
-        return amounts;
-    }
-
     private MealResponse toResponse(Meal meal, Long userId) {
         List<MealItemResponse> items = meal.getItems().stream()
                 .map(item -> toItemResponse(item, userId))
@@ -134,8 +126,13 @@ public class MealService {
     }
 
     private MealItemResponse toItemResponse(MealItem item, Long userId) {
+        Quantity quantity = item.getQuantity();
         return new MealItemResponse(
-                FoodResponse.ofUsed(item.getFood(), userId), item.getAmount(), kcal(item));
+                FoodResponse.ofUsed(item.getFood(), userId),
+                item.getAmount(),
+                quantity.getPortionId(),
+                quantity.getPortionCount(),
+                kcal(item));
     }
 
     // Calories are never stored. They are computed from the food's current kcalPer100 whenever
