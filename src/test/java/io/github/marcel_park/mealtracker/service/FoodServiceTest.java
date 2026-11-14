@@ -18,6 +18,8 @@ import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.RecipeItem;
 import io.github.marcel_park.mealtracker.model.ShoppingListItem;
+import io.github.marcel_park.mealtracker.model.Task;
+import io.github.marcel_park.mealtracker.model.TaskItem;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
 import io.github.marcel_park.mealtracker.repository.MealItemRepository;
@@ -25,6 +27,7 @@ import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
 import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
+import io.github.marcel_park.mealtracker.repository.TaskItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -73,6 +76,9 @@ class FoodServiceTest {
     private ShoppingListItemRepository shoppingListItemRepository;
 
     @Mock
+    private TaskItemRepository taskItemRepository;
+
+    @Mock
     private RecipeRepository recipeRepository;
 
     @Mock
@@ -88,7 +94,8 @@ class FoodServiceTest {
     @BeforeEach
     void setUp() {
         service = new FoodService(repository, mealItemRepository, recipeItemRepository,
-                variationItemRepository, shoppingListItemRepository, recipeRepository, userRepository);
+                variationItemRepository, shoppingListItemRepository, taskItemRepository, recipeRepository,
+                userRepository);
     }
 
     // ---------- test data ----------
@@ -208,7 +215,7 @@ class FoodServiceTest {
         }
 
         @Test
-        void marksFoodsUsedInAMealRecipeVariationOrShoppingList_withOneQueryPerKindForTheWholeList() {
+        void marksFoodsUsedInAMealRecipeVariationShoppingListOrTask_withOneQueryPerKindForTheWholeList() {
             when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of(
                     food(1L, "Brot", me, false),
                     food(2L, "Milch", me, false),
@@ -220,10 +227,11 @@ class FoodServiceTest {
             when(recipeItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(2L));
             when(variationItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(3L));
             when(shoppingListItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(5L));
+            when(taskItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(4L));
 
             List<FoodResponse> result = service.find(USER_ID, null, null, false);
 
-            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, false, true);
+            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, true, true);
             verify(mealItemRepository, never()).existsByFoodId(anyLong());
         }
 
@@ -234,7 +242,7 @@ class FoodServiceTest {
             assertThat(service.find(USER_ID, null, null, false)).isEmpty();
 
             verifyNoInteractions(mealItemRepository, recipeItemRepository, variationItemRepository,
-                    shoppingListItemRepository);
+                    shoppingListItemRepository, taskItemRepository);
         }
     }
 
@@ -476,6 +484,20 @@ class FoodServiceTest {
         }
 
         @Test
+        void makingPublicFoodPrivate_inTaskOfOther_keepsOriginalAndReturnsPrivateCopy() {
+            Food existing = food(1L, "Proteinpulver", me, true);
+            stubFind(existing);
+            when(taskItemRepository.existsByFoodIdAndTaskUserIdNot(1L, USER_ID)).thenReturn(true);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.update(USER_ID, 1L, request("Proteinpulver", false));
+
+            assertThat(existing.getOwner()).isNull();
+            assertThat(existing.isPublic()).isTrue();
+            assertThat(result.published()).isFalse();
+        }
+
+        @Test
         void publicFoodOfOtherUser_isForbiddenAndSavesNothing() {
             stubFind(food(1L, "Haferflocken", other, true));
 
@@ -659,6 +681,8 @@ class FoodServiceTest {
             MealItem mealItem = new MealItem(new Meal(), existing, Quantity.ofPortions(egg, new BigDecimal("2.5")));
             RecipeItem recipeItem = new RecipeItem(new Recipe(), existing, Quantity.ofPortions(egg, BigDecimal.ONE));
             ShoppingListItem listItem = new ShoppingListItem(me, existing, Quantity.ofPortions(egg, new BigDecimal("6")), 0);
+            TaskItem taskItem = new TaskItem(new Task(), existing, Quantity.ofPortions(egg, new BigDecimal("0.5")));
+            when(taskItemRepository.findByPortionId(10L)).thenReturn(List.of(taskItem));
             when(mealItemRepository.findByPortionId(10L)).thenReturn(List.of(mealItem));
             when(recipeItemRepository.findByPortionId(10L)).thenReturn(List.of(recipeItem));
             when(shoppingListItemRepository.findByPortionId(10L)).thenReturn(List.of(listItem));
@@ -675,6 +699,7 @@ class FoodServiceTest {
             assertThat(mealItem.getAmount()).isEqualTo(150.0);
             assertThat(recipeItem.getQuantity().getAmount()).isEqualTo(60.0);
             assertThat(listItem.getQuantity().getAmount()).isEqualTo(360.0);
+            assertThat(taskItem.getQuantity().getAmount()).isEqualTo(30.0);
             assertThat(existing.getPortions()).isEmpty();
             assertThat(portionPresentAtFlush).startsWith(true);
         }
@@ -846,6 +871,19 @@ class FoodServiceTest {
             Food existing = food(1L, "Haferflocken", me, false);
             stubFind(existing);
             when(shoppingListItemRepository.existsByFoodId(1L)).thenReturn(true);
+
+            service.delete(USER_ID, 1L);
+
+            verify(repository, never()).delete(any());
+            assertThat(existing.getOwner()).isNull();
+            assertThat(existing.isPublic()).isTrue();
+        }
+
+        @Test
+        void foodOnlyInATask_onlyLosesItsOwner() {
+            Food existing = food(1L, "Proteinpulver", me, false);
+            stubFind(existing);
+            when(taskItemRepository.existsByFoodId(1L)).thenReturn(true);
 
             service.delete(USER_ID, 1L);
 
