@@ -9,6 +9,7 @@ import io.github.marcel_park.mealtracker.exception.AccountDisabledException;
 import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredException;
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.ColorTheme;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -105,7 +106,13 @@ public class UserService {
         user.setWeightKg(request.weightKg());
         user.setHeightCm(request.heightCm());
         user.setSex(request.sex());
-        user.setColorTheme(request.colorTheme());
+        return UserResponse.from(user);
+    }
+
+    @Transactional
+    public UserResponse setColorTheme(Long userId, ColorTheme colorTheme) {
+        User user = getEntity(userId);
+        user.setColorTheme(colorTheme);
         return UserResponse.from(user);
     }
 

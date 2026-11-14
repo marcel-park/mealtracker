@@ -72,7 +72,7 @@ class UserControllerTest {
         mockMvc.perform(put("/api/users/me")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"calorieTarget":1800,"colorTheme":"DARK",
+                                {"calorieTarget":1800,
                                  "carbsPercent":50,"proteinPercent":25,"fatPercent":25,
                                  "stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"}
                                 """))
@@ -80,25 +80,24 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.calorieTarget").value(1800))
                 .andExpect(jsonPath("$.carbsPercent").value(40));
 
-        verify(userService).updateSettings(USER_ID, new UserSettingsRequest(1800, ColorTheme.DARK, 50, 25, 25,
+        verify(userService).updateSettings(USER_ID, new UserSettingsRequest(1800, 50, 25, 25,
                 8000, new BigDecimal("72.0"), 168, Sex.FEMALE));
     }
 
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', textBlock = """
-            calorieTarget 0       | {"calorieTarget":0,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
-            calorieTarget too big | {"calorieTarget":20001,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
-            missing calorieTarget | {"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
-            missing colorTheme    | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | colorTheme
-            missing fatPercent    | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | fatPercent
-            negative percent      | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":-10,"proteinPercent":80,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | carbsPercent
-            percent above 100     | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":110,"proteinPercent":0,"fatPercent":0,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | carbsPercent
-            sum not 100           | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":20,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | macroPercentSum
-            stepGoal 0            | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":0,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | stepGoal
-            missing weight        | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"heightCm":168,"sex":"FEMALE"} | weightKg
-            weight too high       | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":300.1,"heightCm":168,"sex":"FEMALE"} | weightKg
-            height too low        | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":99,"sex":"FEMALE"} | heightCm
-            missing sex           | {"calorieTarget":1800,"colorTheme":"LIGHT","carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168} | sex
+            calorieTarget 0       | {"calorieTarget":0,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
+            calorieTarget too big | {"calorieTarget":20001,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
+            missing calorieTarget | {"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | calorieTarget
+            missing fatPercent    | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | fatPercent
+            negative percent      | {"calorieTarget":1800,"carbsPercent":-10,"proteinPercent":80,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | carbsPercent
+            percent above 100     | {"calorieTarget":1800,"carbsPercent":110,"proteinPercent":0,"fatPercent":0,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | carbsPercent
+            sum not 100           | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":20,"stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | macroPercentSum
+            stepGoal 0            | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":0,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"} | stepGoal
+            missing weight        | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"heightCm":168,"sex":"FEMALE"} | weightKg
+            weight too high       | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":300.1,"heightCm":168,"sex":"FEMALE"} | weightKg
+            height too low        | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":99,"sex":"FEMALE"} | heightCm
+            missing sex           | {"calorieTarget":1800,"carbsPercent":40,"proteinPercent":30,"fatPercent":30,"stepGoal":8000,"weightKg":72.0,"heightCm":168} | sex
             """)
     void updateSettings_invalidRequest_returns400AndDoesNotCallService(
             String violation, String body, String expectedField) throws Exception {
@@ -112,14 +111,26 @@ class UserControllerTest {
     }
 
     @Test
-    void updateSettings_unknownColorTheme_returns400() throws Exception {
-        mockMvc.perform(put("/api/users/me")
+    void setColorTheme_passesItOnForTheLoggedInUser() throws Exception {
+        when(userService.setColorTheme(USER_ID, ColorTheme.DARK)).thenReturn(PROFILE);
+
+        mockMvc.perform(put("/api/users/me/color-theme")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"calorieTarget":1800,"colorTheme":"PINK",
-                                 "carbsPercent":40,"proteinPercent":30,"fatPercent":30,
-                                 "stepGoal":8000,"weightKg":72.0,"heightCm":168,"sex":"FEMALE"}
-                                """))
+                        .content("{\"colorTheme\":\"DARK\"}"))
+                .andExpect(status().isOk());
+
+        verify(userService).setColorTheme(USER_ID, ColorTheme.DARK);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+            unknown theme | {"colorTheme":"PINK"}
+            missing theme | {}
+            """)
+    void setColorTheme_invalidRequest_returns400(String violation, String body) throws Exception {
+        mockMvc.perform(put("/api/users/me/color-theme")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
                 .andExpect(status().isBadRequest());
 
         verifyNoInteractions(userService);

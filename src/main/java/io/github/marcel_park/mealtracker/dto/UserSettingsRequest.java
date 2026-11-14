@@ -1,6 +1,5 @@
 package io.github.marcel_park.mealtracker.dto;
 
-import io.github.marcel_park.mealtracker.model.ColorTheme;
 import io.github.marcel_park.mealtracker.model.Sex;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMax;
@@ -15,10 +14,10 @@ import java.math.BigDecimal;
 // carbsPercent, proteinPercent, fatPercent: how the calorie target splits into the three
 // nutrients, in whole percent of the calories. Each 0 to 100, together exactly 100.
 // stepGoal: steps per day. weightKg, heightCm, sex: required here as well, so saving the profile
-// completes the body data of users who registered before it existed.
+// completes the body data of users who registered before it existed. The color theme is set on
+// its own, see ColorThemeRequest.
 public record UserSettingsRequest(
         @NotNull @Min(1) @Max(UserSettingsRequest.MAX_CALORIE_TARGET) Integer calorieTarget,
-        @NotNull ColorTheme colorTheme,
         @NotNull @Min(0) @Max(100) Integer carbsPercent,
         @NotNull @Min(0) @Max(100) Integer proteinPercent,
         @NotNull @Min(0) @Max(100) Integer fatPercent,
