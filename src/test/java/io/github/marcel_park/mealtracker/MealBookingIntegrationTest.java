@@ -476,6 +476,138 @@ class MealBookingIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // Items in portions against the real schema (Flyway V9): the composite foreign key to the
+    // portion, the quantity CHECK constraints, a corrected portion changing what is booked, and a
+    // deleted portion turning its items into amounts before the foreign key could complain.
+    @Test
+    void portionItems_followTheirPortion_andBecomeAmountsWhenItIsDeleted() throws Exception {
+        String token = register();
+        MvcResult created = mockMvc.perform(as(token, post("/api/foods"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
+                                 "published":false,"portions":[{"name":"Stück","amount":60}]}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long eggId = idOf(created);
+        Number pieceId = JsonPath.read(created.getResponse().getContentAsString(), "$.portions[0].id");
+
+        // 2 Stück + 30 g in one request: added up in the first listed unit, 2.5 × 60 g = 150 g
+        MvcResult booked = mockMvc.perform(as(token, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Ei","items":[{"foodId":%d,"portionId":%d,"portionCount":2},
+                                                       {"foodId":%d,"amount":30}]}
+                                """.formatted(eggId, pieceId.longValue(), eggId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].portionId").value(pieceId.intValue()))
+                .andExpect(jsonPath("$.items[0].portionCount").value(2.5))
+                .andExpect(jsonPath("$.items[0].amount").value(150.0))
+                .andReturn();
+        long mealId = idOf(booked);
+        String thisMeal = "$[?(@.id == %d)]".formatted(mealId);
+
+        // The same food twice on the shopping list: one item
+        mockMvc.perform(as(token, post("/api/shopping-list/items"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"foodId":%d,"portionId":%d,"portionCount":6}]}
+                                """.formatted(eggId, pieceId.longValue())))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, post("/api/shopping-list/items"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"foodId":%d,"amount":120}]}
+                                """.formatted(eggId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].portionCount").value(8.0));
+
+        // Correcting the portion corrects the meal: 2.5 × 50 g = 125 g
+        mockMvc.perform(as(token, put("/api/foods/" + eggId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
+                                 "published":false,"portions":[{"id":%d,"name":"Stück","amount":50}]}
+                                """.formatted(pieceId.longValue())))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath(thisMeal + ".items[0].amount").value(contains(125.0)));
+
+        // Deleting the portion keeps what was booked, now as amounts
+        mockMvc.perform(as(token, put("/api/foods/" + eggId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Ei (IT)","unit":"G","kcalPer100":144,"protein":12,"carbs":1,"fat":10,
+                                 "published":false,"portions":[]}
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(token, get("/api/meals")))
+                .andExpect(jsonPath(thisMeal + ".items[0].amount").value(contains(125.0)))
+                .andExpect(jsonPath(thisMeal + ".items[0].portionId").value(contains((Object) null)));
+        mockMvc.perform(as(token, get("/api/shopping-list")))
+                .andExpect(jsonPath("$[0].amount").value(400.0))
+                .andExpect(jsonPath("$[0].portionId").doesNotExist());
+
+        // On a shopping list, the food is in use: deleting it only releases it
+        mockMvc.perform(as(token, delete("/api/meals/" + mealId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, delete("/api/foods/" + eggId)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, get("/api/shopping-list")))
+                .andExpect(jsonPath("$[0].food.id").value((int) eggId))
+                .andExpect(jsonPath("$[0].food.owned").value(false));
+
+        // Resetting empties the list
+        mockMvc.perform(as(token, delete("/api/shopping-list")))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, get("/api/shopping-list")))
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    void shoppingList_keepsTheOrder_andIsSeparatedByUser() throws Exception {
+        String alice = register();
+        String bob = register();
+        long breadId = createFood(alice, "Brot (IT)", 250, true);
+        long butterId = createFood(alice, "Butter (IT)", 740, true);
+
+        mockMvc.perform(as(alice, post("/api/shopping-list/items"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"foodId":%d,"amount":500},{"foodId":%d,"amount":250}]}
+                                """.formatted(breadId, butterId)))
+                .andExpect(jsonPath("$[*].food.id").value(contains((int) breadId, (int) butterId)));
+        Number butterItemId = JsonPath.read(mockMvc.perform(as(alice, get("/api/shopping-list")))
+                .andReturn().getResponse().getContentAsString(), "$[1].id");
+        Number breadItemId = JsonPath.read(mockMvc.perform(as(alice, get("/api/shopping-list")))
+                .andReturn().getResponse().getContentAsString(), "$[0].id");
+
+        mockMvc.perform(as(alice, post("/api/shopping-list/items/" + butterItemId + "/move"))
+                        .param("to", "0"))
+                .andExpect(jsonPath("$[*].food.id").value(contains((int) butterId, (int) breadId)));
+
+        // Checked items go to the end
+        mockMvc.perform(as(alice, put("/api/shopping-list/items/" + butterItemId + "/checked"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"checked\":true}"))
+                .andExpect(jsonPath("$[*].food.id").value(contains((int) breadId, (int) butterId)))
+                .andExpect(jsonPath("$[1].checked").value(true));
+
+        // Changing the quantity replaces it
+        mockMvc.perform(as(alice, put("/api/shopping-list/items/" + breadItemId + "/quantity"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":750}"))
+                .andExpect(jsonPath("$[0].amount").value(750.0));
+
+        // Bob neither sees nor changes Alice's list
+        mockMvc.perform(as(bob, get("/api/shopping-list")))
+                .andExpect(jsonPath("$").isEmpty());
+        mockMvc.perform(as(bob, delete("/api/shopping-list/items/" + breadItemId)))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void protectedEndpoints_withoutToken_return401() throws Exception {
         mockMvc.perform(get("/api/meals")).andExpect(status().isUnauthorized());

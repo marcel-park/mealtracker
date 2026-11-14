@@ -39,13 +39,18 @@ public class Meal {
     public void setBookedAt(LocalDateTime bookedAt) { this.bookedAt = bookedAt; }
     public List<MealItem> getItems() { return items; }
 
-    public void addItem(Food food, double amount) {
+    // Same food twice: added up in the unit of the item already there, see Quantity.plus.
+    public void addItem(Food food, Quantity quantity) {
         for (MealItem item : items) {
             if (item.getFood().getId().equals(food.getId())) {
-                item.setAmount(item.getAmount() + amount);
+                item.setQuantity(item.getQuantity().plus(quantity));
                 return;
             }
         }
-        items.add(new MealItem(this, food, amount));
+        items.add(new MealItem(this, food, quantity));
+    }
+
+    public void addItem(Food food, double amount) {
+        addItem(food, Quantity.ofAmount(amount));
     }
 }

@@ -2,17 +2,16 @@ package io.github.marcel_park.mealtracker.service;
 
 import io.github.marcel_park.mealtracker.dto.CatalogScope;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
-import io.github.marcel_park.mealtracker.dto.RecipeItemRequest;
 import io.github.marcel_park.mealtracker.dto.RecipeItemResponse;
 import io.github.marcel_park.mealtracker.dto.RecipeRequest;
 import io.github.marcel_park.mealtracker.dto.RecipeResponse;
 import io.github.marcel_park.mealtracker.dto.RecipeUseRequest;
-import io.github.marcel_park.mealtracker.dto.VariationItemRequest;
 import io.github.marcel_park.mealtracker.dto.VariationItemResponse;
 import io.github.marcel_park.mealtracker.dto.VariationRequest;
 import io.github.marcel_park.mealtracker.dto.VariationResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.RecipeItem;
 import io.github.marcel_park.mealtracker.model.RecipeVariation;
@@ -27,8 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.function.ToDoubleFunction;
 import java.util.stream.Collectors;
 
 // Rules for recipes:
@@ -80,9 +77,9 @@ public class RecipeService {
         Recipe recipe = new Recipe();
         recipe.setOwner(userRepository.getReferenceById(userId));
         applyFields(request, recipe);
-        sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amount)
-                .forEach((foodId, amount) ->
-                        recipe.addItem(foodService.getVisibleEntity(userId, foodId), amount));
+        RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
+                .values()
+                .forEach(requested -> recipe.addItem(requested.food(), requested.quantity()));
         publishFoodsIfPublic(userId, recipe);
         return toResponse(recipeRepository.save(recipe), userId);
     }
@@ -95,18 +92,21 @@ public class RecipeService {
 
         // Updated in place for the same reason as in MealService.update: the primary key is
         // (recipe_id, food_id) and Hibernate flushes INSERTs before DELETEs.
-        Map<Long, Double> requestedAmounts =
-                sumAmountsByFoodId(request.items(), RecipeItemRequest::foodId, RecipeItemRequest::amount);
-        recipe.getItems().removeIf(item -> !requestedAmounts.containsKey(item.getFood().getId()));
-
+        // Foods already in the recipe are not loaded again.
         Map<Long, RecipeItem> keptItems = recipe.getItems().stream()
                 .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        requestedAmounts.forEach((foodId, amount) -> {
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> keptItems.containsKey(foodId)
+                        ? keptItems.get(foodId).getFood()
+                        : foodService.getVisibleEntity(userId, foodId));
+        recipe.getItems().removeIf(item -> !requested.containsKey(item.getFood().getId()));
+
+        requested.forEach((foodId, wanted) -> {
             RecipeItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmount(amount);
+                keptItem.setQuantity(wanted.quantity());
             } else {
-                recipe.addItem(foodService.getVisibleEntity(userId, foodId), amount);
+                recipe.addItem(wanted.food(), wanted.quantity());
             }
         });
 
@@ -195,7 +195,9 @@ public class RecipeService {
     }
 
     // Keeps only what differs from the original: changed amounts of its ingredients (0: left out)
-    // and foods it does not contain. Servings equal to the original's are stored as null.
+    // and foods it does not contain. An amount counts as the original's if it is the same in g or
+    // ml, however it is written (as portions or not). Servings equal to the original's are stored
+    // as null.
     private void applyVariation(Long userId, Recipe recipe, VariationRequest request,
                                 RecipeVariation variation) {
         variation.setName(request.name());
@@ -203,27 +205,30 @@ public class RecipeService {
         variation.setServings(sameServings ? null : request.servings());
         variation.setWeightG(request.weightG());
 
-        Map<Long, Double> originalAmounts = recipe.getItems().stream()
-                .collect(Collectors.toMap(item -> item.getFood().getId(), RecipeItem::getAmount));
-        Map<Long, Double> changedAmounts = new LinkedHashMap<>();
-        sumAmountsByFoodId(request.items(), VariationItemRequest::foodId, VariationItemRequest::amount)
-                .forEach((foodId, amount) -> {
-                    double originalAmount = originalAmounts.getOrDefault(foodId, 0.0);
-                    if (Double.compare(amount, originalAmount) != 0) {
-                        changedAmounts.put(foodId, amount);
+        Map<Long, Quantity> originalQuantities = recipe.getItems().stream()
+                .collect(Collectors.toMap(item -> item.getFood().getId(), RecipeItem::getQuantity));
+        Map<Long, RecipeVariationItem> keptItems = variation.getItems().stream()
+                .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
+        Map<Long, RequestedQuantities.Requested> changed = new LinkedHashMap<>();
+        RequestedQuantities.byFoodId(request.items(),
+                        foodId -> keptItems.containsKey(foodId)
+                                ? keptItems.get(foodId).getFood()
+                                : foodService.getVisibleEntity(userId, foodId))
+                .forEach((foodId, wanted) -> {
+                    Quantity original = originalQuantities.getOrDefault(foodId, Quantity.ofAmount(0));
+                    if (!wanted.quantity().sameAmountAs(original)) {
+                        changed.put(foodId, wanted);
                     }
                 });
 
         // In place, see update()
-        variation.getItems().removeIf(item -> !changedAmounts.containsKey(item.getFood().getId()));
-        Map<Long, RecipeVariationItem> keptItems = variation.getItems().stream()
-                .collect(Collectors.toMap(item -> item.getFood().getId(), item -> item));
-        changedAmounts.forEach((foodId, amount) -> {
+        variation.getItems().removeIf(item -> !changed.containsKey(item.getFood().getId()));
+        changed.forEach((foodId, wanted) -> {
             RecipeVariationItem keptItem = keptItems.get(foodId);
             if (keptItem != null) {
-                keptItem.setAmount(amount);
+                keptItem.setQuantity(wanted.quantity());
             } else {
-                variation.addItem(foodService.getVisibleEntity(userId, foodId), amount);
+                variation.addItem(wanted.food(), wanted.quantity());
             }
         });
     }
@@ -234,17 +239,6 @@ public class RecipeService {
         }
     }
 
-    // Same food listed twice: the amounts are added up. LinkedHashMap keeps the request order.
-    // Used for recipe items and variation items, which are different request types.
-    private static <T> Map<Long, Double> sumAmountsByFoodId(List<T> items, Function<T, Long> foodId,
-                                                            ToDoubleFunction<T> amount) {
-        Map<Long, Double> amounts = new LinkedHashMap<>();
-        for (T item : items) {
-            amounts.merge(foodId.apply(item), amount.applyAsDouble(item), Double::sum);
-        }
-        return amounts;
-    }
-
     // Calories are computed from the foods' current values, like for meals. Variations only for
     // the owner, so they are never shared.
     private RecipeResponse toResponse(Recipe recipe, Long userId) {
@@ -252,6 +246,8 @@ public class RecipeService {
                 .map(item -> new RecipeItemResponse(
                         FoodResponse.ofUsed(item.getFood(), userId),
                         item.getAmount(),
+                        item.getQuantity().getPortionId(),
+                        item.getQuantity().getPortionCount(),
                         item.getAmount() * item.getFood().getKcalPer100() / 100))
                 .toList();
         boolean owned = recipe.isOwnedBy(userId);
@@ -279,7 +275,10 @@ public class RecipeService {
                 variation.getWeightG(),
                 variation.getItems().stream()
                         .map(item -> new VariationItemResponse(
-                                FoodResponse.ofUsed(item.getFood(), userId), item.getAmount()))
+                                FoodResponse.ofUsed(item.getFood(), userId),
+                                item.getAmount(),
+                                item.getQuantity().getPortionId(),
+                                item.getQuantity().getPortionCount()))
                         .toList());
     }
 }

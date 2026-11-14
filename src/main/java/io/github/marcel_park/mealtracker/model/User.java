@@ -68,6 +68,10 @@ public class User {
     @Column(name = "color_theme", nullable = false, length = 10)
     private ColorTheme colorTheme = ColorTheme.LIGHT;
 
+    // Share the shopping list with friends. Comes with the friends feature; nothing sets it yet.
+    @Column(name = "share_shopping_list", nullable = false)
+    private boolean shareShoppingList = false;
+
     // A deactivated user can neither log in nor use existing tokens.
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
@@ -99,6 +103,8 @@ public class User {
     public void setSex(Sex sex) { this.sex = sex; }
     public ColorTheme getColorTheme() { return colorTheme; }
     public void setColorTheme(ColorTheme colorTheme) { this.colorTheme = colorTheme; }
+    public boolean isShareShoppingList() { return shareShoppingList; }
+    public void setShareShoppingList(boolean shareShoppingList) { this.shareShoppingList = shareShoppingList; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
     public boolean isAdmin() { return admin; }

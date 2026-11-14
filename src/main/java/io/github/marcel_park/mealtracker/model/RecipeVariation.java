@@ -36,8 +36,12 @@ public class RecipeVariation {
     @OneToMany(mappedBy = "variation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<RecipeVariationItem> items = new ArrayList<>();
 
+    public void addItem(Food food, Quantity quantity) {
+        items.add(new RecipeVariationItem(this, food, quantity));
+    }
+
     public void addItem(Food food, double amount) {
-        items.add(new RecipeVariationItem(this, food, amount));
+        addItem(food, Quantity.ofAmount(amount));
     }
 
     public Long getId() { return id; }

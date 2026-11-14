@@ -12,6 +12,7 @@ import io.github.marcel_park.mealtracker.dto.VariationResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.Food;
+import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.RecipeItem;
 import io.github.marcel_park.mealtracker.model.RecipeVariation;
@@ -27,7 +28,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -344,6 +347,7 @@ class RecipeServiceTest {
             Recipe chili = ownChili();
             stubFind(chili);
             when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(beans);
+            when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(tomatoes);
             when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(mince);
             when(variationRepository.save(any(RecipeVariation.class))).thenAnswer(inv -> {
                 RecipeVariation saved = inv.getArgument(0);
@@ -384,6 +388,30 @@ class RecipeServiceTest {
             assertThat(saved.getItems())
                     .extracting(RecipeVariationItem::getFood, RecipeVariationItem::getAmount)
                     .containsExactly(tuple(tomatoes, 0.0));
+        }
+
+        @Test
+        void create_portionsWorthTheOriginalAmount_areNoChange_otherPortionsAreStoredAsPortions() {
+            Recipe chili = ownChili();
+            FoodPortion can = beans.addPortion("Dose", 400, true);
+            FoodPortion tomatoCan = tomatoes.addPortion("Dose", 250, true);
+            ReflectionTestUtils.setField(can, "id", 20L);
+            ReflectionTestUtils.setField(tomatoCan, "id", 21L);
+            stubFind(chili);
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(beans);
+            when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(tomatoes);
+            when(variationRepository.save(any(RecipeVariation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            // 1 Dose beans = 400 g as in the original; 3 Dosen tomatoes = 750 g instead of 500 g
+            VariationResponse result = service.createVariation(USER_ID, 1L, new VariationRequest("Mehr Tomaten", null, null,
+                    List.of(new VariationItemRequest(1L, null, 20L, BigDecimal.ONE),
+                            new VariationItemRequest(2L, null, 21L, new BigDecimal("3")))));
+
+            RecipeVariation saved = chili.getVariations().get(0);
+            assertThat(saved.getItems()).extracting(RecipeVariationItem::getFood).containsExactly(tomatoes);
+            assertThat(saved.getItems().get(0).getQuantity().getPortion()).isSameAs(tomatoCan);
+            assertThat(result.items().get(0).amount()).isEqualTo(750.0);
+            assertThat(result.items().get(0).portionId()).isEqualTo(21L);
         }
 
         @Test
