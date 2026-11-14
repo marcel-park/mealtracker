@@ -621,6 +621,12 @@ select:focus-visible {
   vertical-align: -1px;
 }
 
+/* the seal of a confirmed food at the end of its detail line, in the colour of the line */
+.confirmed-mark {
+  display: inline-flex;
+  vertical-align: -2px;
+}
+
 /* ----- Top bar ----- */
 
 .topbar {
