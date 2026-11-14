@@ -42,6 +42,7 @@ import {
   msUntilMidnight,
 } from './meals.js'
 import { MACROS, bookedMacros, macroTargets, remainingKcal } from './nutrition.js'
+import { DARK, LIGHT, SYSTEM, applyColorTheme, storedColorTheme } from './theme.js'
 import {
   formatQuantity,
   portionById,
@@ -109,8 +110,9 @@ const MAX_PASSWORD_BYTES = 72 // bcrypt only uses the first 72 bytes, the backen
 const MAX_CALORIE_TARGET = 20000
 
 const COLOR_THEMES = [
-  { value: 'LIGHT', label: 'Hell' },
-  { value: 'DARK', label: 'Dunkel' },
+  { value: SYSTEM, label: 'System' },
+  { value: LIGHT, label: 'Hell' },
+  { value: DARK, label: 'Dunkel' },
 ]
 
 // The meal being put together; mealId is null for a new meal.
@@ -2849,13 +2851,32 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
     event.preventDefault()
     if (!isValid || !isChanged) return
     runAction(async () => {
-      // The color theme cannot be changed yet, so the current value is sent back unchanged.
+      // The color theme is not part of it, see changeColorTheme.
       const updated = await request(API.me, {
         method: 'PUT',
-        body: JSON.stringify({ ...settings, sex, colorTheme: user.colorTheme }),
+        body: JSON.stringify({ ...settings, sex }),
       })
       onUserChange(updated)
       onError(null)
+    })
+  }
+
+  // Shown at once and saved on its own, independent of "Speichern" (which is for the fields above
+  // it). Should saving fail, the theme before comes back.
+  function changeColorTheme(colorTheme) {
+    if (colorTheme === user.colorTheme) return
+    const before = user
+    onUserChange({ ...user, colorTheme })
+    runAction(async () => {
+      try {
+        onUserChange(
+          await request(`${API.me}/color-theme`, { method: 'PUT', body: JSON.stringify({ colorTheme }) }),
+        )
+        onError(null)
+      } catch (error) {
+        onUserChange(before)
+        throw error
+      }
     })
   }
 
@@ -2883,6 +2904,9 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
           value={stepGoalText}
           onChange={setStepGoalText}
         />
+        <div className="section-head">
+          <h2>Nährwertziele</h2>
+        </div>
         <div className="macro-fields">
           {MACROS.map(({ key, label, percentField }) => (
             <UnitNumberField
@@ -2912,10 +2936,9 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
         </button>
       </form>
 
-      {/* Shown but not usable yet: the backend stores the value, the app does not use it so far. */}
       <div className="field theme-field">
         <span id={themeLabelId}>Farbschema</span>
-        <div className="segmented" role="radiogroup" aria-labelledby={themeLabelId} aria-disabled="true">
+        <div className="segmented" role="radiogroup" aria-labelledby={themeLabelId}>
           {COLOR_THEMES.map((theme) => (
             <button
               key={theme.value}
@@ -2923,13 +2946,12 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
               role="radio"
               aria-checked={user.colorTheme === theme.value}
               className={user.colorTheme === theme.value ? 'selected' : undefined}
-              disabled
+              onClick={() => changeColorTheme(theme.value)}
             >
               {theme.label}
             </button>
           ))}
         </div>
-        <span className="hint">Kommt bald.</span>
       </div>
 
       <HealthConnectSetting activity={activity} onError={onError} />
@@ -3086,8 +3108,9 @@ function passwordProblem(password, passwordRepeat) {
   return null
 }
 
-// "Anmelden" logs in. "Registrieren" first only shows the "repeat password" field and the body
-// data (weight, height, sex) and registers on the second click. Enter in a field triggers the highlighted button.
+// "Anmelden" logs in. "Registrieren" opens the registration view: the same fields plus "repeat
+// password" and the body data (weight, height, sex), with "Registrieren" as its only button and
+// "×" (or the back button) back to the login. Enter in a field triggers the highlighted button.
 // The server field is pre-filled with the server used last; another address only replaces it
 // once a login there succeeded.
 function LoginPage({ onLoggedIn }) {
@@ -3127,7 +3150,6 @@ function LoginPage({ onLoggedIn }) {
   }
 
   function logIn() {
-    setIsRegistering(false)
     if (!hasCredentials) {
       setError('Bitte gib E-Mail-Adresse und Passwort ein.')
       return
@@ -3135,12 +3157,15 @@ function LoginPage({ onLoggedIn }) {
     authenticate(API.login)
   }
 
+  // What is typed stays when switching between login and registration.
+  function showRegistration(show) {
+    setIsRegistering(show)
+    setError(null)
+  }
+
+  useBackNavigation(isRegistering, () => showRegistration(false))
+
   function register() {
-    if (!isRegistering) {
-      setIsRegistering(true)
-      setError(null)
-      return
-    }
     const bodyData = {
       weightKg: numberIn(weightText, WEIGHT_MIN, WEIGHT_MAX),
       heightCm: wholeNumberIn(heightText, HEIGHT_MIN, HEIGHT_MAX),
@@ -3170,8 +3195,12 @@ function LoginPage({ onLoggedIn }) {
   }
 
   return (
-    <main className="app login">
-      <h1 className="login-title">Mealtracker</h1>
+    <main className={isRegistering ? 'app login registering' : 'app login'}>
+      {isRegistering ? (
+        <TopBar title="Registrieren" closeLabel="Zurück zur Anmeldung" onClose={() => showRegistration(false)} />
+      ) : (
+        <h1 className="login-title">Mealtracker</h1>
+      )}
       {error && (
         <div className="error" role="alert">
           {error}
@@ -3247,12 +3276,20 @@ function LoginPage({ onLoggedIn }) {
           />
         )}
         <div className="login-actions">
-          <button type="button" className={isRegistering ? 'btn' : 'btn primary'} onClick={logIn}>
-            Anmelden
-          </button>
-          <button type="button" className={isRegistering ? 'btn primary' : 'btn'} onClick={register}>
-            Registrieren
-          </button>
+          {isRegistering ? (
+            <button type="button" className="btn primary" onClick={register}>
+              Registrieren
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn primary" onClick={logIn}>
+                Anmelden
+              </button>
+              <button type="button" className="btn" onClick={() => showRegistration(true)}>
+                Registrieren
+              </button>
+            </>
+          )}
         </div>
       </form>
     </main>
@@ -4415,6 +4452,12 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(logOutLocally)
   }, [logOutLocally])
+
+  // The account's color theme once it is known; before that the one remembered on the device.
+  const colorTheme = auth.user?.colorTheme ?? null
+  useEffect(() => {
+    applyColorTheme(colorTheme ?? storedColorTheme())
+  }, [colorTheme])
 
   useEffect(() => {
     let isCurrent = true
