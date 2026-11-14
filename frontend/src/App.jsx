@@ -47,7 +47,9 @@ import {
   NUTRIENT_DECIMALS,
   NUTRIENT_GROUPS,
   NUTRIENT_MAX_DIGITS,
+  bookedNutrients,
   formatNutrient,
+  formatNutrientAmount,
   nutrientAmounts,
   nutrientPartProblems,
   nutrientTexts,
@@ -758,7 +760,9 @@ function shownActivity(activity, user) {
 // calories left, and the kcal of all activity (steps and workouts, see activitySummary). The calorie target grows by
 // that activity, and so do the nutrient targets below, as they are shares of the calories.
 // meals: today's meals. activity: see useActivity.
-function DaySummary({ user, meals, activity }) {
+// Tapped anywhere (or Enter / Space), it opens the daily targets of the further nutrients
+// (onOpen, see NutrientOverview).
+function DaySummary({ user, meals, activity, onOpen }) {
   const shown = shownActivity(activity, user)
   const target = user.calorieTarget + (shown?.activityKcal ?? 0)
   const remaining = Math.round(remainingKcal(target, meals))
@@ -767,8 +771,14 @@ function DaySummary({ user, meals, activity }) {
   const booked = bookedMacros(meals)
   const reachedStepGoal = shown !== null && shown.steps >= user.stepGoal
 
+  function onKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    onOpen()
+  }
+
   return (
-    <div className="day-summary">
+    <div className="day-summary" role="button" tabIndex={0} title="Tagesbedarf heute" onClick={onOpen} onKeyDown={onKeyDown}>
       <div className="day-top">
         <div className="day-side">
           <span className="day-side-label">Schritte</span>
@@ -798,6 +808,55 @@ function DaySummary({ user, meals, activity }) {
 
 // e.g. "+233 kcal"
 const earnedKcal = (kcal) => `+${Math.round(kcal).toLocaleString(LOCALE)} kcal`
+
+// Today's amount of every further nutrient next to the user's daily target, grouped as in the
+// food form, each with a bar below. Without a target it reads "300 / 0 mg" with an empty bar.
+// Protein, carbs and fat are not repeated here, the main view shows them.
+function NutrientOverview({ user, meals, onClose }) {
+  const booked = bookedNutrients(meals)
+  const targets = user.nutrientTargets ?? {}
+  return (
+    <section>
+      <TopBar title="Tagesbedarf heute" closeLabel="Schließen" onClose={onClose} />
+      {NUTRIENT_GROUPS.map((group) => (
+        <div key={group.title} className="nutrient-group">
+          <h3>{group.title}</h3>
+          <div className="nutrient-bars">
+            {group.nutrients.map(({ key, label, unit }) => (
+              <NutrientBar key={key} label={label} unit={unit} booked={booked[key]} target={targets[key] ?? 0} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+// One nutrient: name and "300 / 5.000 mg" in a line, the bar below, filled by the share of the
+// target that is booked (full at the target and above). No colors for now.
+function NutrientBar({ label, unit, booked, target }) {
+  const share = target > 0 ? Math.min(booked / target, 1) : 0
+  const value = `${formatNutrientAmount(booked)} / ${formatNutrientAmount(target)} ${unit}`
+  return (
+    <div className="nutrient-bar">
+      <div className="nutrient-bar-head">
+        <span className="nutrient-bar-label">{label}</span>
+        <span className="nutrient-bar-value">{value}</span>
+      </div>
+      <span
+        className="macro-track"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={target}
+        aria-valuenow={Math.min(booked, target)}
+        aria-valuetext={value}
+      >
+        <span className="macro-fill" style={{ width: `${share * 100}%` }} />
+      </span>
+    </div>
+  )
+}
 
 // One nutrient: its name, a bar filled by the share of the target that is booked, and below it
 // "30 / 200 g". With a target of 0 g any booked amount counts as too much.
@@ -839,6 +898,7 @@ function MealList({
   onOpenFoods,
   onOpenShoppingList,
   onOpenProfile,
+  onOpenNutrients,
 }) {
   return (
     <section>
@@ -881,7 +941,7 @@ function MealList({
             <AvatarIcon />
           </button>
         </div>
-        <DaySummary user={user} meals={meals} activity={activity} />
+        <DaySummary user={user} meals={meals} activity={activity} onOpen={onOpenNutrients} />
       </div>
 
       {meals.length > 0 && (
@@ -2108,8 +2168,9 @@ function Collapsible({ title, children }) {
 }
 
 // A field for each optional nutrient, grouped as in nutrients.js, two per row. texts / onChange:
-// what is typed, e.g. { VITAMIN_C: "12,5" }. labelOf: the label of a field.
-function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.label }) {
+// what is typed, e.g. { VITAMIN_C: "12,5" }. labelOf: the label of a field. showUnit: an empty
+// field shows the unit it expects as placeholder.
+function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.label, showUnit = false }) {
   return NUTRIENT_GROUPS.map((group) => (
     <div key={group.title} className="nutrient-group">
       <h3>{group.title}</h3>
@@ -2121,6 +2182,7 @@ function NutrientFields({ texts, onChange, labelOf = (nutrient) => nutrient.labe
             unit={nutrient.unit}
             maxDigits={NUTRIENT_MAX_DIGITS}
             decimals={NUTRIENT_DECIMALS}
+            placeholder={showUnit ? nutrient.unit : undefined}
             value={texts[nutrient.key] ?? ''}
             onChange={(text) => onChange({ ...texts, [nutrient.key]: text })}
           />
@@ -2870,7 +2932,8 @@ function NumberField({ label, value, onChange }) {
 // number, selected so typing replaces it. Only digits can be typed, at most maxDigits, and with
 // decimals > 0 a decimal comma with that many digits after it. A text field, as a number field
 // cannot show the unit. value / onChange: the number as typed, e.g. "80,5".
-function UnitNumberField({ label, unit, maxDigits, decimals = 0, value, onChange }) {
+// placeholder: shown while the field is empty, e.g. the unit.
+function UnitNumberField({ label, unit, maxDigits, decimals = 0, placeholder, value, onChange }) {
   const [isFocused, setIsFocused] = useState(false)
   const inputRef = useRef(null)
 
@@ -2888,6 +2951,7 @@ function UnitNumberField({ label, unit, maxDigits, decimals = 0, value, onChange
         inputMode={decimals > 0 ? 'decimal' : 'numeric'}
         enterKeyHint="done"
         autoComplete="off"
+        placeholder={placeholder}
         value={isFocused || value === '' ? value : `${formatTyped(value, decimals)} ${unit}`}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
@@ -3138,6 +3202,7 @@ function NutrientTargetsPage({ user, onUserChange, onClose, onError }) {
           texts={texts}
           onChange={setTexts}
           labelOf={(nutrient) => (nutrient.limit ? `${nutrient.label} (Obergrenze)` : nutrient.label)}
+          showUnit
         />
         {!isValid && <p className="hint warning">Werte müssen größer als 0 sein.</p>}
         <div className="bar">
@@ -4296,6 +4361,16 @@ function MealTracker({ user, onUserChange, onLogout }) {
     setView('list')
   }
 
+  function openNutrients() {
+    setError(null)
+    setView('nutrients')
+  }
+
+  function closeNutrients() {
+    setError(null)
+    setView('list')
+  }
+
   function openProfile() {
     setError(null)
     setView('profile')
@@ -4329,6 +4404,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'foods') closeFoods()
     else if (view === 'shopping' && shoppingSearch) setShoppingSearch(false)
     else if (view === 'shopping') closeShoppingList()
+    else if (view === 'nutrients') closeNutrients()
     else if (view === 'profile' && profileLayer) setProfileLayer(null)
     else if (view === 'profile') closeProfile()
   }
@@ -4360,8 +4436,11 @@ function MealTracker({ user, onUserChange, onLogout }) {
           onOpenFoods={openFoods}
           onOpenShoppingList={openShoppingList}
           onOpenProfile={openProfile}
+          onOpenNutrients={openNutrients}
         />
       )}
+
+      {view === 'nutrients' && <NutrientOverview user={user} meals={meals} onClose={goBack} />}
 
       {view === 'shopping' && shoppingEdit && (
         <FoodDetail

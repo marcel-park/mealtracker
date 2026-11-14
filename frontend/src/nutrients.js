@@ -120,6 +120,23 @@ export function statedNutrientGroups(amounts) {
   })).filter((group) => group.nutrients.length > 0)
 }
 
+// What the meals contain of each nutrient: { VITAMIN_C: 42.5, ... } with every key, 0 where no
+// item states it. A food without a value adds nothing, it is not known.
+export function bookedNutrients(meals) {
+  const totals = Object.fromEntries(NUTRIENTS.map(({ key }) => [key, 0]))
+  for (const meal of meals) {
+    for (const item of meal.items) {
+      for (const [key, amount] of Object.entries(item.food.nutrients ?? {})) {
+        if (key in totals) totals[key] += (item.amount * amount) / 100
+      }
+    }
+  }
+  return totals
+}
+
+// e.g. "1.500" or "0,06", without unit
+export const formatNutrientAmount = (amount) =>
+  amount.toLocaleString('de-DE', { maximumFractionDigits: NUTRIENT_DECIMALS })
+
 // e.g. "0,06 mg"
-export const formatNutrient = (amount, unit) =>
-  `${amount.toLocaleString('de-DE', { maximumFractionDigits: NUTRIENT_DECIMALS })} ${unit}`
+export const formatNutrient = (amount, unit) => `${formatNutrientAmount(amount)} ${unit}`
