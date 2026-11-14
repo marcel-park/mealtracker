@@ -70,6 +70,16 @@ import {
   zeroQuantity,
 } from './quantities.js'
 import { activitySummary } from './activity.js'
+import {
+  KIND_FOODS,
+  KIND_RECIPES,
+  SCOPE_FRIENDS,
+  SCOPE_OWN,
+  SCOPE_PUBLIC,
+  confirmedByDefault,
+  confirmedFilterApplies,
+  withScope,
+} from './catalog.js'
 import { WEEKDAYS, canSaveTask, formatWeekdays, taskEditorFor, taskRequest, toggleWeekday } from './tasks.js'
 import {
   HEIGHT_MAX,
@@ -151,8 +161,6 @@ const NEW_FOOD = { id: null, owned: true, published: false, unit: FOOD_UNIT_G, p
 
 
 // The two kinds of entries in the search, and the filters that apply to both.
-const KIND_FOODS = 'foods'
-const KIND_RECIPES = 'recipes'
 const CATALOG_KINDS = [
   { value: KIND_FOODS, label: 'Lebensmittel' },
   { value: KIND_RECIPES, label: 'Rezepte' },
@@ -161,22 +169,24 @@ const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes }
 
 // Whose entries the search shows. "Alle": everything the user may see (own entries, private
 // ones included, and all public ones). Values as the backend expects them ('' = no scope).
-// "Nur bestätigte" is a separate toggle that combines with any of these.
+// "Nur bestätigte" is a separate toggle that combines with any of these; choosing a scope sets it
+// to fit (see catalog.js).
 const SCOPE_OPTIONS = [
   { value: '', label: 'Alle', Icon: AllIcon },
-  { value: 'PUBLIC', label: 'Öffentlich', Icon: GlobeIcon },
-  { value: 'OWN', label: 'Eigene', Icon: PersonIcon },
-  { value: 'FRIENDS', label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
+  { value: SCOPE_PUBLIC, label: 'Öffentlich', Icon: GlobeIcon },
+  { value: SCOPE_OWN, label: 'Eigene', Icon: PersonIcon },
+  { value: SCOPE_FRIENDS, label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
 ]
 
 
-// GET /api/foods or /api/recipes with the search text and the filters, if any.
+// GET /api/foods or /api/recipes with the search text and the filters, if any. "Nur bestätigte"
+// only for foods (see confirmedFilterApplies).
 function fetchCatalog(kind, { query, scope, confirmedOnly }, signal) {
   const params = new URLSearchParams()
   const search = query.trim()
   if (search) params.set(SEARCH_PARAM, search)
   if (scope) params.set(SCOPE_PARAM, scope)
-  if (confirmedOnly) params.set(CONFIRMED_PARAM, 'true')
+  if (confirmedOnly && confirmedFilterApplies(kind)) params.set(CONFIRMED_PARAM, 'true')
   const paramText = params.toString()
   return request(paramText ? `${KIND_URLS[kind]}?${paramText}` : KIND_URLS[kind], { signal })
 }
@@ -394,6 +404,20 @@ function PrivateMark({ entry }) {
   )
 }
 
+// The end of the detail line of a confirmed food in the search views: " · " and the seal, in the
+// colour of the line. Nothing for foods that are not confirmed.
+function ConfirmedMark({ entry }) {
+  if (!entry.confirmed) return null
+  return (
+    <>
+      <span className="booking-separator"> · </span>
+      <span className="confirmed-mark" title="Bestätigt" aria-label="bestätigt">
+        <SealIcon size={14} />
+      </span>
+    </>
+  )
+}
+
 // Foods or recipes (kind) matching the search (text and filters, see NEW_SEARCH), loaded once
 // typing pauses. A change of `version` loads them again, e.g. after something was saved.
 // onError must be stable (e.g. a state setter), otherwise every render restarts the request.
@@ -489,6 +513,8 @@ function CatalogHeader({
   children,
 }) {
   const { query, scope, confirmedOnly, kind } = search
+  // Recipes cannot be confirmed: the toggle is greyed out and shown off for them.
+  const confirmable = confirmedFilterApplies(kindLocked ? KIND_FOODS : kind)
   const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
 
   return (
@@ -509,10 +535,16 @@ function CatalogHeader({
         <button
           type="button"
           className="toggle-btn"
-          aria-pressed={confirmedOnly}
-          title={filtersLocked ? 'Nur bestätigte (hier immer an)' : 'Nur bestätigte'}
+          aria-pressed={confirmable && confirmedOnly}
+          title={
+            filtersLocked
+              ? 'Nur bestätigte (hier immer an)'
+              : confirmable
+                ? 'Nur bestätigte'
+                : 'Nur bestätigte (für Rezepte nicht verfügbar)'
+          }
           aria-label="Nur bestätigte"
-          disabled={filtersLocked}
+          disabled={filtersLocked || !confirmable}
           onClick={() => onSearchChange({ ...search, confirmedOnly: !confirmedOnly })}
         >
           <SealIcon size={22} />
@@ -523,7 +555,7 @@ function CatalogHeader({
           value={scope ?? ''}
           options={SCOPE_OPTIONS}
           disabled={filtersLocked}
-          onChange={(value) => onSearchChange({ ...search, scope: value === '' ? null : value })}
+          onChange={(value) => onSearchChange(withScope(search, value === '' ? null : value))}
         />
         <SelectBox
           label="Art"
@@ -539,9 +571,9 @@ function CatalogHeader({
   )
 }
 
-// Search text, whose entries (scope, null: everything the user may see), "only confirmed" and
-// kind of a search view.
-const NEW_SEARCH = { query: '', scope: null, confirmedOnly: false, kind: KIND_FOODS }
+// Search text, whose entries (scope, null: everything the user may see), "only confirmed" (on, as
+// for "Alle", see catalog.js) and kind of a search view.
+const NEW_SEARCH = { query: '', scope: null, confirmedOnly: confirmedByDefault(null), kind: KIND_FOODS }
 
 const DROPDOWN_MAX_HEIGHT = 280
 const DROPDOWN_SCREEN_MARGIN = 16 // distance the open list keeps from the screen edge
@@ -1121,6 +1153,7 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
             <span className="booking-part">{booked.label}</span>
             <span className="booking-separator"> · </span>
             <span className="booking-part">{formatKcal(kcalOf(food, booked.amount))}</span>
+            <ConfirmedMark entry={food} />
           </span>
         </span>
       </button>
@@ -1419,7 +1452,16 @@ function FoodDatabase({
             <DatabaseRow
               key={entry.id}
               entry={entry}
-              sub={isRecipes ? <RecipeSummary recipe={entry} /> : <KcalPer100 kcal={entry.kcalPer100} unit={entry.unit} />}
+              sub={
+                isRecipes ? (
+                  <RecipeSummary recipe={entry} />
+                ) : (
+                  <>
+                    <KcalPer100 kcal={entry.kcalPer100} unit={entry.unit} />
+                    <ConfirmedMark entry={entry} />
+                  </>
+                )
+              }
               onOpen={() => onOpen(kind, entry)}
             >
               {mode === 'manage' ? (
@@ -1712,7 +1754,7 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose
 // The search behind "Nährstoffprofil ableiten": only confirmed public foods, as their values come
 // from an official source. The filter row shows this, greyed out, and cannot be changed; only the
 // text can be searched. Tapping a food picks it (onPick).
-const PROFILE_SEARCH = { ...NEW_SEARCH, scope: 'PUBLIC', confirmedOnly: true, kind: KIND_FOODS }
+const PROFILE_SEARCH = { ...NEW_SEARCH, scope: SCOPE_PUBLIC, confirmedOnly: true, kind: KIND_FOODS }
 
 function NutrientProfileSearch({ onPick, onClose, onError }) {
   const [query, setQuery] = useState('')
@@ -1737,7 +1779,12 @@ function NutrientProfileSearch({ onPick, onClose, onError }) {
             <DatabaseRow
               key={food.id}
               entry={food}
-              sub={<KcalPer100 kcal={food.kcalPer100} unit={food.unit} />}
+              sub={
+                <>
+                  <KcalPer100 kcal={food.kcalPer100} unit={food.unit} />
+                  <ConfirmedMark entry={food} />
+                </>
+              }
               onOpen={() => onPick(food)}
             />
           ))}
