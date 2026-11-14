@@ -28,7 +28,7 @@ public enum Nutrient {
     VITAMIN_C,              // mg
     VITAMIN_B1,             // mg, thiamine
     VITAMIN_B2,             // mg, riboflavin
-    VITAMIN_B3,             // mg, niacin
+    VITAMIN_B3,             // mg, niacin equivalent: niacin + tryptophan / 60
     VITAMIN_B5,             // mg, pantothenic acid
     VITAMIN_B6,             // mg
     VITAMIN_B7,             // µg, biotin
