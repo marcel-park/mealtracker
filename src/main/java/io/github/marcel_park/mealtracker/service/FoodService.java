@@ -86,7 +86,7 @@ public class FoodService {
     @Transactional(readOnly = true)
     public List<FoodResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly) {
         CatalogSearch search = CatalogSearch.of(query, scope, confirmedOnly);
-        List<Food> foods = foodRepository.search(userId, search.namePattern(),
+        List<Food> foods = foodRepository.search(userId, search.namePattern(), search.eanCode(),
                 search.ownOnly(), search.publicOnly(), search.confirmedOnly());
         Set<Long> usedIds = findUsedIds(foods.stream().map(Food::getId).toList());
         return foods.stream()
@@ -211,6 +211,7 @@ public class FoodService {
 
     private void apply(FoodRequest request, Food food) {
         food.setName(request.name());
+        food.setEanCode(request.eanCode());
         food.setUnit(request.unit());
         food.setKcalPer100(request.kcalPer100());
         food.setProtein(request.protein());
