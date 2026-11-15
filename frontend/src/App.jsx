@@ -93,7 +93,15 @@ import {
   SCOPE_FRIENDS,
   SCOPE_OWN,
   SCOPE_PUBLIC,
+  SCOPE_RECENT,
+  CATALOG_PAGE_SIZE,
+  appendPage,
+  catalogKey,
   confirmedFilterAvailable,
+  createCatalogCache,
+  isIdleSearch,
+  isLastPage,
+  recentScopeAvailable,
   withKind,
   withScope,
 } from './catalog.js'
@@ -143,9 +151,13 @@ import {
 const SEARCH_PARAM = 'query'
 const SCOPE_PARAM = 'scope'
 const CONFIRMED_PARAM = 'confirmed'
+const PAGE_PARAM = 'page'
+const SIZE_PARAM = 'size'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const SEARCH_DELAY_MS = 250 // search only once typing pauses
+const LOAD_AHEAD_PX = 1200 // the next page of results is loaded when the list ends this close below the screen
+const CATALOG_CACHE = { maxEntries: 30, maxAgeMs: 5 * 60 * 1000 } // see createCatalogCache
 const SCAN_NOT_FOUND_MS = 1200 // how long a scanned EAN that finds nothing stays in the field
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
 const LOCALE = 'de-DE'
@@ -189,27 +201,37 @@ const CATALOG_KINDS = [
 const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes }
 
 // Whose entries the search shows. "Alle": everything the user may see (own entries, private
-// ones included, and all public ones). Values as the backend expects them ('' = no scope).
-// "Nur bestätigte" is a separate toggle that combines with any of these; choosing a scope sets it
-// to fit (see catalog.js).
+// ones included, and all public ones). "Zuletzt": the foods booked last, for foods only. Values as
+// the backend expects them ('' = no scope). "Nur bestätigte" is a separate toggle for some of
+// these (see catalog.js).
 const SCOPE_OPTIONS = [
   { value: '', label: 'Alle', Icon: AllIcon },
   { value: SCOPE_PUBLIC, label: 'Öffentlich', Icon: GlobeIcon },
   { value: SCOPE_OWN, label: 'Eigene', Icon: PersonIcon },
   { value: SCOPE_FRIENDS, label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
+  { value: SCOPE_RECENT, label: 'Zuletzt', Icon: ClockIcon },
 ]
+const RECIPE_SCOPE_OPTIONS = SCOPE_OPTIONS.map((option) =>
+  option.value === SCOPE_RECENT ? { ...option, disabled: !recentScopeAvailable(KIND_RECIPES) } : option,
+)
 
 
-// GET /api/foods or /api/recipes with the search text and the filters, if any. "Nur bestätigte"
-// only where it applies (see confirmedFilterAvailable).
-function fetchCatalog(kind, { query, scope, confirmedOnly }, signal) {
+// One page (0, 1, ...) of GET /api/foods or /api/recipes with the search text and the filters,
+// if any. "Nur bestätigte" only where it applies (see confirmedFilterAvailable). Foods come without
+// their nutrients and macros; details and form load the whole food with fetchFood.
+function fetchCatalog(kind, { query, scope, confirmedOnly }, page, signal) {
   const params = new URLSearchParams()
   const search = query.trim()
   if (search) params.set(SEARCH_PARAM, search)
   if (scope) params.set(SCOPE_PARAM, scope)
   if (confirmedOnly && confirmedFilterAvailable({ kind, scope })) params.set(CONFIRMED_PARAM, 'true')
-  const paramText = params.toString()
-  return request(paramText ? `${KIND_URLS[kind]}?${paramText}` : KIND_URLS[kind], { signal })
+  params.set(PAGE_PARAM, String(page))
+  params.set(SIZE_PARAM, String(CATALOG_PAGE_SIZE))
+  return request(`${KIND_URLS[kind]}?${params}`, { signal })
+}
+
+function fetchFood(id) {
+  return request(`${API.foods}/${id}`)
 }
 
 // Records without an id yet are created (POST), existing ones are replaced (PUT /{id}).
@@ -398,6 +420,16 @@ function PeopleIcon() {
   )
 }
 
+// "Zuletzt" in the filter select: a clock.
+function ClockIcon() {
+  return (
+    <svg {...smallIconProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.5 2" />
+    </svg>
+  )
+}
+
 // "Alle" in the filter select: four squares.
 function AllIcon() {
   return (
@@ -459,35 +491,134 @@ function ConfirmedMark({ entry }) {
   )
 }
 
+// The results of the last searches, shared by all search views; emptied on login and logout, as
+// "owned" and the private entries depend on the user.
+const catalogCache = createCatalogCache(CATALOG_CACHE)
+
+function clearCatalogCache() {
+  catalogCache.clear()
+}
+
 // Foods or recipes (kind) matching the search (text and filters, see NEW_SEARCH), loaded once
-// typing pauses: { entries, loadedQuery }, loadedQuery the search text they were loaded for (null
-// before the first result). A change of `version` loads them again, e.g. after something was saved.
-// onError must be stable (e.g. a state setter), otherwise every render restarts the request.
+// typing pauses, a page at a time (see fetchCatalog). A change of `version` loads them again, e.g.
+// after something was saved. onError must be stable (e.g. a state setter), otherwise every render
+// restarts the request.
+//
+// Returns { entries, loadedQuery, idle, loaded, hasMore, loadMore }:
+// - idle: nothing is searched yet (see isIdleSearch), entries is empty.
+// - The previous list stays until the new one is there; loaded tells whether entries belong to
+//   the current search, loadedQuery is the search text they were loaded for (null: none yet).
+// - loadMore() appends the next page if hasMore (see LoadMoreSentinel); one request at a time.
+// A search done before (see createCatalogCache) shows its list at once, with all pages loaded then.
 function useCatalog(kind, { query, scope, confirmedOnly }, version, onError) {
-  // Results remember their kind: right after switching, the old list must not be shown as the new kind.
-  const [result, setResult] = useState({ kind, query: null, entries: [] })
+  const idle = isIdleSearch({ query, scope })
+  const key = catalogKey(kind, { query, scope, confirmedOnly }, version)
+  // { key, kind, query, entries, pages, hasMore }; it remembers its kind: right after switching,
+  // the old list must not be shown as the new kind.
+  const [result, setResult] = useState(null)
+  const nextPage = useRef(null) // AbortController of the running loadMore request
 
   useEffect(() => {
+    if (idle) return
     const controller = new AbortController()
-    const timer = setTimeout(async () => {
-      try {
-        const entries = await fetchCatalog(kind, { query, scope, confirmedOnly }, controller.signal)
-        setResult({ kind, query, entries })
-        onError(null)
-      } catch (error) {
-        if (!controller.signal.aborted) onError(error.message)
-      }
-    }, SEARCH_DELAY_MS)
+    const cached = catalogCache.get(key, Date.now())
+    const timer = setTimeout(
+      async () => {
+        if (cached) {
+          setResult(cached)
+          return
+        }
+        try {
+          const entries = await fetchCatalog(kind, { query, scope, confirmedOnly }, 0, controller.signal)
+          const loaded = { key, kind, query, entries, pages: 1, hasMore: !isLastPage(entries) }
+          catalogCache.set(key, loaded, Date.now())
+          setResult(loaded)
+          onError(null)
+        } catch (error) {
+          if (!controller.signal.aborted) onError(error.message)
+        }
+      },
+      cached ? 0 : SEARCH_DELAY_MS,
+    )
 
     return () => {
       clearTimeout(timer)
       controller.abort()
+      nextPage.current?.abort()
+      nextPage.current = null
     }
-  }, [kind, query, scope, confirmedOnly, version, onError])
+  }, [idle, key, kind, query, scope, confirmedOnly, onError])
 
-  return result.kind === kind
-    ? { entries: result.entries, loadedQuery: result.query }
-    : { entries: [], loadedQuery: null }
+  const current = result?.key === key ? result : null
+
+  function loadMore() {
+    if (!current?.hasMore || nextPage.current) return
+    const controller = new AbortController()
+    nextPage.current = controller
+    fetchCatalog(kind, { query, scope, confirmedOnly }, current.pages, controller.signal)
+      .then((page) => {
+        const loaded = {
+          ...current,
+          entries: appendPage(current.entries, page),
+          pages: current.pages + 1,
+          hasMore: !isLastPage(page),
+        }
+        catalogCache.set(key, loaded, Date.now())
+        setResult((shown) => (shown?.key === key ? loaded : shown))
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) onError(error.message)
+      })
+      .finally(() => {
+        if (nextPage.current === controller) nextPage.current = null
+      })
+  }
+
+  if (idle) return { entries: [], loadedQuery: null, idle, loaded: false, hasMore: false, loadMore }
+  const shown = result?.kind === kind ? result : null
+  return {
+    entries: shown?.entries ?? [],
+    loadedQuery: shown?.query ?? null,
+    idle,
+    loaded: current !== null,
+    hasMore: current?.hasMore ?? false,
+    loadMore,
+  }
+}
+
+// Placed under a paged list: asks for the next page (onVisible) once the end of the list comes
+// within LOAD_AHEAD_PX below the screen, so the rows are usually there before they are scrolled
+// to. Pages are only appended below, so nothing on screen moves. Watched anew after each page
+// (count): the observer only reports changes, and a short page can leave the end in reach.
+function LoadMoreSentinel({ active, count, onVisible }) {
+  const ref = useRef(null)
+  const onVisibleRef = useRef(onVisible)
+  useEffect(() => {
+    onVisibleRef.current = onVisible
+  })
+  useEffect(() => {
+    if (!active) return
+    const observer = new IntersectionObserver(
+      (records) => {
+        if (records.some((record) => record.isIntersecting)) onVisibleRef.current()
+      },
+      { rootMargin: `0px 0px ${LOAD_AHEAD_PX}px 0px` },
+    )
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [active, count])
+  return <div ref={ref} className="load-more" aria-hidden="true" />
+}
+
+// What a search view shows instead of rows: a hint before the first letter, nothing while the
+// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt").
+function CatalogEmpty({ catalog, search, notFound }) {
+  if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
+  if (!catalog.loaded) return null
+  if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
+    return <p className="empty">Du hast noch keine Lebensmittel gebucht.</p>
+  }
+  return <p className="empty">{notFound}</p>
 }
 
 // Runs one backend action at a time: clicks while a request is still running are ignored
@@ -649,7 +780,7 @@ function CatalogHeader({
           label="Filter"
           className="fill"
           value={scope ?? ''}
-          options={SCOPE_OPTIONS}
+          options={!kindLocked && kind === KIND_RECIPES ? RECIPE_SCOPE_OPTIONS : SCOPE_OPTIONS}
           disabled={filtersLocked}
           onChange={(value) => onSearchChange(withScope(search, value === '' ? null : value))}
         />
@@ -1402,7 +1533,8 @@ function FoodSearch({
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const kind = kindLocked ? KIND_FOODS : search.kind
-  const { entries, loadedQuery } = useCatalog(kind, search, version, onError)
+  const catalog = useCatalog(kind, search, version, onError)
+  const { entries, loadedQuery } = catalog
 
   return (
     <section hidden={!visible}>
@@ -1415,9 +1547,11 @@ function FoodSearch({
         onClose={onClose}
       />
       {entries.length === 0 ? (
-        <p className="empty">
-          {kind === KIND_RECIPES ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}
-        </p>
+        <CatalogEmpty
+          catalog={catalog}
+          search={search}
+          notFound={kind === KIND_RECIPES ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}
+        />
       ) : (
         <div className="rows">
           {kind === KIND_RECIPES
@@ -1434,6 +1568,7 @@ function FoodSearch({
               ))}
         </div>
       )}
+      <LoadMoreSentinel active={catalog.hasMore} count={entries.length} onVisible={catalog.loadMore} />
       <div className="bar">
         <button type="button" className="btn small" onClick={onPreview}>
           Vorschau ({draftCount})
@@ -1780,7 +1915,8 @@ function FoodDatabase({
   onError,
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
-  const { entries, loadedQuery } = useCatalog(search.kind, search, version, onError)
+  const catalog = useCatalog(search.kind, search, version, onError)
+  const { entries, loadedQuery } = catalog
   const { kind } = search
   const isRecipes = kind === KIND_RECIPES
   const newLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
@@ -1807,7 +1943,11 @@ function FoodDatabase({
         )}
       </CatalogHeader>
       {entries.length === 0 ? (
-        <p className="empty">{isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}</p>
+        <CatalogEmpty
+          catalog={catalog}
+          search={search}
+          notFound={isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}
+        />
       ) : (
         <div className="rows">
           {entries.map((entry) => (
@@ -1852,6 +1992,7 @@ function FoodDatabase({
           ))}
         </div>
       )}
+      <LoadMoreSentinel active={catalog.hasMore} count={entries.length} onVisible={catalog.loadMore} />
     </section>
   )
 }
@@ -2162,15 +2303,30 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose
 
 // The search behind "Nährstoffprofil ableiten": only confirmed public foods, as their values come
 // from an official source. The filter row shows this, greyed out, and cannot be changed; only the
-// text can be searched. Tapping a food picks it (onPick).
+// text can be searched. Tapping a food picks it (onPick, with the whole food: the list has no
+// nutrients, see fetchCatalog).
 const PROFILE_SEARCH = { ...NEW_SEARCH, scope: SCOPE_PUBLIC, confirmedOnly: true, kind: KIND_FOODS }
 
 function NutrientProfileSearch({ onPick, onClose, onError }) {
   const [query, setQuery] = useState('')
   const search = { ...PROFILE_SEARCH, query }
   // The backend also lists an unconfirmed food found by its EAN; its profile is not to be copied.
-  const { entries, loadedQuery } = useCatalog(KIND_FOODS, search, 0, onError)
+  const catalog = useCatalog(KIND_FOODS, search, 0, onError)
+  const { entries, loadedQuery } = catalog
   const foods = entries.filter((food) => food.confirmed)
+  const isPicking = useRef(false)
+
+  async function pick(food) {
+    if (isPicking.current) return
+    isPicking.current = true
+    try {
+      onPick(await fetchFood(food.id))
+    } catch (error) {
+      onError(error.message)
+    } finally {
+      isPicking.current = false
+    }
+  }
 
   return (
     <section>
@@ -2184,7 +2340,7 @@ function NutrientProfileSearch({ onPick, onClose, onError }) {
         onClose={onClose}
       />
       {foods.length === 0 ? (
-        <p className="empty">Kein bestätigtes Lebensmittel gefunden.</p>
+        <CatalogEmpty catalog={catalog} search={search} notFound="Kein bestätigtes Lebensmittel gefunden." />
       ) : (
         <div className="rows">
           {foods.map((food) => (
@@ -2197,11 +2353,12 @@ function NutrientProfileSearch({ onPick, onClose, onError }) {
                   <ConfirmedMark entry={food} />
                 </>
               }
-              onOpen={() => onPick(food)}
+              onOpen={() => pick(food)}
             />
           ))}
         </div>
       )}
+      <LoadMoreSentinel active={catalog.hasMore} count={entries.length} onVisible={catalog.loadMore} />
     </section>
   )
 }
@@ -4586,6 +4743,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     }
   }, [])
 
+  // Also after booking: "Zuletzt" in the searches changes with the meals.
   const reloadCatalog = () => setCatalogVersion((version) => version + 1)
 
   // ----- meals -----
@@ -4722,6 +4880,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       await createOrUpdate(API.meals, draft.mealId, mealRequest(draft.entries, draft.recipeUses))
       setDraft(NEW_DRAFT)
       setView('list')
+      reloadCatalog()
       await loadMeals()
     })
   }
@@ -4729,6 +4888,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   async function saveEditedEntries(entries) {
     const { mealId } = draft
     await createOrUpdate(API.meals, mealId, mealRequest(entries))
+    reloadCatalog()
     // The saved amounts are the new baseline. Skip this if another meal was opened meanwhile.
     setDraft((current) =>
       current.mealId === mealId
@@ -4791,6 +4951,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
         runAction(async () => {
           setConfirm(null)
           await request(`${API.meals}/${meal.id}`, { method: 'DELETE' })
+          reloadCatalog()
           await loadMeals()
         }),
     })
@@ -4798,9 +4959,17 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   // ----- food database: details -----
 
+  // The search lists foods without their nutrients (see fetchCatalog): the details show the whole food.
   function openCatalogDetail(kind, entry) {
     setNotice(null)
-    setCatalogDetail({ kind, entry, variationId: null, copying: false })
+    if (kind === KIND_RECIPES) {
+      setCatalogDetail({ kind, entry, variationId: null, copying: false })
+      return
+    }
+    runAction(async () => {
+      const food = await fetchFood(entry.id)
+      setCatalogDetail({ kind, entry: food, variationId: null, copying: false })
+    })
   }
 
   function updateCatalogDetail(changes) {
@@ -4829,10 +4998,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
-  // The pencil in the database list (own entries only) and "+" for a new one.
+  // The pencil in the database list (own entries only) and "+" for a new one. The form needs the
+  // whole food, the list has it without nutrients (see fetchCatalog).
   function openEditor(kind, entry) {
     if (kind === KIND_RECIPES) openRecipe(entry)
-    else openFood(entry ?? NEW_FOOD)
+    else if (entry) runAction(async () => openFood(await fetchFood(entry.id)))
+    else openFood(NEW_FOOD)
   }
 
   // ----- food database: foods -----
@@ -5587,6 +5758,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {recipeSearch && (
         <FoodSearch
           visible={!recipeSearch.previewing && !detail}
+          version={catalogVersion}
           kindLocked
           draftCount={recipeSearch.entries.length}
           submitLabel="Hinzufügen"
@@ -5648,6 +5820,7 @@ export default function App() {
 
   const logOutLocally = useCallback(async () => {
     await clearToken()
+    clearCatalogCache()
     setAuth(LOGGED_OUT)
   }, [])
 
@@ -5673,6 +5846,7 @@ export default function App() {
 
   async function logIn(serverUrl, token, user) {
     await saveSession(serverUrl, token)
+    clearCatalogCache()
     setAuth({ status: 'loggedIn', user })
   }
 
