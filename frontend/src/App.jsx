@@ -5,6 +5,7 @@ import { Capacitor } from '@capacitor/core'
 import './App.css'
 import {
   API,
+  ApiError,
   clearToken,
   getServerUrl,
   isUnencrypted,
@@ -88,6 +89,8 @@ import {
   tuningFor,
 } from './scanner.js'
 import {
+  USER_ITEM_SEARCH,
+  KIND_USER_ITEMS,
   KIND_FOODS,
   KIND_RECIPES,
   SCOPE_FRIENDS,
@@ -96,12 +99,13 @@ import {
   SCOPE_RECENT,
   CATALOG_PAGE_SIZE,
   appendPage,
+  canCreateUserItem,
   catalogKey,
   confirmedFilterAvailable,
   createCatalogCache,
   isIdleSearch,
   isLastPage,
-  recentScopeAvailable,
+  scopeAvailable,
   withKind,
   withScope,
 } from './catalog.js'
@@ -163,10 +167,12 @@ const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
 const LOCALE = 'de-DE'
 const DATE_TIME_FORMAT = { dateStyle: 'short', timeStyle: 'short' }
 
-// Same rules as the backend (RegisterRequest, UserSettingsRequest).
+// Same rules as the backend (RegisterRequest, UserSettingsRequest, UserItem, ShoppingListCountRequest).
 const MIN_PASSWORD_LENGTH = 8
 const MAX_PASSWORD_BYTES = 72 // bcrypt only uses the first 72 bytes, the backend rejects longer passwords
 const MAX_CALORIE_TARGET = 20000
+const MAX_USER_ITEM_NAME_LENGTH = 100 // UserItem.MAX_NAME_LENGTH
+const MAX_USER_ITEM_COUNT = 999 // ShoppingListCountRequest.MAX_COUNT
 
 const COLOR_THEMES = [
   { value: SYSTEM, label: 'System' },
@@ -188,31 +194,45 @@ const SHARE_OPTIONS = [
   { value: true, label: 'Teilen' },
 ]
 
+// Who sees the user's items (as the backend names it); user items are never public.
+const USER_ITEM_VISIBILITIES = [
+  { value: 'PRIVATE', label: 'Privat' },
+  { value: 'FRIENDS', label: 'Freunde' },
+]
+
 const NEW_DRAFT = { mealId: null, entries: [], recipeUses: [] }
 
 const NEW_FOOD = { id: null, owned: true, published: false, unit: FOOD_UNIT_G, portions: [] }
 
 
-// The two kinds of entries in the search, and the filters that apply to both.
+// The two kinds of entries in the search, and the filters that apply to both. The search behind
+// "Hinzufügen" of the shopping list also offers the user's items ("Benutzeritems").
 const CATALOG_KINDS = [
   { value: KIND_FOODS, label: 'Lebensmittel' },
   { value: KIND_RECIPES, label: 'Rezepte' },
 ]
-const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes }
+const SHOPPING_KINDS = [...CATALOG_KINDS, { value: KIND_USER_ITEMS, label: 'Benutzeritems' }]
+const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes, [KIND_USER_ITEMS]: API.userItems }
 
 // Whose entries the search shows. "Alle": everything the user may see (own entries, private
 // ones included, and all public ones). "Zuletzt": the foods booked last, for foods only. Values as
 // the backend expects them ('' = no scope). "Nur bestätigte" is a separate toggle for some of
-// these (see catalog.js).
+// these (see catalog.js). soon: does not work yet, marked "bald".
 const SCOPE_OPTIONS = [
   { value: '', label: 'Alle', Icon: AllIcon },
   { value: SCOPE_PUBLIC, label: 'Öffentlich', Icon: GlobeIcon },
   { value: SCOPE_OWN, label: 'Eigene', Icon: PersonIcon },
-  { value: SCOPE_FRIENDS, label: 'Freunde', Icon: PeopleIcon, disabled: true }, // no friends yet
+  { value: SCOPE_FRIENDS, label: 'Freunde', Icon: PeopleIcon, disabled: true, soon: true }, // no friends yet
   { value: SCOPE_RECENT, label: 'Zuletzt', Icon: ClockIcon },
 ]
-const RECIPE_SCOPE_OPTIONS = SCOPE_OPTIONS.map((option) =>
-  option.value === SCOPE_RECENT ? { ...option, disabled: !recentScopeAvailable(KIND_RECIPES) } : option,
+// The scopes as offered for a kind: those that do not apply greyed out (see scopeAvailable).
+const SCOPE_OPTIONS_BY_KIND = Object.fromEntries(
+  [KIND_FOODS, KIND_RECIPES, KIND_USER_ITEMS].map((kind) => [
+    kind,
+    SCOPE_OPTIONS.map((option) =>
+      scopeAvailable(kind, option.value === '' ? null : option.value) ? option : { ...option, disabled: true },
+    ),
+  ]),
 )
 
 
@@ -511,7 +531,7 @@ function clearCatalogCache() {
 // - loadMore() appends the next page if hasMore (see LoadMoreSentinel); one request at a time.
 // A search done before (see createCatalogCache) shows its list at once, with all pages loaded then.
 function useCatalog(kind, { query, scope, confirmedOnly }, version, onError) {
-  const idle = isIdleSearch({ query, scope })
+  const idle = isIdleSearch({ query, scope, kind })
   const key = catalogKey(kind, { query, scope, confirmedOnly }, version)
   // { key, kind, query, entries, pages, hasMore }; it remembers its kind: right after switching,
   // the old list must not be shown as the new kind.
@@ -611,12 +631,22 @@ function LoadMoreSentinel({ active, count, onVisible }) {
 }
 
 // What a search view shows instead of rows: a hint before the first letter, nothing while the
-// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt").
+// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt", or how to
+// create the first user item).
 function CatalogEmpty({ catalog, search, notFound }) {
   if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
   if (!catalog.loaded) return null
   if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
     return <p className="empty">Du hast noch keine Lebensmittel gebucht.</p>
+  }
+  if (search.kind === KIND_USER_ITEMS && search.scope === SCOPE_OWN) {
+    return (
+      <p className="empty">
+        {search.query.trim() === ''
+          ? 'Noch keine eigenen Benutzeritems. Tippe einen Namen ein und lege das Item mit + an.'
+          : 'Kein Item gefunden. Mit + legst du es an.'}
+      </p>
+    )
   }
   return <p className="empty">{notFound}</p>
 }
@@ -675,7 +705,8 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
 
 // Search field with the filter row below it. Both stick to the top while the list scrolls.
 // Filter row: "only confirmed" toggle, whose entries, foods or recipes; the two selects share the
-// width. children: extra buttons at the end (the "+" of the food database).
+// width. children: extra buttons at the end (the "+" of the food database and of the shopping list
+// search). kinds: the choices of the kind select (the shopping list adds user items).
 // filtersLocked: the filters are fixed by the view (see NutrientProfileSearch); they show what
 // applies, greyed out, and cannot be changed. results: { query, count } of the list shown below,
 // query the search text it was loaded for; a scan that finds nothing is cleared again with it.
@@ -687,13 +718,14 @@ function CatalogHeader({
   onClose,
   kindLocked = false,
   filtersLocked = false,
+  kinds = CATALOG_KINDS,
   children,
 }) {
   const { query, scope, confirmedOnly, kind } = search
   // "Nur bestätigte" only for public foods and foods of everybody, otherwise greyed out and off
   // (see confirmedFilterAvailable).
   const confirmable = confirmedFilterAvailable({ kind: kindLocked ? KIND_FOODS : kind, scope })
-  const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
+  const placeholder = SEARCH_PLACEHOLDERS[kindLocked ? KIND_FOODS : kind]
   // The barcode button takes the place of the field's own "×" while nothing is typed, for foods only
   // and only where the device can scan (see scanner.js). A scanned EAN becomes the search text; the
   // backend finds the food by its EAN (also an unconfirmed one, see FoodRepository.search).
@@ -780,7 +812,7 @@ function CatalogHeader({
           label="Filter"
           className="fill"
           value={scope ?? ''}
-          options={!kindLocked && kind === KIND_RECIPES ? RECIPE_SCOPE_OPTIONS : SCOPE_OPTIONS}
+          options={SCOPE_OPTIONS_BY_KIND[kindLocked ? KIND_FOODS : kind]}
           disabled={filtersLocked}
           onChange={(value) => onSearchChange(withScope(search, value === '' ? null : value))}
         />
@@ -788,7 +820,7 @@ function CatalogHeader({
           label="Art"
           className="fill fill-more"
           value={kindLocked ? KIND_FOODS : kind}
-          options={CATALOG_KINDS}
+          options={kinds}
           disabled={kindLocked || filtersLocked}
           onChange={(value) => onSearchChange(withKind(search, value))}
         />
@@ -796,6 +828,12 @@ function CatalogHeader({
       </div>
     </div>
   )
+}
+
+const SEARCH_PLACEHOLDERS = {
+  [KIND_FOODS]: 'Lebensmittel suchen',
+  [KIND_RECIPES]: 'Rezepte suchen',
+  [KIND_USER_ITEMS]: 'Benutzeritems suchen oder anlegen',
 }
 
 // Whether this device can scan EANs (see canScanEan); asked once, false until the answer is there.
@@ -1112,7 +1150,7 @@ function SelectBox({ label, value, options, disabled = false, className = '', on
             >
               {option.Icon && <option.Icon />}
               <span>{option.label}</span>
-              {option.disabled && <span className="soon">bald</span>}
+              {option.soon && <span className="soon">bald</span>}
             </li>
           ))}
         </ul>
@@ -1900,7 +1938,12 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
 //   creates a new food or recipe (onNew);
 // - 'shop' (adding to the shopping list): the cart (onAddToList); addedToList: { kind, id } of
 //   the entry just put on the list, whose cart shows ✓ for a moment, like "+" when booking.
-// All callbacks get the kind (KIND_FOODS or KIND_RECIPES) and the entry.
+//   This search also offers the user's items ("Benutzeritems", preselected with
+//   "Eigene", see USER_ITEM_SEARCH). Their rows are one line, with the pencil (onEditUserItem) left of
+//   the cart; tapping one is the same as its cart. "+" in the header creates a user item named as
+//   typed (onNewUserItem); it is always there but only works for own user items and only while no
+//   item of exactly that name exists (see canCreateUserItem).
+// All callbacks get the kind (KIND_FOODS, KIND_RECIPES or KIND_USER_ITEMS) and the entry.
 function FoodDatabase({
   hidden,
   version,
@@ -1911,15 +1954,22 @@ function FoodDatabase({
   onEdit,
   onAddToList,
   onNew,
+  onNewUserItem,
+  onEditUserItem,
   onClose,
   onError,
 }) {
-  const [search, setSearch] = useState(NEW_SEARCH)
+  const isShop = mode === 'shop'
+  const [search, setSearch] = useState(isShop ? USER_ITEM_SEARCH : NEW_SEARCH)
   const catalog = useCatalog(search.kind, search, version, onError)
   const { entries, loadedQuery } = catalog
   const { kind } = search
   const isRecipes = kind === KIND_RECIPES
+  const isUserItem = kind === KIND_USER_ITEMS
   const newLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
+  const canCreateNew = isShop && canCreateUserItem(search, catalog)
+  const justAdded = (entry) => addedToList?.kind === kind && addedToList.id === entry.id
+  const notFound = isUserItem ? 'Kein Item gefunden.' : isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'
 
   return (
     <section hidden={hidden}>
@@ -1927,6 +1977,7 @@ function FoodDatabase({
         search={search}
         onSearchChange={setSearch}
         results={{ query: loadedQuery, count: entries.length }}
+        kinds={isShop ? SHOPPING_KINDS : CATALOG_KINDS}
         closeLabel={closeLabel}
         onClose={onClose}
       >
@@ -1941,13 +1992,37 @@ function FoodDatabase({
             <PlusIcon size={22} />
           </button>
         )}
+        {isShop && (
+          <button
+            type="button"
+            className="add"
+            title={
+              canCreateNew
+                ? `„${search.query.trim()}“ als Item anlegen`
+                : 'Item anlegen (Benutzeritems und Eigene wählen, einen neuen Namen tippen)'
+            }
+            aria-label="Benutzeritem anlegen"
+            disabled={!canCreateNew}
+            onClick={() => onNewUserItem(search.query.trim())}
+          >
+            <PlusIcon size={22} />
+          </button>
+        )}
       </CatalogHeader>
       {entries.length === 0 ? (
-        <CatalogEmpty
-          catalog={catalog}
-          search={search}
-          notFound={isRecipes ? 'Kein Rezept gefunden.' : 'Kein Lebensmittel gefunden.'}
-        />
+        <CatalogEmpty catalog={catalog} search={search} notFound={notFound} />
+      ) : isUserItem ? (
+        <div className="rows">
+          {entries.map((entry) => (
+            <UserItemRow
+              key={entry.id}
+              item={entry}
+              justAdded={justAdded(entry)}
+              onEdit={() => onEditUserItem(entry)}
+              onAddToList={() => onAddToList(KIND_USER_ITEMS, entry)}
+            />
+          ))}
+        </div>
       ) : (
         <div className="rows">
           {entries.map((entry) => (
@@ -1978,21 +2053,164 @@ function FoodDatabase({
                   <PencilIcon />
                 </button>
               ) : (
-                <button
-                  type="button"
-                  className="weigh-btn"
-                  title="Zur Einkaufsliste"
-                  aria-label={`${entry.name} zur Einkaufsliste hinzufügen`}
-                  onClick={() => onAddToList(kind, entry)}
-                >
-                  {addedToList?.kind === kind && addedToList.id === entry.id ? '✓' : <CartIcon size={22} />}
-                </button>
+                <CartButton name={entry.name} justAdded={justAdded(entry)} onClick={() => onAddToList(kind, entry)} />
               )}
             </DatabaseRow>
           ))}
         </div>
       )}
       <LoadMoreSentinel active={catalog.hasMore} count={entries.length} onVisible={catalog.loadMore} />
+    </section>
+  )
+}
+
+// The cart at the right of a row in the shopping list search; ✓ for a moment after a tap.
+function CartButton({ name, justAdded, onClick }) {
+  return (
+    <button
+      type="button"
+      className="weigh-btn"
+      title="Zur Einkaufsliste"
+      aria-label={`${name} zur Einkaufsliste hinzufügen`}
+      onClick={onClick}
+    >
+      {justAdded ? '✓' : <CartIcon size={22} />}
+    </button>
+  )
+}
+
+// A user item in the shopping list search: one line with its name, the pencil (name, delete)
+// and the cart (count, then onto the list). The buttons are as big as in the other search rows,
+// so the row is as tall as they are. Tapping the name is the same as the cart.
+function UserItemRow({ item, justAdded, onEdit, onAddToList }) {
+  return (
+    <div className="row user-item-row">
+      <button type="button" className="row-open" onClick={onAddToList}>
+        <span className="name">{item.name}</span>
+      </button>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="weigh-btn"
+          title={item.owned ? 'Bearbeiten' : 'Gehört dir nicht'}
+          aria-label={`${item.name} bearbeiten`}
+          disabled={!item.owned}
+          onClick={onEdit}
+        >
+          <PencilIcon />
+        </button>
+        <CartButton name={item.name} justAdded={justAdded} onClick={onAddToList} />
+      </div>
+    </div>
+  )
+}
+
+// Renaming or deleting a user item. Its only field is the name; "Löschen" (with a confirmation,
+// onDelete) takes it off the shopping list too. onSave(name) gets the trimmed name.
+function UserItemForm({ item, onSave, onDelete, onClose }) {
+  const [name, setName] = useState(item.name)
+  const trimmed = name.trim()
+  const canSave = trimmed !== '' && trimmed !== item.name
+
+  function submit(event) {
+    event.preventDefault()
+    if (canSave) onSave(trimmed)
+  }
+
+  return (
+    <section>
+      <TopBar title="Item bearbeiten" closeLabel="Schließen" onClose={onClose} />
+      <form onSubmit={submit}>
+        <label className="field">
+          <span>Name</span>
+          <input
+            type="text"
+            autoFocus
+            autoComplete="off"
+            enterKeyHint="done"
+            maxLength={MAX_USER_ITEM_NAME_LENGTH}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        <div className="bar">
+          <button type="button" className="btn danger-outline" onClick={onDelete}>
+            Löschen
+          </button>
+          <button type="submit" className="btn primary" disabled={!canSave}>
+            Speichern
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+// How many of a user item go on the shopping list (initialCount preselected), with "−" / "+" like
+// the portions of a recipe. Whole numbers from 1 to MAX_USER_ITEM_COUNT. Used to put an item on
+// the list and to change the count of one that is on it (confirmLabel). onConfirm(count).
+function UserItemCount({ name, initialCount = 1, confirmLabel, onConfirm, onClose }) {
+  const countId = useId()
+  const [countText, setCountText] = useState(String(initialCount))
+  const count = Number(countText)
+  const isValid = Number.isInteger(count) && count >= 1 && count <= MAX_USER_ITEM_COUNT
+
+  function step(by) {
+    const next = (Number.isInteger(count) ? count : 0) + by
+    if (next >= 1 && next <= MAX_USER_ITEM_COUNT) setCountText(String(next))
+  }
+
+  function submit(event) {
+    event.preventDefault()
+    if (isValid) onConfirm(count)
+  }
+
+  return (
+    <section>
+      <TopBar title={name} closeLabel="Schließen" onClose={onClose} centered />
+      <form onSubmit={submit}>
+        <div className="field">
+          <label htmlFor={countId}>Anzahl</label>
+          <div className="stepper">
+            <input
+              id={countId}
+              type="number"
+              inputMode="numeric"
+              enterKeyHint="done"
+              min="1"
+              max={MAX_USER_ITEM_COUNT}
+              step="1"
+              value={countText}
+              onFocus={(event) => event.target.select()}
+              onChange={(event) => setCountText(event.target.value)}
+            />
+            <button
+              type="button"
+              className="frame-btn"
+              aria-label="Eins weniger"
+              disabled={!(count > 1)}
+              onClick={() => step(-1)}
+            >
+              <MinusIcon />
+            </button>
+            <button
+              type="button"
+              className="frame-btn"
+              aria-label="Eins mehr"
+              disabled={!(count < MAX_USER_ITEM_COUNT)}
+              onClick={() => step(1)}
+            >
+              <PlusIcon size={22} />
+            </button>
+          </div>
+        </div>
+        {!isValid && <p className="hint warning">Bitte eine ganze Zahl von 1 bis {MAX_USER_ITEM_COUNT}.</p>}
+        <div className="bar">
+          <button type="submit" className="btn primary" disabled={!isValid}>
+            {confirmLabel}
+          </button>
+        </div>
+      </form>
     </section>
   )
 }
@@ -3527,12 +3745,10 @@ function useRowGestures(rowRef, { canDrag, onSwipe, onDragStart, onDragMove, onD
 }
 
 // One entry in two lines that never grow: the name (one line, cut off with "…"), and below it
-// the amount in g or ml, followed by the portions if it was put on the list as portions
-// ("360 g · 6 Stück"); the "×" right of both lines.
+// the quantity (see shoppingItemDetails); the "×" right of both lines.
 // shift: how far the entry is moved up or down by a drag (its own, or one passing it).
 function ShoppingRow({ item, shift, isDragged, onToggle, onEdit, onDragStart, onDragMove, onDragEnd, onRemove }) {
-  const { food } = item
-  const quantity = quantityFromItem(food, item)
+  const name = shoppingItemName(item)
   const rowRef = useRef(null)
   const gestures = useRowGestures(rowRef, {
     canDrag: !item.checked,
@@ -3558,15 +3774,25 @@ function ShoppingRow({ item, shift, isDragged, onToggle, onEdit, onDragStart, on
   return (
     <div ref={rowRef} className={classes.join(' ')} style={style} {...gestures.handlers}>
       <button type="button" className="row-open" onClick={open}>
-        <span className="name">{food.name}</span>
-        <span className="sub">
-          {formatAmount(item.amount, food.unit)}
-          {quantity.portionId !== null && ` · ${formatQuantity(food, quantity)}`}
-        </span>
+        <span className="name">{name}</span>
+        <span className="sub">{shoppingItemDetails(item)}</span>
       </button>
-      <CrossButton label={`${food.name} entfernen`} onClick={() => onRemove(item)} />
+      <CrossButton label={`${name} entfernen`} onClick={() => onRemove(item)} />
     </div>
   )
+}
+
+// A shopping list entry is a food or a user item (see ShoppingListItemResponse in the backend).
+const shoppingItemName = (item) => (item.userItem ? item.userItem.name : item.food.name)
+
+// The second line: "Anzahl: 3" for a user item; for a food the amount, followed by the portions
+// if it was put on the list as portions ("360 g · 6 Stück").
+function shoppingItemDetails(item) {
+  if (item.userItem) return `Anzahl: ${item.count}`
+  const { food } = item
+  const quantity = quantityFromItem(food, item)
+  const portions = quantity.portionId !== null ? ` · ${formatQuantity(food, quantity)}` : ''
+  return `${formatAmount(item.amount, food.unit)}${portions}`
 }
 
 // Puts a recipe on the shopping list: the foods it takes for the chosen number of portions (the
@@ -3923,6 +4149,7 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
   const runAction = useActionRunner(onError)
   const themeLabelId = useId()
   const shareLabelId = useId()
+  const userItemVisibilityLabelId = useId()
 
   const settings = {
     calorieTarget: wholeNumberIn(targetText, 1, MAX_CALORIE_TARGET),
@@ -3972,6 +4199,27 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
       try {
         onUserChange(
           await request(`${API.me}/color-theme`, { method: 'PUT', body: JSON.stringify({ colorTheme }) }),
+        )
+        onError(null)
+      } catch (error) {
+        onUserChange(before)
+        throw error
+      }
+    })
+  }
+
+  // Like the color theme: shown at once and saved on its own; the old value comes back on failure.
+  function changeUserItemVisibility(userItemVisibility) {
+    if (userItemVisibility === user.userItemVisibility) return
+    const before = user
+    onUserChange({ ...user, userItemVisibility })
+    runAction(async () => {
+      try {
+        onUserChange(
+          await request(`${API.me}/user-item-visibility`, {
+            method: 'PUT',
+            body: JSON.stringify({ userItemVisibility }),
+          }),
         )
         onError(null)
       } catch (error) {
@@ -4061,6 +4309,26 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
       </div>
 
       <HealthConnectSetting activity={activity} onError={onError} />
+
+      {/* Who sees the user's items (shopping list); never public. */}
+      <div className="field theme-field">
+        <span id={userItemVisibilityLabelId}>Sichtbarkeit von Benutzeritems</span>
+        <div className="segmented" role="radiogroup" aria-labelledby={userItemVisibilityLabelId}>
+          {USER_ITEM_VISIBILITIES.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={user.userItemVisibility === option.value}
+              className={user.userItemVisibility === option.value ? 'selected' : undefined}
+              onClick={() => changeUserItemVisibility(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <span className="hint">Freunde sehen deine Benutzeritems, sobald es Freunde gibt.</span>
+      </div>
 
       {/* Shown but not usable yet: sharing comes with friends. */}
       <div className="field theme-field">
@@ -4670,10 +4938,12 @@ function MealTracker({ user, onUserChange, onLogout }) {
   const [recipeSearch, setRecipeSearch] = useState(null)
   const [catalogVersion, setCatalogVersion] = useState(0) // reloads the food database list
   const [shoppingList, setShoppingList] = useState(null) // items of the shopping list, null until loaded
-  // Putting a database entry on the shopping list: null, { food } or { recipe }.
+  // Putting a database entry on the shopping list: null, { food }, { recipe } or { userItem }.
   const [shoppingAdd, setShoppingAdd] = useState(null)
+  const [userItemEdit, setUserItemEdit] = useState(null) // user item being renamed or deleted
   const [shoppingSearch, setShoppingSearch] = useState(false) // the search to add to the list is open
-  const [shoppingEdit, setShoppingEdit] = useState(null) // shopping list entry whose quantity is changed
+  // shopping list entry whose quantity (food) or count (user item) is changed
+  const [shoppingEdit, setShoppingEdit] = useState(null)
   // { kind, id } of the database entry just put on the shopping list: its cart shows ✓ for a moment.
   const [addedToList, setAddedToList] = useState(null)
   const [checklist, setChecklist] = useState(null) // today's checklist entries, null until loaded
@@ -5297,10 +5567,25 @@ function MealTracker({ user, onUserChange, onLogout }) {
     })
   }
 
+  // Replaces the count of a user item entry, from the count view.
+  function saveShoppingCount(count) {
+    const { id } = shoppingEdit
+    runAction(async () => {
+      setShoppingList(
+        await request(`${API.shoppingList}/items/${id}/count`, {
+          method: 'PUT',
+          body: JSON.stringify({ count }),
+        }),
+      )
+      setShoppingEdit(null)
+      setError(null)
+    })
+  }
+
   function askRemoveShoppingItem(item) {
     setConfirm({
       title: 'Eintrag entfernen?',
-      text: `„${item.food.name}“ wird von der Einkaufsliste entfernt.`,
+      text: `„${shoppingItemName(item)}“ wird von der Einkaufsliste entfernt.`,
       confirmLabel: 'Entfernen',
       onConfirm: () => {
         setConfirm(null)
@@ -5342,6 +5627,78 @@ function MealTracker({ user, onUserChange, onLogout }) {
       setAddedToList(added)
       if (use) reloadCatalog()
       setError(null)
+    })
+  }
+
+  // A user item goes on the list with its count; one that is there already gets it added.
+  function addUserItemToShoppingList(userItem, count) {
+    runAction(async () => {
+      setShoppingList(
+        await request(`${API.shoppingList}/user-items`, {
+          method: 'POST',
+          body: JSON.stringify({ userItemId: userItem.id, count }),
+        }),
+      )
+      setShoppingAdd(null)
+      setAddedToList({ kind: KIND_USER_ITEMS, id: userItem.id })
+      setError(null)
+    })
+  }
+
+  // ----- user items -----
+
+  // A name the user has already (in any case) is refused by the server with 409.
+  async function sendUserItem(url, method, name) {
+    try {
+      return await request(url, { method, body: JSON.stringify({ name }) })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        throw new Error(`Ein Item „${name}“ gibt es schon.`, { cause: error })
+      }
+      throw error
+    }
+  }
+
+  // "+" in the shopping list search: the item named as typed. The search keeps its text, so the
+  // new item is the one shown, ready for its cart.
+  function createUserItem(name) {
+    runAction(async () => {
+      await sendUserItem(API.userItems, 'POST', name)
+      reloadCatalog()
+      setError(null)
+    })
+  }
+
+  function saveUserItem(name) {
+    const { id } = userItemEdit
+    runAction(async () => {
+      await sendUserItem(`${API.userItems}/${id}`, 'PUT', name)
+      setUserItemEdit(null)
+      reloadCatalog()
+      // the list shows the new name too
+      setShoppingList(await request(API.shoppingList))
+      setError(null)
+    })
+  }
+
+  function askDeleteUserItem() {
+    const { id, name } = userItemEdit
+    const onList = shoppingList?.some((item) => item.userItem?.id === id) ?? false
+    setConfirm({
+      title: 'Item löschen?',
+      text: onList
+        ? `„${name}“ wird gelöscht und von der Einkaufsliste entfernt.`
+        : `„${name}“ wird gelöscht.`,
+      confirmLabel: 'Löschen',
+      onConfirm: () =>
+        runAction(async () => {
+          setConfirm(null)
+          await request(`${API.userItems}/${id}`, { method: 'DELETE' })
+          setUserItemEdit(null)
+          reloadCatalog()
+          setShoppingList(await request(API.shoppingList))
+          setError(null)
+        }),
     })
   }
 
@@ -5489,6 +5846,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (catalogDetail?.copying) updateCatalogDetail({ copying: false })
     else if (catalogDetail) setCatalogDetail(null)
     else if (shoppingAdd) setShoppingAdd(null)
+    else if (userItemEdit) setUserItemEdit(null)
     else if (shoppingEdit) setShoppingEdit(null)
     else if (foodFormLayer) setFoodFormLayer(null)
     else if (foodForm) setFoodForm(null)
@@ -5564,7 +5922,16 @@ function MealTracker({ user, onUserChange, onLogout }) {
         />
       )}
 
-      {view === 'shopping' && shoppingEdit && (
+      {view === 'shopping' && shoppingEdit?.userItem && (
+        <UserItemCount
+          name={shoppingEdit.userItem.name}
+          initialCount={shoppingEdit.count}
+          confirmLabel="Übernehmen"
+          onConfirm={saveShoppingCount}
+          onClose={goBack}
+        />
+      )}
+      {view === 'shopping' && shoppingEdit?.food && (
         <FoodDetail
           food={shoppingEdit.food}
           initial={initialAmountInput(shoppingEdit.food, {
@@ -5596,7 +5963,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
       {view === 'shopping' && shoppingSearch && (
         <>
           <FoodDatabase
-            hidden={catalogDetail !== null || shoppingAdd !== null}
+            hidden={catalogDetail !== null || shoppingAdd !== null || userItemEdit !== null}
             version={catalogVersion}
             mode="shop"
             addedToList={addedToList}
@@ -5604,11 +5971,41 @@ function MealTracker({ user, onUserChange, onLogout }) {
             onOpen={openCatalogDetail}
             onAddToList={(kind, entry) => {
               setNotice(null)
-              setShoppingAdd(kind === KIND_RECIPES ? { recipe: entry } : { food: entry })
+              setShoppingAdd(
+                kind === KIND_RECIPES
+                  ? { recipe: entry }
+                  : kind === KIND_USER_ITEMS
+                    ? { userItem: entry }
+                    : { food: entry },
+              )
+            }}
+            onNewUserItem={createUserItem}
+            onEditUserItem={(item) => {
+              setNotice(null)
+              setError(null)
+              setUserItemEdit(item)
             }}
             onClose={goBack}
             onError={setError}
           />
+          {userItemEdit && (
+            <UserItemForm
+              key={userItemEdit.id}
+              item={userItemEdit}
+              onSave={saveUserItem}
+              onDelete={askDeleteUserItem}
+              onClose={goBack}
+            />
+          )}
+          {shoppingAdd?.userItem && (
+            <UserItemCount
+              key={shoppingAdd.userItem.id}
+              name={shoppingAdd.userItem.name}
+              confirmLabel="Zur Einkaufsliste hinzufügen"
+              onConfirm={(count) => addUserItemToShoppingList(shoppingAdd.userItem, count)}
+              onClose={goBack}
+            />
+          )}
           {shoppingAdd?.food && (
             <FoodDetail
               food={shoppingAdd.food}
