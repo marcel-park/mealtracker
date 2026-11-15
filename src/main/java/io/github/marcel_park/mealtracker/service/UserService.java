@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.UserItemVisibility;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -115,6 +116,14 @@ public class UserService {
     public UserResponse setColorTheme(Long userId, ColorTheme colorTheme) {
         User user = getEntity(userId);
         user.setColorTheme(colorTheme);
+        return UserResponse.from(user);
+    }
+
+    // Saved on its own, right when it is tapped in the profile (like the color theme).
+    @Transactional
+    public UserResponse setUserItemVisibility(Long userId, UserItemVisibility visibility) {
+        User user = getEntity(userId);
+        user.setUserItemVisibility(visibility);
         return UserResponse.from(user);
     }
 

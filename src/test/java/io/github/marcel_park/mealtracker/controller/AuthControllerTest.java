@@ -9,6 +9,7 @@ import io.github.marcel_park.mealtracker.exception.AccountDisabledException;
 import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredException;
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.UserItemVisibility;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
@@ -51,7 +52,7 @@ class AuthControllerTest {
     private static final AuthResponse AUTH_RESPONSE = new AuthResponse("the-token",
             new UserResponse(1L, "max@example.com", 2000, 40, 30, 30, 10_000,
                     new BigDecimal("80.5"), 180, Sex.MALE, LocalDate.of(1987, 3, 14), ColorTheme.LIGHT,
-                    false, false));
+                    false, UserItemVisibility.PRIVATE, false));
 
     private static final String CREDENTIALS = """
             {"email":"max@example.com","password":"geheim123"}

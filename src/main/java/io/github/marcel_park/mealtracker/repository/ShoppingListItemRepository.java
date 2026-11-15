@@ -25,6 +25,13 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
 
     Optional<ShoppingListItem> findByUserIdAndFoodId(Long userId, Long foodId);
 
+    Optional<ShoppingListItem> findByUserIdAndUserItemId(Long userId, Long userItemId);
+
+    // Takes a user item off every list, before it is deleted.
+    @Modifying
+    @Query("delete from ShoppingListItem i where i.userItem.id = :userItemId")
+    int deleteAllWithUserItem(@Param("userItemId") Long userItemId);
+
     // The next position at the end of the list, 0 for an empty one.
     @Query("select coalesce(max(i.position) + 1, 0) from ShoppingListItem i where i.user.id = :userId")
     int nextPosition(@Param("userId") Long userId);

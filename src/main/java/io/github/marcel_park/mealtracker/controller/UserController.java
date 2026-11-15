@@ -1,6 +1,7 @@
 package io.github.marcel_park.mealtracker.controller;
 
 import io.github.marcel_park.mealtracker.dto.ColorThemeRequest;
+import io.github.marcel_park.mealtracker.dto.UserItemVisibilityRequest;
 import io.github.marcel_park.mealtracker.dto.UserResponse;
 import io.github.marcel_park.mealtracker.dto.UserSettingsRequest;
 import io.github.marcel_park.mealtracker.security.CurrentUser;
@@ -40,5 +41,12 @@ public class UserController {
     public UserResponse setColorTheme(@AuthenticationPrincipal CurrentUser user,
                                       @Valid @RequestBody ColorThemeRequest request) {
         return userService.setColorTheme(user.userId(), request.colorTheme());
+    }
+
+    // Who sees the user's items; applied right away like the color theme.
+    @PutMapping("/user-item-visibility")
+    public UserResponse setUserItemVisibility(@AuthenticationPrincipal CurrentUser user,
+                                                @Valid @RequestBody UserItemVisibilityRequest request) {
+        return userService.setUserItemVisibility(user.userId(), request.userItemVisibility());
     }
 }

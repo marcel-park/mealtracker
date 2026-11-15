@@ -1,6 +1,7 @@
 package io.github.marcel_park.mealtracker.dto;
 
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.UserItemVisibility;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 
@@ -11,7 +12,8 @@ import java.time.LocalDate;
 // calorie target, see UserSettingsRequest. weightKg, heightCm, sex, birthDate: null for users who
 // registered before they were asked for. The daily targets of the further nutrients are not stored:
 // the app computes them from birthDate, sex and the calorie target.
-// shareShoppingList: not changeable yet (comes with friends).
+// shareShoppingList: not changeable yet (comes with friends). userItemVisibility: who sees the
+// user's items, see UserItemVisibilityRequest.
 public record UserResponse(
         Long id,
         String email,
@@ -26,6 +28,7 @@ public record UserResponse(
         LocalDate birthDate,
         ColorTheme colorTheme,
         boolean shareShoppingList,
+        UserItemVisibility userItemVisibility,
         boolean admin) {
 
     public static UserResponse from(User user) {
@@ -43,6 +46,7 @@ public record UserResponse(
                 user.getBirthDate(),
                 user.getColorTheme(),
                 user.isShareShoppingList(),
+                user.getUserItemVisibility(),
                 user.isAdmin());
     }
 }

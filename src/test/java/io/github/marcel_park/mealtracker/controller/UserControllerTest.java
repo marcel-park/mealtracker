@@ -4,6 +4,7 @@ import io.github.marcel_park.mealtracker.config.CorsConfig;
 import io.github.marcel_park.mealtracker.dto.UserResponse;
 import io.github.marcel_park.mealtracker.dto.UserSettingsRequest;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.UserItemVisibility;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.security.SecurityConfig;
 import io.github.marcel_park.mealtracker.security.WithCurrentUser;
@@ -51,7 +52,7 @@ class UserControllerTest {
     private static final UserResponse PROFILE =
             new UserResponse(USER_ID, "max@example.com", 1800, 40, 30, 30, 10_000,
                     new BigDecimal("80.5"), 180, Sex.MALE, LocalDate.of(1987, 3, 14), ColorTheme.LIGHT,
-                    false, false);
+                    false, UserItemVisibility.PRIVATE, false);
 
     @Test
     void get_returnsProfileOfTheLoggedInUser() throws Exception {
@@ -126,6 +127,34 @@ class UserControllerTest {
                 .andExpect(status().isOk());
 
         verify(userService).setColorTheme(USER_ID, ColorTheme.DARK);
+    }
+
+    @Test
+    void setUserItemVisibility_passesItOnForTheLoggedInUser() throws Exception {
+        when(userService.setUserItemVisibility(USER_ID, UserItemVisibility.FRIENDS)).thenReturn(PROFILE);
+
+        mockMvc.perform(put("/api/users/me/user-item-visibility")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userItemVisibility\":\"FRIENDS\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userItemVisibility").value("PRIVATE"));
+
+        verify(userService).setUserItemVisibility(USER_ID, UserItemVisibility.FRIENDS);
+    }
+
+    // User items are never public.
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+            public           | {"userItemVisibility":"PUBLIC"}
+            missing          | {}
+            """)
+    void setUserItemVisibility_invalidRequest_returns400(String violation, String body) throws Exception {
+        mockMvc.perform(put("/api/users/me/user-item-visibility")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(userService);
     }
 
     @ParameterizedTest(name = "{0}")

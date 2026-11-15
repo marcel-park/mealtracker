@@ -78,6 +78,12 @@ public class User {
     @Column(name = "share_shopping_list", nullable = false)
     private boolean shareShoppingList = false;
 
+    // Who sees the user's items (all of them): only the user, or their friends as well.
+    // Stored as plain VARCHAR "PRIVATE" / "FRIENDS", see UserItemVisibilityConverter.
+    @Convert(converter = UserItemVisibilityConverter.class)
+    @Column(name = "user_item_visibility", nullable = false, length = 10)
+    private UserItemVisibility userItemVisibility = UserItemVisibility.PRIVATE;
+
     // A deactivated user can neither log in nor use existing tokens.
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
@@ -113,6 +119,10 @@ public class User {
     public void setColorTheme(ColorTheme colorTheme) { this.colorTheme = colorTheme; }
     public boolean isShareShoppingList() { return shareShoppingList; }
     public void setShareShoppingList(boolean shareShoppingList) { this.shareShoppingList = shareShoppingList; }
+    public UserItemVisibility getUserItemVisibility() { return userItemVisibility; }
+    public void setUserItemVisibility(UserItemVisibility userItemVisibility) {
+        this.userItemVisibility = userItemVisibility;
+    }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
     public boolean isAdmin() { return admin; }
