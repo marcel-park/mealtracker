@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isValidEan,
+  eanCodeOf,
   CHOICE_UNIT,
   amountChoices,
   amountOf,
@@ -163,5 +165,24 @@ describe('editing portions', () => {
   it('sends id, name, amount and favorite', () => {
     const portions = savePortion(draftPortions(beer), { key: 'new-1', name: 'Flasche', amount: 500 })
     expect(portionRequests(portions)).toEqual([{ id: null, name: 'Flasche', amount: 500, favorite: true }])
+  })
+})
+
+describe('isValidEan', () => {
+  it('accepts EAN-8, UPC-A, EAN-13 and GTIN-14 with the right check digit', () => {
+    for (const code of ['40170725', '036000291452', '4311501042229', '14311501042226']) expect(isValidEan(code), code).toBe(true)
+  })
+
+  it('rejects a wrong check digit, other lengths and other characters', () => {
+    for (const code of ['4311501042228', '4311501042292', '123', '123456789', '431150104222x', '']) {
+      expect(isValidEan(code), code).toBe(false)
+    }
+  })
+})
+
+describe('eanCodeOf', () => {
+  it('sends an empty field as null', () => {
+    expect(eanCodeOf('')).toBeNull()
+    expect(eanCodeOf('4311501042229')).toBe('4311501042229')
   })
 })

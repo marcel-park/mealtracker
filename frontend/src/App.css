@@ -360,10 +360,119 @@ select:focus-visible {
   gap: 8px;
 }
 
-.search input {
+.search-input {
   flex: 1;
   min-width: 0;
+}
+
+/* a field with a button inside on the right (the barcode button) */
+.inline-btn-field {
+  position: relative;
+  display: block;
+}
+
+.inline-btn-field input {
+  width: 100%;
+}
+
+/* in a form field: not styled like the label above it */
+.field .inline-btn-field {
+  color: inherit;
+  font-size: inherit;
+}
+
+.search input {
+  width: 100%;
   height: var(--search-height);
+}
+
+/* barcode button inside the search field, on the right, while nothing is typed */
+.scan-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--search-height) - 8px);
+  height: calc(var(--search-height) - 8px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.inline-btn-field:has(.scan-btn) input {
+  padding-right: calc(var(--search-height) + 2px);
+}
+
+/* ----- Barcode scanner: the camera across the whole screen ----- */
+
+.scanner {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: #000;
+}
+
+.scanner-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* where to hold the barcode: a wide box in the middle, the rest darkened */
+.scanner-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(80vw, 360px);
+  height: min(36vw, 160px);
+  border: 2px solid rgb(255 255 255 / 90%);
+  border-radius: 12px;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 45%);
+  transform: translate(-50%, -50%);
+}
+
+.scanner-hint {
+  position: absolute;
+  right: var(--gutter);
+  bottom: calc(env(safe-area-inset-bottom) + 48px);
+  left: var(--gutter);
+  margin: 0;
+  color: #fff;
+  text-align: center;
+}
+
+.scanner-close {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 16px);
+  left: var(--gutter);
+}
+
+.scanner-video {
+  cursor: crosshair;
+}
+
+.scanner-torch {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 16px);
+  right: var(--gutter);
+}
+
+.scanner-torch.on {
+  background: rgb(255 255 255 / 85%);
+  color: #000;
+}
+
+.scanner-close .frame-btn,
+.scanner-torch:not(.on) {
+  border-color: rgb(255 255 255 / 70%);
+  background: rgb(0 0 0 / 35%);
+  color: #fff;
 }
 
 /* the "×" left of the search field: outlined, as tall as the field */

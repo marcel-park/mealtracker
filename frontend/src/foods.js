@@ -158,3 +158,18 @@ export function removePortion(portions, key) {
 export function portionRequests(portions) {
   return portions.map(({ id, name, amount, favorite }) => ({ id, name, amount, favorite }))
 }
+
+// The EAN (GTIN) under the barcode of a product: 8, 12, 13 or 14 digits, the last one a check digit.
+// From the right, the other digits are weighted 3, 1, 3, 1, … and the check digit tops their sum up
+// to a multiple of 10. The backend checks the same (Gtin.java). Optional for a food.
+export const EAN_MAX_LENGTH = 14
+
+export function isValidEan(code) {
+  if (!/^(\d{8}|\d{12,14})$/.test(code)) return false
+  let sum = 0
+  for (let i = code.length - 2, weight = 3; i >= 0; i--, weight = 4 - weight) sum += Number(code[i]) * weight
+  return (10 - (sum % 10)) % 10 === Number(code[code.length - 1])
+}
+
+// The EAN field as typed, digits only; null if empty.
+export const eanCodeOf = (text) => (text === '' ? null : text)

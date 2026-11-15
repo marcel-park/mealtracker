@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import './App.css'
@@ -22,6 +23,9 @@ import {
   MAX_PORTION_NAME_LENGTH,
   amountChoices,
   draftPortions,
+  EAN_MAX_LENGTH,
+  eanCodeOf,
+  isValidEan,
   formatAmount,
   initialAmountInput,
   isPortionNameTaken,
@@ -72,6 +76,17 @@ import {
   zeroQuantity,
 } from './quantities.js'
 import { activitySummary } from './activity.js'
+import {
+  CAMERA_CONSTRAINTS,
+  EAN_FORMATS,
+  READS_NEEDED,
+  canScanEan,
+  focusAt,
+  nextRead,
+  pickBackCamera,
+  pickEan,
+  tuningFor,
+} from './scanner.js'
 import {
   KIND_FOODS,
   KIND_RECIPES,
@@ -131,6 +146,7 @@ const CONFIRMED_PARAM = 'confirmed'
 
 const IS_NATIVE = Capacitor.isNativePlatform() // true inside the Android app, false in a browser
 const SEARCH_DELAY_MS = 250 // search only once typing pauses
+const SCAN_NOT_FOUND_MS = 1200 // how long a scanned EAN that finds nothing stays in the field
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
 const LOCALE = 'de-DE'
 const DATE_TIME_FORMAT = { dateStyle: 'short', timeStyle: 'short' }
@@ -341,6 +357,26 @@ function PersonIcon() {
   )
 }
 
+// a torch with its beam
+function TorchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={22} {...iconProps} height={22}>
+      <path d="M8 3h8v3l-2 4v10a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V10L8 6z" />
+      <path d="M8 6h8M12 13v2" />
+    </svg>
+  )
+}
+
+// vertical bars of different width, like a barcode
+function BarcodeIcon({ size = 22 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} {...iconProps} height={size}>
+      <path d="M4 6v12M7 6v12M10.5 6v12M13 6v12M16.5 6v12M20 6v12" />
+      <path d="M2.5 4.5v-1h3M18.5 3.5h3v1M21.5 19.5v1h-3M5.5 20.5h-3v-1" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
 function SealIcon({ size = 16 }) {
   return (
     <svg {...smallIconProps} width={size} height={size}>
@@ -424,18 +460,19 @@ function ConfirmedMark({ entry }) {
 }
 
 // Foods or recipes (kind) matching the search (text and filters, see NEW_SEARCH), loaded once
-// typing pauses. A change of `version` loads them again, e.g. after something was saved.
+// typing pauses: { entries, loadedQuery }, loadedQuery the search text they were loaded for (null
+// before the first result). A change of `version` loads them again, e.g. after something was saved.
 // onError must be stable (e.g. a state setter), otherwise every render restarts the request.
 function useCatalog(kind, { query, scope, confirmedOnly }, version, onError) {
   // Results remember their kind: right after switching, the old list must not be shown as the new kind.
-  const [result, setResult] = useState({ kind, entries: [] })
+  const [result, setResult] = useState({ kind, query: null, entries: [] })
 
   useEffect(() => {
     const controller = new AbortController()
     const timer = setTimeout(async () => {
       try {
         const entries = await fetchCatalog(kind, { query, scope, confirmedOnly }, controller.signal)
-        setResult({ kind, entries })
+        setResult({ kind, query, entries })
         onError(null)
       } catch (error) {
         if (!controller.signal.aborted) onError(error.message)
@@ -448,7 +485,9 @@ function useCatalog(kind, { query, scope, confirmedOnly }, version, onError) {
     }
   }, [kind, query, scope, confirmedOnly, version, onError])
 
-  return result.kind === kind ? result.entries : []
+  return result.kind === kind
+    ? { entries: result.entries, loadedQuery: result.query }
+    : { entries: [], loadedQuery: null }
 }
 
 // Runs one backend action at a time: clicks while a request is still running are ignored
@@ -507,10 +546,12 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
 // Filter row: "only confirmed" toggle, whose entries, foods or recipes; the two selects share the
 // width. children: extra buttons at the end (the "+" of the food database).
 // filtersLocked: the filters are fixed by the view (see NutrientProfileSearch); they show what
-// applies, greyed out, and cannot be changed.
+// applies, greyed out, and cannot be changed. results: { query, count } of the list shown below,
+// query the search text it was loaded for; a scan that finds nothing is cleared again with it.
 function CatalogHeader({
   search,
   onSearchChange,
+  results,
   closeLabel,
   onClose,
   kindLocked = false,
@@ -521,21 +562,70 @@ function CatalogHeader({
   // Recipes cannot be confirmed: the toggle is greyed out and shown off for them.
   const confirmable = confirmedFilterApplies(kindLocked ? KIND_FOODS : kind)
   const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
+  // The barcode button takes the place of the field's own "×" while nothing is typed, for foods only
+  // and only where the device can scan (see scanner.js). A scanned EAN becomes the search text; the
+  // backend finds the food by its EAN (also an unconfirmed one, see FoodRepository.search).
+  const canScan = useCanScanEan()
+  const [isScanning, setIsScanning] = useState(false)
+  const showScan = canScan && query === '' && (kindLocked || kind === KIND_FOODS)
+  // A scanned EAN that finds nothing: "nothing found" stays a moment, then the field is cleared, so
+  // the scan button is right there again. Typing something else cancels it.
+  const [scannedCode, setScannedCode] = useState(null)
+  const isScanNotFound =
+    scannedCode !== null && query === scannedCode && results?.query === scannedCode && results.count === 0
+  const clearSearch = useRef(null)
+  useEffect(() => {
+    clearSearch.current = () => onSearchChange({ ...search, query: '' })
+  })
+  useEffect(() => {
+    if (!isScanNotFound) return
+    const timer = setTimeout(() => {
+      setScannedCode(null)
+      clearSearch.current()
+    }, SCAN_NOT_FOUND_MS)
+    return () => clearTimeout(timer)
+  }, [isScanNotFound])
 
   return (
     <div className="search-head">
       <div className="search">
         <FramedCloseButton label={closeLabel} onClick={onClose} />
-        <input
-          type="search"
-          placeholder={placeholder}
-          aria-label={placeholder}
-          autoComplete="off"
-          autoFocus
-          value={query}
-          onChange={(event) => onSearchChange({ ...search, query: event.target.value })}
-        />
+        <div className="search-input inline-btn-field">
+          <input
+            type="search"
+            placeholder={placeholder}
+            aria-label={placeholder}
+            autoComplete="off"
+            autoFocus
+            value={query}
+            onChange={(event) => {
+              setScannedCode(null)
+              onSearchChange({ ...search, query: event.target.value })
+            }}
+          />
+          {showScan && (
+            <button
+              type="button"
+              className="scan-btn"
+              title="EAN scannen"
+              aria-label="EAN scannen"
+              onClick={() => setIsScanning(true)}
+            >
+              <BarcodeIcon />
+            </button>
+          )}
+        </div>
       </div>
+      {isScanning && (
+        <BarcodeScanner
+          onDetected={(code) => {
+            setIsScanning(false)
+            setScannedCode(code)
+            onSearchChange({ ...search, query: code })
+          }}
+          onClose={() => setIsScanning(false)}
+        />
+      )}
       <div className="catalog-filter">
         <button
           type="button"
@@ -573,6 +663,198 @@ function CatalogHeader({
         {children}
       </div>
     </div>
+  )
+}
+
+// Whether this device can scan EANs (see canScanEan); asked once, false until the answer is there.
+let canScanEanPromise = null
+function useCanScanEan() {
+  const [canScan, setCanScan] = useState(false)
+  useEffect(() => {
+    let isCurrent = true
+    canScanEanPromise ??= canScanEan()
+    canScanEanPromise.then((result) => isCurrent && setCanScan(result))
+    return () => {
+      isCurrent = false
+    }
+  }, [])
+  return canScan
+}
+
+// Focuses the text field after `input` in its form (e.g. the kcal after the EAN); stays on `input`
+// if there is none.
+function focusNextField(input) {
+  if (!input?.form) return
+  const fields = [...input.form.elements].filter(
+    (element) => element.tagName === 'INPUT' && !element.disabled && element.type !== 'hidden',
+  )
+  const next = fields[fields.indexOf(input) + 1]
+  ;(next ?? input).focus()
+}
+
+// Views inside a view that the back button closes first (the barcode scanner); the last one opened
+// is the first one closed. MealTracker's goBack asks closeInnerView before anything else.
+const innerViews = []
+function closeInnerView() {
+  const close = innerViews.at(-1)
+  if (!close) return false
+  close()
+  return true
+}
+function useInnerView(close) {
+  const closeRef = useRef(close)
+  useEffect(() => {
+    closeRef.current = close
+  })
+  useEffect(() => {
+    const entry = () => closeRef.current()
+    innerViews.push(entry)
+    return () => {
+      innerViews.splice(innerViews.indexOf(entry), 1)
+    }
+  }, [])
+}
+
+// The camera across the whole screen with a frame to hold the barcode in. Reads several times a
+// second; a valid EAN read READS_NEEDED times in a row is handed to onDetected. Sharp pictures
+// matter most: the main rear camera in full HD (not the ultra-wide one, which cannot focus close),
+// continuous autofocus, a slight zoom so the code can be held a hand's width away, focus on a tapped
+// point, and the torch where there is one. All of it only where the device offers it (see scanner.js).
+// The app asks for the camera permission the first time. "×" or back closes it.
+function BarcodeScanner({ onDetected, onClose }) {
+  const videoRef = useRef(null)
+  const trackRef = useRef(null)
+  const [problem, setProblem] = useState(null)
+  const [hasTorch, setHasTorch] = useState(false)
+  const [isTorchOn, setIsTorchOn] = useState(false)
+  const onDetectedRef = useRef(onDetected)
+  useEffect(() => {
+    onDetectedRef.current = onDetected
+  })
+  useInnerView(onClose)
+
+  useEffect(() => {
+    let stream = null
+    let timer = null
+    let isCurrent = true
+    let reads = { code: null, count: 0 }
+    const detector = new window.BarcodeDetector({ formats: EAN_FORMATS })
+    const open = (video) => navigator.mediaDevices.getUserMedia({ video, audio: false })
+    const stop = (mediaStream) => mediaStream?.getTracks().forEach((track) => track.stop())
+
+    async function scan() {
+      const video = videoRef.current
+      if (!isCurrent || !video) return
+      try {
+        if (video.readyState >= 2) {
+          reads = nextRead(reads, pickEan(await detector.detect(video)))
+          if (reads.count >= READS_NEEDED) {
+            onDetectedRef.current(reads.code)
+            return
+          }
+        }
+      } catch {
+        // a frame that cannot be read yet; try the next one
+      }
+      if (isCurrent) timer = setTimeout(scan, 120)
+    }
+
+    async function start() {
+      stream = await open(CAMERA_CONSTRAINTS)
+      // Only now, with the permission, do the cameras have names: switch to the main one if needed.
+      const mainId = pickBackCamera(await navigator.mediaDevices.enumerateDevices())
+      const currentId = stream.getVideoTracks()[0]?.getSettings?.().deviceId
+      if (isCurrent && mainId && mainId !== currentId) {
+        stop(stream)
+        const mainCamera = { ...CAMERA_CONSTRAINTS, facingMode: undefined, deviceId: { exact: mainId } }
+        stream = await open(mainCamera).catch(() => open(CAMERA_CONSTRAINTS))
+      }
+      if (!isCurrent) return stop(stream)
+      const track = stream.getVideoTracks()[0]
+      trackRef.current = track
+      const capabilities = track.getCapabilities?.() ?? {}
+      const tuning = tuningFor(capabilities)
+      if (tuning) await track.applyConstraints(tuning).catch(() => {})
+      setHasTorch(Boolean(capabilities.torch))
+      videoRef.current.srcObject = stream
+      await videoRef.current.play()
+      scan()
+    }
+
+    start().catch((error) => {
+      if (!isCurrent) return
+      setProblem(
+        error?.name === 'NotAllowedError'
+          ? 'Kein Zugriff auf die Kamera. Bitte erlaube ihn in den Einstellungen der App.'
+          : 'Die Kamera lässt sich nicht starten.',
+      )
+    })
+
+    return () => {
+      isCurrent = false
+      clearTimeout(timer)
+      trackRef.current = null
+      stop(stream)
+    }
+  }, [])
+
+  // Tap to focus there; after a moment the camera goes back to continuous focus.
+  function focusOnTap(event) {
+    const track = trackRef.current
+    if (!track) return
+    const capabilities = track.getCapabilities?.() ?? {}
+    const rect = event.currentTarget.getBoundingClientRect()
+    const constraints = focusAt(
+      capabilities,
+      (event.clientX - rect.left) / rect.width,
+      (event.clientY - rect.top) / rect.height,
+    )
+    if (!constraints) return
+    track
+      .applyConstraints(constraints)
+      .then(() => new Promise((resolve) => setTimeout(resolve, 1500)))
+      .then(() => {
+        const tuning = tuningFor(capabilities)
+        if (trackRef.current === track && tuning) return track.applyConstraints(tuning)
+      })
+      .catch(() => {})
+  }
+
+  function toggleTorch() {
+    const track = trackRef.current
+    if (!track) return
+    const torch = !isTorchOn
+    track
+      .applyConstraints({ advanced: [{ torch }] })
+      .then(() => setIsTorchOn(torch))
+      .catch(() => setHasTorch(false))
+  }
+
+  // Into the body: the sticky search head would otherwise keep it below the bottom bar.
+  return createPortal(
+    <div className="scanner" role="dialog" aria-modal="true" aria-label="EAN scannen">
+      <video ref={videoRef} className="scanner-video" playsInline muted onClick={focusOnTap} />
+      <div className="scanner-frame" aria-hidden="true" />
+      <p className="scanner-hint">
+        {problem ?? 'Strichcode in den Rahmen halten, etwa eine Handbreit entfernt. Antippen stellt scharf.'}
+      </p>
+      <div className="scanner-close">
+        <FramedCloseButton label="Scannen beenden" onClick={onClose} />
+      </div>
+      {hasTorch && (
+        <button
+          type="button"
+          className={isTorchOn ? 'frame-btn scanner-torch on' : 'frame-btn scanner-torch'}
+          aria-pressed={isTorchOn}
+          aria-label="Licht"
+          title="Licht"
+          onClick={toggleTorch}
+        >
+          <TorchIcon />
+        </button>
+      )}
+    </div>,
+    document.body,
   )
 }
 
@@ -1119,13 +1401,14 @@ function FoodSearch({
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
   const kind = kindLocked ? KIND_FOODS : search.kind
-  const entries = useCatalog(kind, search, version, onError)
+  const { entries, loadedQuery } = useCatalog(kind, search, version, onError)
 
   return (
     <section hidden={!visible}>
       <CatalogHeader
         search={search}
         onSearchChange={setSearch}
+        results={{ query: loadedQuery, count: entries.length }}
         kindLocked={kindLocked}
         closeLabel={closeLabel}
         onClose={onClose}
@@ -1496,14 +1779,20 @@ function FoodDatabase({
   onError,
 }) {
   const [search, setSearch] = useState(NEW_SEARCH)
-  const entries = useCatalog(search.kind, search, version, onError)
+  const { entries, loadedQuery } = useCatalog(search.kind, search, version, onError)
   const { kind } = search
   const isRecipes = kind === KIND_RECIPES
   const newLabel = isRecipes ? 'Rezept anlegen' : 'Lebensmittel hinzufügen'
 
   return (
     <section hidden={hidden}>
-      <CatalogHeader search={search} onSearchChange={setSearch} closeLabel={closeLabel} onClose={onClose}>
+      <CatalogHeader
+        search={search}
+        onSearchChange={setSearch}
+        results={{ query: loadedQuery, count: entries.length }}
+        closeLabel={closeLabel}
+        onClose={onClose}
+      >
         {mode === 'manage' && (
           <button
             type="button"
@@ -1610,6 +1899,10 @@ const FOOD_UNIT_OPTIONS = [
 function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose, onError }) {
   const isNew = food.id === null
   const [name, setName] = useState(toText(food.name))
+  const [ean, setEan] = useState(food.eanCode ?? '') // digits only, see isValidEan
+  const eanRef = useRef(null)
+  const canScan = useCanScanEan()
+  const [isScanningEan, setIsScanningEan] = useState(false)
   const [unit, setUnit] = useState(food.unit)
   const [kcal, setKcal] = useState(toText(food.kcalPer100))
   const [protein, setProtein] = useState(toText(food.protein))
@@ -1638,15 +1931,18 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose
     nutrients,
     published,
     portions: portionRequests(portions),
+    eanCode: eanCodeOf(ean),
   }
   const partProblems = nutrientPartProblems(values)
+  const isEanValid = ean === '' || isValidEan(ean)
   const numbers = [values.kcalPer100, values.protein, values.carbs, values.fat]
   // An empty field parses to NaN, and NaN >= 0 is false.
   const isValid =
     values.name !== '' &&
     numbers.every((n) => n >= 0) &&
     invalidNutrients.length === 0 &&
-    partProblems.length === 0
+    partProblems.length === 0 &&
+    isEanValid
   const becomesPrivate = !isNew && food.published && !published
   const symbol = unitSymbol(unit)
 
@@ -1741,6 +2037,46 @@ function FoodForm({ food, layer, onLayerChange, onSave, onDelete, onAsk, onClose
               onChange={(event) => setName(event.target.value)}
             />
           </label>
+          <label className="field">
+            <span>EAN-Code (optional)</span>
+            <span className="inline-btn-field">
+              <input
+                ref={eanRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={EAN_MAX_LENGTH}
+                placeholder="Nummer unter dem Strichcode"
+                value={ean}
+                onChange={(event) => setEan(event.target.value.replace(/\D/g, '').slice(0, EAN_MAX_LENGTH))}
+              />
+              {canScan && (
+                <button
+                  type="button"
+                  className="scan-btn"
+                  title="EAN scannen"
+                  aria-label="EAN scannen"
+                  onClick={() => setIsScanningEan(true)}
+                >
+                  <BarcodeIcon />
+                </button>
+              )}
+            </span>
+            {!isEanValid && (
+              <span className="hint warning">Kein gültiger EAN-Code: 8, 12, 13 oder 14 Ziffern, die letzte ist eine Prüfziffer.</span>
+            )}
+          </label>
+          {isScanningEan && (
+            <BarcodeScanner
+              onDetected={(code) => {
+                setIsScanningEan(false)
+                setEan(code)
+                // after the scanner is gone: on to the next field, the kcal
+                setTimeout(() => focusNextField(eanRef.current), 0)
+              }}
+              onClose={() => setIsScanningEan(false)}
+            />
+          )}
           {/* calories and unit share the row half and half */}
           <div className="unit-row">
             <NumberField label={`Kcal pro 100 ${symbol}`} value={kcal} onChange={setKcal} />
@@ -1831,13 +2167,16 @@ const PROFILE_SEARCH = { ...NEW_SEARCH, scope: SCOPE_PUBLIC, confirmedOnly: true
 function NutrientProfileSearch({ onPick, onClose, onError }) {
   const [query, setQuery] = useState('')
   const search = { ...PROFILE_SEARCH, query }
-  const foods = useCatalog(KIND_FOODS, search, 0, onError)
+  // The backend also lists an unconfirmed food found by its EAN; its profile is not to be copied.
+  const { entries, loadedQuery } = useCatalog(KIND_FOODS, search, 0, onError)
+  const foods = entries.filter((food) => food.confirmed)
 
   return (
     <section>
       <CatalogHeader
         search={search}
         onSearchChange={(changed) => setQuery(changed.query)}
+        results={{ query: loadedQuery, count: foods.length }}
         kindLocked
         filtersLocked
         closeLabel="Abbrechen"
@@ -2483,6 +2822,11 @@ function FoodInfo({ food, onClose }) {
         <Info label="Name" wide>
           {food.name}
         </Info>
+        {food.eanCode && (
+          <Info label="EAN-Code" wide>
+            {food.eanCode}
+          </Info>
+        )}
         <Info label={`Kcal ${per100}`}>{formatNumber(food.kcalPer100)}</Info>
         <Info label="Einheit">{FOOD_UNIT_OPTIONS.find((option) => option.value === food.unit)?.label}</Info>
         <Info label={`Protein ${per100}`}>{formatNumber(food.protein)} g</Info>
@@ -4961,6 +5305,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
   // One handler for every "×" and for the system back button: close the topmost layer.
   function goBack() {
     setNotice(null)
+    if (closeInnerView()) return
     if (confirm) setConfirm(null)
     else if (detail) setDetail(null)
     else if (recipeSearch?.previewing) setRecipeSearch({ ...recipeSearch, previewing: false })
