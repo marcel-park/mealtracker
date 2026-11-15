@@ -1,10 +1,15 @@
 package io.github.marcel_park.mealtracker.service;
 
+import io.github.marcel_park.mealtracker.dto.UserItemResponse;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListAddRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListCountRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListUserItemRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListItemResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListQuantityRequest;
+import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.UserItem;
 import io.github.marcel_park.mealtracker.model.ShoppingListItem;
 import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
@@ -20,6 +25,8 @@ import java.util.List;
 // - Only foods the user may see can be added. Each food is on the list at most once: adding it
 //   again adds to the existing item, in that item's unit (Quantity.plus), and keeps it checked
 //   or unchecked as it is.
+// - User items (UserItemService) the user may see can be added as well, with a count instead
+//   of a quantity. Each is on the list at most once too: adding it again adds to its count.
 // - Unchecked items come first, then the checked ones, each group in its own order. New items,
 //   and items that are checked or unchecked, go to the end of their group. Unchecked items can be
 //   moved to any place among the unchecked ones.
@@ -30,13 +37,16 @@ public class ShoppingListService {
     private final ShoppingListItemRepository itemRepository;
     private final FoodService foodService;
     private final RecipeService recipeService;
+    private final UserItemService userItemService;
     private final UserRepository userRepository;
 
     public ShoppingListService(ShoppingListItemRepository itemRepository, FoodService foodService,
-                               RecipeService recipeService, UserRepository userRepository) {
+                               RecipeService recipeService, UserItemService userItemService,
+                               UserRepository userRepository) {
         this.itemRepository = itemRepository;
         this.foodService = foodService;
         this.recipeService = recipeService;
+        this.userItemService = userItemService;
         this.userRepository = userRepository;
     }
 
@@ -62,6 +72,22 @@ public class ShoppingListService {
             }
         }
         recipeService.markUsed(userId, request.recipes());
+        return find(userId);
+    }
+
+    // A user item already on the list gets the count added (at most MAX_COUNT), checked or not
+    // as it is.
+    @Transactional
+    public List<ShoppingListItemResponse> addUserItem(Long userId, ShoppingListUserItemRequest request) {
+        UserItem userItem = userItemService.getVisibleEntity(userId, request.userItemId());
+        var existing = itemRepository.findByUserIdAndUserItemId(userId, userItem.getId());
+        if (existing.isPresent()) {
+            ShoppingListItem item = existing.get();
+            item.setCount(Math.min(item.getCount() + request.count(), ShoppingListCountRequest.MAX_COUNT));
+        } else {
+            itemRepository.save(new ShoppingListItem(userRepository.getReferenceById(userId), userItem,
+                    request.count(), itemRepository.nextPosition(userId)));
+        }
         return find(userId);
     }
 
@@ -101,7 +127,21 @@ public class ShoppingListService {
     @Transactional
     public List<ShoppingListItemResponse> setQuantity(Long userId, Long id, ShoppingListQuantityRequest request) {
         ShoppingListItem item = getEntity(userId, id);
+        if (item.isUserItem()) {
+            throw new InvalidRequestException("A user item has a count, not a quantity");
+        }
         item.setQuantity(RequestedQuantities.quantityOf(item.getFood(), request));
+        return find(userId);
+    }
+
+    // Replaces the count of a user item entry, e.g. 3 instead of 1. Place and checked state stay.
+    @Transactional
+    public List<ShoppingListItemResponse> setCount(Long userId, Long id, ShoppingListCountRequest request) {
+        ShoppingListItem item = getEntity(userId, id);
+        if (!item.isUserItem()) {
+            throw new InvalidRequestException("A food has a quantity, not a count");
+        }
+        item.setCount(request.count());
         return find(userId);
     }
 
@@ -123,14 +163,20 @@ public class ShoppingListService {
     }
 
     private static List<ShoppingListItemResponse> toResponse(List<ShoppingListItem> items, Long userId) {
-        return items.stream()
-                .map(item -> new ShoppingListItemResponse(
-                        item.getId(),
-                        FoodResponse.ofUsed(item.getFood(), userId),
-                        item.getQuantity().resolvedAmount(),
-                        item.getQuantity().getPortionId(),
-                        item.getQuantity().getPortionCount(),
-                        item.isChecked()))
-                .toList();
+        return items.stream().map(item -> toResponse(item, userId)).toList();
+    }
+
+    private static ShoppingListItemResponse toResponse(ShoppingListItem item, Long userId) {
+        if (item.isUserItem()) {
+            return ShoppingListItemResponse.ofUserItem(item.getId(),
+                    UserItemResponse.from(item.getUserItem(), userId), item.getCount(), item.isChecked());
+        }
+        return new ShoppingListItemResponse(
+                item.getId(),
+                FoodResponse.ofUsed(item.getFood(), userId),
+                item.getQuantity().resolvedAmount(),
+                item.getQuantity().getPortionId(),
+                item.getQuantity().getPortionCount(),
+                item.isChecked());
     }
 }

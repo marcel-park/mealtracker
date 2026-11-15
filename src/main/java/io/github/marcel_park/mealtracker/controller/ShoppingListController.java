@@ -2,6 +2,8 @@ package io.github.marcel_park.mealtracker.controller;
 
 import io.github.marcel_park.mealtracker.dto.ShoppingListAddRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListCheckRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListCountRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListUserItemRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListItemResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListQuantityRequest;
 import io.github.marcel_park.mealtracker.security.CurrentUser;
@@ -46,6 +48,13 @@ public class ShoppingListController {
         return shoppingListService.add(user.userId(), request);
     }
 
+    // A user item already on the list gets the count added.
+    @PostMapping("/user-items")
+    public List<ShoppingListItemResponse> addUserItem(@AuthenticationPrincipal CurrentUser user,
+                                                        @Valid @RequestBody ShoppingListUserItemRequest request) {
+        return shoppingListService.addUserItem(user.userId(), request);
+    }
+
     @PutMapping("/items/{id}/checked")
     public List<ShoppingListItemResponse> setChecked(@AuthenticationPrincipal CurrentUser user,
                                                      @PathVariable Long id,
@@ -53,12 +62,20 @@ public class ShoppingListController {
         return shoppingListService.setChecked(user.userId(), id, request.checked());
     }
 
-    // Replaces the quantity of the item.
+    // Replaces the quantity of a food entry (400 for a user item entry, which has a count).
     @PutMapping("/items/{id}/quantity")
     public List<ShoppingListItemResponse> setQuantity(@AuthenticationPrincipal CurrentUser user,
                                                       @PathVariable Long id,
                                                       @Valid @RequestBody ShoppingListQuantityRequest request) {
         return shoppingListService.setQuantity(user.userId(), id, request);
+    }
+
+    // Replaces the count of a user item entry (400 for a food entry, which has a quantity).
+    @PutMapping("/items/{id}/count")
+    public List<ShoppingListItemResponse> setCount(@AuthenticationPrincipal CurrentUser user,
+                                                   @PathVariable Long id,
+                                                   @Valid @RequestBody ShoppingListCountRequest request) {
+        return shoppingListService.setCount(user.userId(), id, request);
     }
 
     // to: the new place among the unchecked items, 0 for the first (out of range: first or last).

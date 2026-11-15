@@ -10,6 +10,7 @@ import io.github.marcel_park.mealtracker.exception.EmailAlreadyRegisteredExcepti
 import io.github.marcel_park.mealtracker.exception.InvalidCredentialsException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
 import io.github.marcel_park.mealtracker.model.ColorTheme;
+import io.github.marcel_park.mealtracker.model.UserItemVisibility;
 import io.github.marcel_park.mealtracker.model.Sex;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.MealRepository;
@@ -249,7 +250,7 @@ class UserServiceTest {
 
         UserResponse result = service.get(1L);
 
-        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, null, ColorTheme.SYSTEM, false, false));
+        assertThat(result).isEqualTo(new UserResponse(1L, "max@example.com", 1800, 40, 30, 30, 10_000, null, null, null, null, ColorTheme.SYSTEM, false, UserItemVisibility.PRIVATE, false));
     }
 
     @Test
@@ -294,5 +295,22 @@ class UserServiceTest {
         assertThat(user.getColorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(result.colorTheme()).isEqualTo(ColorTheme.LIGHT);
         assertThat(user.getCalorieTarget()).isEqualTo(User.DEFAULT_CALORIE_TARGET);
+    }
+
+    @Test
+    void newUser_keepsUserItemsPrivate() {
+        assertThat(new User().getUserItemVisibility()).isEqualTo(UserItemVisibility.PRIVATE);
+    }
+
+    @Test
+    void setUserItemVisibility_changesOnlyTheVisibility() {
+        User user = existingUser("max@example.com", "geheim123");
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        UserResponse result = service.setUserItemVisibility(1L, UserItemVisibility.FRIENDS);
+
+        assertThat(user.getUserItemVisibility()).isEqualTo(UserItemVisibility.FRIENDS);
+        assertThat(result.userItemVisibility()).isEqualTo(UserItemVisibility.FRIENDS);
+        assertThat(user.getColorTheme()).isEqualTo(ColorTheme.SYSTEM);
     }
 }

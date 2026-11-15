@@ -2,11 +2,14 @@ package io.github.marcel_park.mealtracker.service;
 
 import io.github.marcel_park.mealtracker.dto.RecipeUseRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListAddRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListCountRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListUserItemRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListItemRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListItemResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListQuantityRequest;
 import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
+import io.github.marcel_park.mealtracker.model.UserItem;
 import io.github.marcel_park.mealtracker.model.Food;
 import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.Quantity;
@@ -47,6 +50,9 @@ class ShoppingListServiceTest {
     private RecipeService recipeService;
 
     @Mock
+    private UserItemService userItemService;
+
+    @Mock
     private UserRepository userRepository;
 
     private ShoppingListService service;
@@ -60,7 +66,8 @@ class ShoppingListServiceTest {
     @BeforeEach
     void setUp() {
         me.setId(USER_ID);
-        service = new ShoppingListService(itemRepository, foodService, recipeService, userRepository);
+        service = new ShoppingListService(itemRepository, foodService, recipeService, userItemService,
+                userRepository);
     }
 
     // ---------- test data ----------
@@ -82,6 +89,19 @@ class ShoppingListServiceTest {
         ShoppingListItem item = new ShoppingListItem(me, food, quantity, position);
         ReflectionTestUtils.setField(item, "id", id);
         item.setChecked(checked);
+        return item;
+    }
+
+    private ShoppingListItem userItem(Long id, UserItem userItem, int count, boolean checked) {
+        ShoppingListItem item = new ShoppingListItem(me, userItem, count, 0);
+        ReflectionTestUtils.setField(item, "id", id);
+        item.setChecked(checked);
+        return item;
+    }
+
+    private UserItem detergent() {
+        UserItem item = new UserItem(me, "Spülmittel");
+        item.setId(30L);
         return item;
     }
 
@@ -149,6 +169,105 @@ class ShoppingListServiceTest {
             service.add(USER_ID, new ShoppingListAddRequest(List.of(grams(2L, 500)), uses));
 
             verify(recipeService).markUsed(USER_ID, uses);
+        }
+    }
+
+    // ---------- user items ----------
+
+    @Nested
+    class UserItems {
+
+        @Test
+        void newUserItem_isAddedAtTheEnd_withItsCount() {
+            UserItem detergent = detergent();
+            when(userItemService.getVisibleEntity(USER_ID, 30L)).thenReturn(detergent);
+            when(itemRepository.findByUserIdAndUserItemId(USER_ID, 30L)).thenReturn(Optional.empty());
+            when(itemRepository.nextPosition(USER_ID)).thenReturn(4);
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+
+            service.addUserItem(USER_ID, new ShoppingListUserItemRequest(30L, 2));
+
+            ArgumentCaptor<ShoppingListItem> captor = ArgumentCaptor.forClass(ShoppingListItem.class);
+            verify(itemRepository).save(captor.capture());
+            ShoppingListItem saved = captor.getValue();
+            assertThat(saved.isUserItem()).isTrue();
+            assertThat(saved.getUserItem()).isSameAs(detergent);
+            assertThat(saved.getCount()).isEqualTo(2);
+            assertThat(saved.getFood()).isNull();
+            assertThat(saved.getQuantity()).isNull();
+            assertThat(saved.getPosition()).isEqualTo(4);
+        }
+
+        @Test
+        void userItemOnTheList_addsToItsCount_upToTheMaximum_andStaysChecked() {
+            UserItem detergent = detergent();
+            ShoppingListItem entry = userItem(5L, detergent, 998, true);
+            when(userItemService.getVisibleEntity(USER_ID, 30L)).thenReturn(detergent);
+            when(itemRepository.findByUserIdAndUserItemId(USER_ID, 30L)).thenReturn(Optional.of(entry));
+
+            service.addUserItem(USER_ID, new ShoppingListUserItemRequest(30L, 3));
+
+            assertThat(entry.getCount()).isEqualTo(ShoppingListCountRequest.MAX_COUNT);
+            assertThat(entry.isChecked()).isTrue();
+            verify(itemRepository, never()).save(any());
+        }
+
+        @Test
+        void userItemOfSomebodyElse_isNotFound() {
+            when(userItemService.getVisibleEntity(USER_ID, 31L))
+                    .thenThrow(new NotFoundException("User item", 31L));
+
+            assertThatThrownBy(() -> service.addUserItem(USER_ID, new ShoppingListUserItemRequest(31L, 1)))
+                    .isInstanceOf(NotFoundException.class);
+            verify(itemRepository, never()).save(any());
+        }
+
+        @Test
+        void setCount_replacesTheCount() {
+            ShoppingListItem entry = userItem(5L, detergent(), 1, false);
+            when(itemRepository.findByIdAndUserId(5L, USER_ID)).thenReturn(Optional.of(entry));
+
+            service.setCount(USER_ID, 5L, new ShoppingListCountRequest(4));
+
+            assertThat(entry.getCount()).isEqualTo(4);
+        }
+
+        @Test
+        void setCount_ofAFood_isRejected() {
+            ShoppingListItem eggs = item(5L, egg, Quantity.ofAmount(120), false, 0);
+            when(itemRepository.findByIdAndUserId(5L, USER_ID)).thenReturn(Optional.of(eggs));
+
+            assertThatThrownBy(() -> service.setCount(USER_ID, 5L, new ShoppingListCountRequest(2)))
+                    .isInstanceOf(InvalidRequestException.class);
+        }
+
+        @Test
+        void setQuantity_ofAUserItem_isRejected() {
+            ShoppingListItem entry = userItem(5L, detergent(), 1, false);
+            when(itemRepository.findByIdAndUserId(5L, USER_ID)).thenReturn(Optional.of(entry));
+
+            assertThatThrownBy(() -> service.setQuantity(USER_ID, 5L,
+                    new ShoppingListQuantityRequest(100.0, null, null)))
+                    .isInstanceOf(InvalidRequestException.class);
+        }
+
+        @Test
+        void list_showsUserItemsWithNameAndCount_andFoodsWithTheirQuantity() {
+            ShoppingListItem entry = userItem(5L, detergent(), 3, false);
+            ShoppingListItem eggs = item(6L, egg, Quantity.ofAmount(120), false, 1);
+            when(itemRepository.findListOf(USER_ID)).thenReturn(List.of(entry, eggs));
+
+            List<ShoppingListItemResponse> list = service.find(USER_ID);
+
+            assertThat(list.get(0).userItem().name()).isEqualTo("Spülmittel");
+            assertThat(list.get(0).userItem().owned()).isTrue();
+            assertThat(list.get(0).count()).isEqualTo(3);
+            assertThat(list.get(0).food()).isNull();
+            assertThat(list.get(0).amount()).isNull();
+            assertThat(list.get(1).food().name()).isEqualTo("Ei");
+            assertThat(list.get(1).amount()).isEqualTo(120.0);
+            assertThat(list.get(1).userItem()).isNull();
+            assertThat(list.get(1).count()).isNull();
         }
     }
 

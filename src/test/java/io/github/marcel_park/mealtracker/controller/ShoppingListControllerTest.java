@@ -1,8 +1,11 @@
 package io.github.marcel_park.mealtracker.controller;
 
 import io.github.marcel_park.mealtracker.config.CorsConfig;
+import io.github.marcel_park.mealtracker.dto.UserItemResponse;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListAddRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListCountRequest;
+import io.github.marcel_park.mealtracker.dto.ShoppingListUserItemRequest;
 import io.github.marcel_park.mealtracker.dto.ShoppingListItemResponse;
 import io.github.marcel_park.mealtracker.dto.ShoppingListQuantityRequest;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
@@ -184,5 +187,62 @@ class ShoppingListControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(service).clear(USER_ID);
+    }
+
+    // ---------- user items ----------
+
+    private static final List<ShoppingListItemResponse> USER_ITEM_LIST = List.of(ShoppingListItemResponse.ofUserItem(
+            6L, new UserItemResponse(3L, "Spülmittel", true), 2, false));
+
+    @Test
+    void addUserItem_passesItemAndCountOn_andAnswersWithNameAndCount() throws Exception {
+        when(service.addUserItem(USER_ID, new ShoppingListUserItemRequest(3L, 2))).thenReturn(USER_ITEM_LIST);
+
+        mockMvc.perform(post("/api/shopping-list/user-items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userItemId\":3,\"count\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].userItem.name").value("Spülmittel"))
+                .andExpect(jsonPath("$[0].count").value(2))
+                .andExpect(jsonPath("$[0].food").doesNotExist());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+            missing item  | {"count":1}              | userItemId
+            missing count | {"userItemId":3}       | count
+            count 0       | {"userItemId":3,"count":0}    | count
+            count too big | {"userItemId":3,"count":1000} | count
+            """)
+    void addUserItem_invalidRequest_returns400(String violation, String body, String field) throws Exception {
+        mockMvc.perform(post("/api/shopping-list/user-items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors[*].field", hasItem(field)));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void setCount_passesTheNewCountOn() throws Exception {
+        when(service.setCount(USER_ID, 6L, new ShoppingListCountRequest(5))).thenReturn(USER_ITEM_LIST);
+
+        mockMvc.perform(put("/api/shopping-list/items/6/count")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"count\":5}"))
+                .andExpect(status().isOk());
+
+        verify(service).setCount(USER_ID, 6L, new ShoppingListCountRequest(5));
+    }
+
+    @Test
+    void setCount_ofZero_returns400() throws Exception {
+        mockMvc.perform(put("/api/shopping-list/items/6/count")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"count\":0}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
     }
 }

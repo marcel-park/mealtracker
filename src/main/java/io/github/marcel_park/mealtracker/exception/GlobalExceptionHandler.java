@@ -37,6 +37,12 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(409, "Conflict", ex.getMessage()));
     }
 
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ErrorResponse> handleConflict(ConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ErrorResponse.of(409, "Conflict", ex.getMessage()));
+    }
+
     // A constraint of the database was violated although the services check their rules first,
     // e.g. two portion names that the database collation considers equal and Java did not, or two
     // requests racing each other. The request conflicts with the stored data: 409, not 500.
