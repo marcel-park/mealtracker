@@ -5,6 +5,7 @@ import io.github.marcel_park.mealtracker.dto.FoodPortionRequest;
 import io.github.marcel_park.mealtracker.dto.FoodPortionResponse;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.dto.FoodSummaryResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -43,12 +45,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
@@ -151,69 +153,82 @@ class FoodServiceTest {
     @Nested
     class Find {
 
+        private static final PageRequest FIRST_PAGE = PageRequest.of(0, 50);
+
         @Test
         void withoutScope_searchesEverythingVisibleWithEscapedPattern() {
-            when(repository.search(USER_ID, "%50!% fett%", null, false, false, false))
+            when(repository.search(USER_ID, "%50!% fett%", null, false, false, false, FIRST_PAGE))
                     .thenReturn(List.of(food(1L, "Quark 50% Fett", me, false)));
 
-            List<FoodResponse> result = service.find(USER_ID, " 50% Fett ", null, false);
+            List<FoodSummaryResponse> result = service.find(USER_ID, " 50% Fett ", null, false, 0, 50);
 
-            assertThat(result).extracting(FoodResponse::name).containsExactly("Quark 50% Fett");
+            assertThat(result).extracting(FoodSummaryResponse::name).containsExactly("Quark 50% Fett");
         }
 
         @Test
         void eanCodeAsQuery_alsoSearchesByEan() {
-            service.find(USER_ID, " 4311596443819 ", null, false);
+            service.find(USER_ID, " 4311596443819 ", null, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%4311596443819%", "4311596443819", false, false, false);
+            verify(repository).search(USER_ID, "%4311596443819%", "4311596443819", false, false, false, FIRST_PAGE);
         }
 
         @Test
         void withoutQuery_matchesEveryName() {
-            service.find(USER_ID, "  ", null, false);
+            service.find(USER_ID, "  ", null, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, false, false);
+            verify(repository).search(USER_ID, "%", null, false, false, false, FIRST_PAGE);
         }
 
         @Test
         void ownScope_setsOnlyOwnFlag() {
-            service.find(USER_ID, "hafer", CatalogScope.OWN, false);
+            service.find(USER_ID, "hafer", CatalogScope.OWN, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%hafer%", null, true, false, false);
+            verify(repository).search(USER_ID, "%hafer%", null, true, false, false, FIRST_PAGE);
         }
 
         @Test
         void publicScope_setsOnlyPublicFlag() {
-            service.find(USER_ID, null, CatalogScope.PUBLIC, false);
+            service.find(USER_ID, null, CatalogScope.PUBLIC, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, true, false);
+            verify(repository).search(USER_ID, "%", null, false, true, false, FIRST_PAGE);
         }
 
         @Test
         void confirmedOnly_setsOnlyConfirmedFlag() {
-            service.find(USER_ID, null, null, true);
+            service.find(USER_ID, null, null, true, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, false, true);
+            verify(repository).search(USER_ID, "%", null, false, false, true, FIRST_PAGE);
         }
 
         @Test
-        void confirmedOnly_combinesWithScope() {
-            service.find(USER_ID, null, CatalogScope.OWN, true);
+        void pageAndSize_selectThePage() {
+            service.find(USER_ID, "brot", null, false, 3, 20);
 
-            verify(repository).search(USER_ID, "%", null, true, false, true);
+            verify(repository).search(USER_ID, "%brot%", null, false, false, false, PageRequest.of(3, 20));
+        }
+
+        @Test
+        void invalidPageOrSize_isRejected() {
+            assertThatThrownBy(() -> service.find(USER_ID, null, null, false, -1, 50))
+                    .isInstanceOf(InvalidRequestException.class);
+            assertThatThrownBy(() -> service.find(USER_ID, null, null, false, 0, 0))
+                    .isInstanceOf(InvalidRequestException.class);
+            assertThatThrownBy(() -> service.find(USER_ID, null, null, false, 0, 101))
+                    .isInstanceOf(InvalidRequestException.class);
+            verifyNoInteractions(repository);
         }
 
         @Test
         void mapsOwnershipAndVisibilityFromTheCallersPointOfView() {
-            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of(
+            when(repository.search(USER_ID, "%", null, false, false, false, FIRST_PAGE)).thenReturn(List.of(
                     food(1L, "Mein Brot", me, false),
                     food(2L, "Fremdes Brot", other, true),
                     food(3L, "Altes Brot", null, false)));
 
-            List<FoodResponse> result = service.find(USER_ID, null, null, false);
+            List<FoodSummaryResponse> result = service.find(USER_ID, null, null, false, 0, 50);
 
             assertThat(result)
-                    .extracting(FoodResponse::owned, FoodResponse::published)
+                    .extracting(FoodSummaryResponse::owned, FoodSummaryResponse::published)
                     .containsExactly(
                             tuple(true, false),
                             tuple(false, true),
@@ -222,34 +237,50 @@ class FoodServiceTest {
         }
 
         @Test
-        void marksFoodsUsedInAMealRecipeVariationShoppingListOrTask_withOneQueryPerKindForTheWholeList() {
-            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of(
-                    food(1L, "Brot", me, false),
-                    food(2L, "Milch", me, false),
-                    food(3L, "Quark", me, false),
-                    food(4L, "Butter", me, false),
-                    food(5L, "Käse", me, false)));
-            List<Long> ids = List.of(1L, 2L, 3L, 4L, 5L);
-            when(mealItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(1L));
-            when(recipeItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(2L));
-            when(variationItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(3L));
-            when(shoppingListItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(5L));
-            when(taskItemRepository.findUsedFoodIds(ids)).thenReturn(Set.of(4L));
+        void doesNotAskWhichFoodsAreUsed_onlyTheDetailsSayThat() {
+            when(repository.search(USER_ID, "%", null, false, false, false, FIRST_PAGE))
+                    .thenReturn(List.of(food(1L, "Brot", me, false)));
 
-            List<FoodResponse> result = service.find(USER_ID, null, null, false);
-
-            assertThat(result).extracting(FoodResponse::used).containsExactly(true, true, true, true, true);
-            verify(mealItemRepository, never()).existsByFoodId(anyLong());
-        }
-
-        @Test
-        void emptyResult_doesNotAskWhichFoodsAreUsed() {
-            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of());
-
-            assertThat(service.find(USER_ID, null, null, false)).isEmpty();
+            service.find(USER_ID, null, null, false, 0, 50);
 
             verifyNoInteractions(mealItemRepository, recipeItemRepository, variationItemRepository,
                     shoppingListItemRepository, taskItemRepository);
+        }
+
+        @Test
+        void recent_returnsTheRecentlyBookedFoodsMostRecentFirst_filteredLikeAnySearch() {
+            Food milk = food(1L, "Milch", null, true);
+            Food oats = food(2L, "Haferflocken", me, false);
+            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+                    .thenReturn(List.of(2L, 9L, 1L));
+            // 9 no longer matches (e.g. by its name): left out
+            when(repository.searchAmong(USER_ID, List.of(2L, 9L, 1L), "%", null, false))
+                    .thenReturn(List.of(milk, oats));
+
+            List<FoodSummaryResponse> result = service.find(USER_ID, null, CatalogScope.RECENT, false, 0, 50);
+
+            assertThat(result).extracting(FoodSummaryResponse::name).containsExactly("Haferflocken", "Milch");
+            verify(repository, never()).search(any(), any(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any());
+        }
+
+        @Test
+        void recent_isPagedLikeAnySearch() {
+            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+                    .thenReturn(List.of(1L, 2L, 3L));
+            when(repository.searchAmong(USER_ID, List.of(1L, 2L, 3L), "%", null, false)).thenReturn(List.of(
+                    food(1L, "A", me, false), food(2L, "B", me, false), food(3L, "C", me, false)));
+
+            assertThat(service.find(USER_ID, null, CatalogScope.RECENT, false, 1, 2))
+                    .extracting(FoodSummaryResponse::name).containsExactly("C");
+        }
+
+        @Test
+        void recent_withoutBookings_isEmpty() {
+            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+                    .thenReturn(List.of());
+
+            assertThat(service.find(USER_ID, "milch", CatalogScope.RECENT, false, 0, 50)).isEmpty();
+            verify(repository, never()).searchAmong(any(), any(), any(), any(), anyBoolean());
         }
     }
 

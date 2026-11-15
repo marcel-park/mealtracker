@@ -4,6 +4,7 @@ import io.github.marcel_park.mealtracker.dto.CatalogScope;
 import io.github.marcel_park.mealtracker.dto.FoodPortionRequest;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.dto.FoodSummaryResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
@@ -19,16 +20,18 @@ import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepositor
 import io.github.marcel_park.mealtracker.repository.ShoppingListItemRepository;
 import io.github.marcel_park.mealtracker.repository.TaskItemRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.Normalizer;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -83,14 +86,37 @@ public class FoodService {
         this.userRepository = userRepository;
     }
 
+    // How many foods the search with scope RECENT offers at most.
+    static final int RECENT_COUNT = 30;
+
+    // One page of the search results (see CatalogSearch.page), without the nutrients, see
+    // FoodSummaryResponse. RECENT: the RECENT_COUNT foods the user booked last, most recent first,
+    // narrowed down by the text and "confirmed only" like any search.
     @Transactional(readOnly = true)
-    public List<FoodResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly) {
+    public List<FoodSummaryResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly,
+                                          int page, int size) {
+        Pageable pageable = CatalogSearch.page(page, size);
         CatalogSearch search = CatalogSearch.of(query, scope);
-        List<Food> foods = foodRepository.search(userId, search.namePattern(), search.eanCode(),
-                search.ownOnly(), search.publicOnly(), confirmedOnly);
-        Set<Long> usedIds = findUsedIds(foods.stream().map(Food::getId).toList());
-        return foods.stream()
-                .map(food -> FoodResponse.from(food, userId, usedIds.contains(food.getId())))
+        List<Food> foods = scope == CatalogScope.RECENT
+                ? findRecent(userId, search, confirmedOnly, pageable)
+                : foodRepository.search(userId, search.namePattern(), search.eanCode(),
+                        search.ownOnly(), search.publicOnly(), confirmedOnly, pageable);
+        return foods.stream().map(food -> FoodSummaryResponse.from(food, userId)).toList();
+    }
+
+    private List<Food> findRecent(Long userId, CatalogSearch search, boolean confirmedOnly, Pageable pageable) {
+        List<Long> recentIds = mealItemRepository.findRecentlyBookedFoodIds(userId, PageRequest.of(0, RECENT_COUNT));
+        if (recentIds.isEmpty()) {
+            return List.of(); // "in ()" is no valid SQL
+        }
+        Map<Long, Food> found = foodRepository
+                .searchAmong(userId, recentIds, search.namePattern(), search.eanCode(), confirmedOnly).stream()
+                .collect(Collectors.toMap(Food::getId, Function.identity()));
+        return recentIds.stream()
+                .map(found::get)
+                .filter(Objects::nonNull)
+                .skip(pageable.getOffset())
+                .limit(pageable.getPageSize())
                 .toList();
     }
 
@@ -189,17 +215,6 @@ public class FoodService {
     }
 
     // isUsed() for a whole list of foods, with five queries instead of five per food.
-    private Set<Long> findUsedIds(Collection<Long> foodIds) {
-        if (foodIds.isEmpty()) {
-            return Set.of(); // "in ()" is no valid SQL
-        }
-        Set<Long> usedIds = new HashSet<>(mealItemRepository.findUsedFoodIds(foodIds));
-        usedIds.addAll(recipeItemRepository.findUsedFoodIds(foodIds));
-        usedIds.addAll(variationItemRepository.findUsedFoodIds(foodIds));
-        usedIds.addAll(shoppingListItemRepository.findUsedFoodIds(foodIds));
-        usedIds.addAll(taskItemRepository.findUsedFoodIds(foodIds));
-        return usedIds;
-    }
 
     private boolean isUsedByOthers(Food food, Long userId) {
         return mealItemRepository.existsByFoodIdAndMealUserIdNot(food.getId(), userId)

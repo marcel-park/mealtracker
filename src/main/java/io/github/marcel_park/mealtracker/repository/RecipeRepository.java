@@ -1,6 +1,7 @@
 package io.github.marcel_park.mealtracker.repository;
 
 import io.github.marcel_park.mealtracker.model.Recipe;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -22,7 +23,8 @@ public interface RecipeRepository extends JpaRepository<Recipe, Long> {
     List<Recipe> search(@Param("userId") Long userId,
                         @Param("namePattern") String namePattern,
                         @Param("ownOnly") boolean ownOnly,
-                        @Param("publicOnly") boolean publicOnly);
+                        @Param("publicOnly") boolean publicOnly,
+                        Pageable pageable);
 
     // The owner's public recipes that contain the food. They become private together with it.
     @Query("""

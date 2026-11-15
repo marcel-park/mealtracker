@@ -3,6 +3,7 @@ package io.github.marcel_park.mealtracker.controller;
 import io.github.marcel_park.mealtracker.dto.CatalogScope;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.dto.FoodSummaryResponse;
 import io.github.marcel_park.mealtracker.security.CurrentUser;
 import io.github.marcel_park.mealtracker.service.FoodService;
 import jakarta.validation.Valid;
@@ -32,13 +33,17 @@ public class FoodController {
         this.foodService = foodService;
     }
 
-    // ?scope=PUBLIC|OWN (without: everything the user may see), ?confirmed=true: confirmed ones only.
+    // ?scope=PUBLIC|OWN|RECENT (without: everything the user may see), ?confirmed=true: confirmed
+    // ones only. ?page=0, 1, ... of ?size= results (at most 100). Each food without its nutrients,
+    // see FoodSummaryResponse; GET /api/foods/{id} has them.
     @GetMapping
-    public List<FoodResponse> list(@AuthenticationPrincipal CurrentUser user,
-                                   @RequestParam(required = false) String query,
-                                   @RequestParam(required = false) CatalogScope scope,
-                                   @RequestParam(defaultValue = "false") boolean confirmed) {
-        return foodService.find(user.userId(), query, scope, confirmed);
+    public List<FoodSummaryResponse> list(@AuthenticationPrincipal CurrentUser user,
+                                          @RequestParam(required = false) String query,
+                                          @RequestParam(required = false) CatalogScope scope,
+                                          @RequestParam(defaultValue = "false") boolean confirmed,
+                                          @RequestParam(defaultValue = "0") int page,
+                                          @RequestParam(defaultValue = "50") int size) {
+        return foodService.find(user.userId(), query, scope, confirmed, page, size);
     }
 
     @GetMapping("/{id}")

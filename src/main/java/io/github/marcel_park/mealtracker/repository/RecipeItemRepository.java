@@ -6,9 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 
 // Answers whether a food is in use and finds the items of a portion; recipe items are otherwise
 // changed through their recipe.
@@ -24,9 +22,4 @@ public interface RecipeItemRepository extends JpaRepository<RecipeItem, RecipeIt
 
     // In a recipe of somebody else.
     boolean existsByFoodIdAndRecipeOwnerIdNot(Long foodId, Long userId);
-
-    // Which of the given foods are in any recipe. One query for a whole list of foods, see
-    // FoodService.find.
-    @Query("select distinct i.food.id from RecipeItem i where i.food.id in :foodIds")
-    Set<Long> findUsedFoodIds(@Param("foodIds") Collection<Long> foodIds);
 }

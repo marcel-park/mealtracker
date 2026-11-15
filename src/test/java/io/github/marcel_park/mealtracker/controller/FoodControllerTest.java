@@ -6,6 +6,7 @@ import io.github.marcel_park.mealtracker.dto.FoodPortionRequest;
 import io.github.marcel_park.mealtracker.dto.FoodPortionResponse;
 import io.github.marcel_park.mealtracker.dto.FoodRequest;
 import io.github.marcel_park.mealtracker.dto.FoodResponse;
+import io.github.marcel_park.mealtracker.dto.FoodSummaryResponse;
 import io.github.marcel_park.mealtracker.exception.ForbiddenException;
 import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
 import io.github.marcel_park.mealtracker.exception.NotFoundException;
@@ -69,13 +70,15 @@ class FoodControllerTest {
 
     @Test
     void list_returnsFoodsAsJson() throws Exception {
-        when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false, null)));
+        when(service.find(1L, null, null, false, 0, 50)).thenReturn(List.of(
+                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, List.of(), true, false, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(1))
-                .andExpect(jsonPath("$[0].name").value("Haferflocken"));
+                .andExpect(jsonPath("$[0].name").value("Haferflocken"))
+                // the list leaves out the nutrients, the details have them
+                .andExpect(jsonPath("$[0].nutrients").doesNotExist());
     }
 
     @Test
@@ -201,7 +204,7 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("query", "hafer"))
                 .andExpect(status().isOk());
 
-        verify(service).find(1L, "hafer", null, false);
+        verify(service).find(1L, "hafer", null, false, 0, 50);
     }
 
     // ---------- PUT /api/foods/{id} ----------
@@ -253,7 +256,7 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("scope", "OWN"))
                 .andExpect(status().isOk());
 
-        verify(service).find(1L, null, CatalogScope.OWN, false);
+        verify(service).find(1L, null, CatalogScope.OWN, false, 0, 50);
     }
 
     @Test
@@ -261,7 +264,24 @@ class FoodControllerTest {
         mockMvc.perform(get("/api/foods").param("scope", "PUBLIC").param("confirmed", "true"))
                 .andExpect(status().isOk());
 
-        verify(service).find(1L, null, CatalogScope.PUBLIC, true);
+        verify(service).find(1L, null, CatalogScope.PUBLIC, true, 0, 50);
+    }
+
+    @Test
+    void list_recentScopeAndPage_arePassedToService() throws Exception {
+        mockMvc.perform(get("/api/foods").param("scope", "RECENT").param("page", "2").param("size", "20"))
+                .andExpect(status().isOk());
+
+        verify(service).find(1L, null, CatalogScope.RECENT, false, 2, 20);
+    }
+
+    @Test
+    void list_invalidPage_returns400() throws Exception {
+        when(service.find(1L, null, null, false, -1, 50)).thenThrow(new InvalidRequestException("page must not be negative"));
+
+        mockMvc.perform(get("/api/foods").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("page must not be negative"));
     }
 
     @Test
@@ -275,8 +295,8 @@ class FoodControllerTest {
 
     @Test
     void list_returnsOwnershipFlags() throws Exception {
-        when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), false, true, false, false, null)));
+        when(service.find(1L, null, null, false, 0, 50)).thenReturn(List.of(
+                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, List.of(), false, true, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(jsonPath("$[0].owned").value(false))

@@ -36,12 +36,15 @@ public class RecipeController {
         this.recipeService = recipeService;
     }
 
-    // ?scope=PUBLIC|OWN (without: everything the user may see). There are no confirmed recipes.
+    // ?scope=PUBLIC|OWN|RECENT (without: everything the user may see). There are no confirmed
+    // recipes. ?page= and ?size=: which page of the results, see FoodController.list.
     @GetMapping
     public List<RecipeResponse> list(@AuthenticationPrincipal CurrentUser user,
                                      @RequestParam(required = false) String query,
-                                     @RequestParam(required = false) CatalogScope scope) {
-        return recipeService.find(user.userId(), query, scope);
+                                     @RequestParam(required = false) CatalogScope scope,
+                                     @RequestParam(defaultValue = "0") int page,
+                                     @RequestParam(defaultValue = "50") int size) {
+        return recipeService.find(user.userId(), query, scope, page, size);
     }
 
     @GetMapping("/{id}")

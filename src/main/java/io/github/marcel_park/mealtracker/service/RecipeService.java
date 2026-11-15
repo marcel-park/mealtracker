@@ -19,6 +19,7 @@ import io.github.marcel_park.mealtracker.model.RecipeVariationItem;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationRepository;
 import io.github.marcel_park.mealtracker.repository.UserRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,12 +58,17 @@ public class RecipeService {
         this.userRepository = userRepository;
     }
 
+    // One page of the results, see CatalogSearch.page. RECENT: none, see CatalogScope.
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
     @Transactional(readOnly = true)
-    public List<RecipeResponse> find(Long userId, String query, CatalogScope scope) {
+    public List<RecipeResponse> find(Long userId, String query, CatalogScope scope, int page, int size) {
+        Pageable pageable = CatalogSearch.page(page, size);
+        if (scope == CatalogScope.RECENT) {
+            return List.of();
+        }
         CatalogSearch search = CatalogSearch.of(query, scope);
         return recipeRepository.search(userId, search.namePattern(),
-                        search.ownOnly(), search.publicOnly()).stream()
+                        search.ownOnly(), search.publicOnly(), pageable).stream()
                 .map(recipe -> toResponse(recipe, userId))
                 .toList();
     }
