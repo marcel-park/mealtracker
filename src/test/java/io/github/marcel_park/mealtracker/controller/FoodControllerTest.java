@@ -71,13 +71,17 @@ class FoodControllerTest {
     @Test
     void list_returnsFoodsAsJson() throws Exception {
         when(service.find(1L, null, null, false, 0, 50)).thenReturn(List.of(
-                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, List.of(), true, false, false)));
+                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), true, false, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(1))
                 .andExpect(jsonPath("$[0].name").value("Haferflocken"))
-                // the list leaves out the nutrients, the details have them
+                // carbs, protein and fat come along for the amount view and the totals
+                .andExpect(jsonPath("$[0].protein").value(13.5))
+                .andExpect(jsonPath("$[0].carbs").value(58.7))
+                .andExpect(jsonPath("$[0].fat").value(7.0))
+                // the list leaves out the optional nutrients, the details have them
                 .andExpect(jsonPath("$[0].nutrients").doesNotExist());
     }
 
@@ -296,7 +300,7 @@ class FoodControllerTest {
     @Test
     void list_returnsOwnershipFlags() throws Exception {
         when(service.find(1L, null, null, false, 0, 50)).thenReturn(List.of(
-                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, List.of(), false, true, false)));
+                new FoodSummaryResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, List.of(), false, true, false)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(jsonPath("$[0].owned").value(false))
