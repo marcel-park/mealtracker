@@ -5,6 +5,7 @@ import { Preferences } from '@capacitor/preferences'
 export const API = {
   foods: '/api/foods',
   recipes: '/api/recipes',
+  userItems: '/api/user-items',
   meals: '/api/meals',
   shoppingList: '/api/shopping-list',
   tasks: '/api/tasks',

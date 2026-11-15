@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CATALOG_PAGE_SIZE,
+  USER_ITEM_SEARCH,
+  KIND_USER_ITEMS,
   KIND_FOODS,
   KIND_RECIPES,
   SCOPE_FRIENDS,
@@ -8,12 +10,14 @@ import {
   SCOPE_PUBLIC,
   SCOPE_RECENT,
   appendPage,
+  canCreateUserItem,
   catalogKey,
   confirmedFilterAvailable,
   createCatalogCache,
   isIdleSearch,
   isLastPage,
   recentScopeAvailable,
+  scopeAvailable,
   withKind,
   withScope,
 } from './catalog.js'
@@ -153,5 +157,80 @@ describe('catalogKey', () => {
     expect(catalogKey(KIND_FOODS, { ...search, scope: SCOPE_OWN }, 0)).not.toBe(key)
     expect(catalogKey(KIND_FOODS, { ...search, confirmedOnly: true }, 0)).not.toBe(key)
     expect(catalogKey(KIND_FOODS, search, 1)).not.toBe(key)
+  })
+})
+
+describe('user items', () => {
+  it('start with "Eigene" in the shopping list search', () => {
+    expect(USER_ITEM_SEARCH).toEqual({ query: '', scope: SCOPE_OWN, confirmedOnly: false, kind: KIND_USER_ITEMS })
+  })
+
+  it('only offer "Eigene" and "Freunde"', () => {
+    expect(scopeAvailable(KIND_USER_ITEMS, SCOPE_OWN)).toBe(true)
+    expect(scopeAvailable(KIND_USER_ITEMS, SCOPE_FRIENDS)).toBe(true)
+    for (const scope of [null, SCOPE_PUBLIC, SCOPE_RECENT]) {
+      expect(scopeAvailable(KIND_USER_ITEMS, scope)).toBe(false)
+    }
+  })
+
+  it('never offer "Nur bestätigte"', () => {
+    for (const scope of [null, SCOPE_OWN, SCOPE_FRIENDS]) {
+      expect(confirmedFilterAvailable({ kind: KIND_USER_ITEMS, scope })).toBe(false)
+    }
+  })
+
+  it('leave the scopes of foods and recipes as they were', () => {
+    for (const scope of [null, SCOPE_PUBLIC, SCOPE_OWN, SCOPE_FRIENDS, SCOPE_RECENT]) {
+      expect(scopeAvailable(KIND_FOODS, scope)).toBe(true)
+    }
+    expect(scopeAvailable(KIND_RECIPES, SCOPE_RECENT)).toBe(false)
+    expect(scopeAvailable(KIND_RECIPES, SCOPE_PUBLIC)).toBe(true)
+  })
+
+  it('switch to "Eigene" and "Nur bestätigte" off when chosen', () => {
+    const foods = { query: 'milch', scope: SCOPE_PUBLIC, confirmedOnly: true, kind: KIND_FOODS }
+    expect(withKind(foods, KIND_USER_ITEMS)).toEqual({ query: 'milch', scope: SCOPE_OWN, confirmedOnly: false, kind: KIND_USER_ITEMS })
+    expect(withKind({ ...foods, scope: null }, KIND_USER_ITEMS).scope).toBe(SCOPE_OWN)
+    expect(withKind({ ...foods, scope: SCOPE_RECENT }, KIND_USER_ITEMS).scope).toBe(SCOPE_OWN)
+  })
+
+  it('go back to "Alle" without "Nur bestätigte" when switching to foods or recipes', () => {
+    const userItems = { ...USER_ITEM_SEARCH, query: 'milch' }
+    expect(withKind(userItems, KIND_FOODS)).toEqual({ query: 'milch', scope: null, confirmedOnly: false, kind: KIND_FOODS })
+    expect(withKind(userItems, KIND_RECIPES).scope).toBe(null)
+    expect(withKind({ ...userItems, scope: SCOPE_FRIENDS }, KIND_FOODS).scope).toBe(null)
+  })
+
+  it('show all own items right away, without typing', () => {
+    expect(isIdleSearch(USER_ITEM_SEARCH)).toBe(false)
+    expect(isIdleSearch({ ...USER_ITEM_SEARCH, kind: KIND_FOODS, scope: SCOPE_OWN })).toBe(true)
+  })
+})
+
+describe('canCreateUserItem', () => {
+  const search = { ...USER_ITEM_SEARCH, query: ' Milch ' }
+  const loaded = (...names) => ({ loaded: true, entries: names.map((name, id) => ({ id, name })) })
+
+  it('allows a name that no own item has, even if others contain it', () => {
+    expect(canCreateUserItem(search, loaded())).toBe(true)
+    expect(canCreateUserItem(search, loaded('Hafermilch', 'Milchreis'))).toBe(true)
+  })
+
+  it('refuses a name an own item has already, in any case', () => {
+    expect(canCreateUserItem(search, loaded('milch'))).toBe(false)
+    expect(canCreateUserItem(search, loaded('Hafermilch', 'MILCH'))).toBe(false)
+  })
+
+  it('waits for the results of the text', () => {
+    expect(canCreateUserItem(search, { loaded: false, entries: [] })).toBe(false)
+  })
+
+  it('needs a name', () => {
+    expect(canCreateUserItem({ ...search, query: '   ' }, loaded())).toBe(false)
+  })
+
+  it('is only for own user items', () => {
+    expect(canCreateUserItem({ ...search, scope: SCOPE_FRIENDS }, loaded())).toBe(false)
+    expect(canCreateUserItem({ ...search, kind: KIND_FOODS, scope: SCOPE_OWN }, loaded())).toBe(false)
   })
 })
