@@ -93,6 +93,19 @@ class SecurityConfigTest {
         verifyNoInteractions(authTokenService, mealService);
     }
 
+    // The iOS app runs on capacitor://localhost.
+    @Test
+    void corsPreflight_fromIosAppOrigin_isAllowedWithAuthorizationHeader() throws Exception {
+        mockMvc.perform(options(SERVER_URL)
+                        .header(HttpHeaders.ORIGIN, "capacitor://localhost")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "capacitor://localhost"));
+
+        verifyNoInteractions(authTokenService, mealService);
+    }
+
     @Test
     void corsPreflight_fromForeignOrigin_isRejected() throws Exception {
         mockMvc.perform(options(SERVER_URL)
