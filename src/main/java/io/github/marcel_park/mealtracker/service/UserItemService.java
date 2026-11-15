@@ -37,15 +37,15 @@ public class UserItemService {
         this.userRepository = userRepository;
     }
 
-    // One page of the items whose name contains the query (all of them without query), sorted by
-    // name. scope null: everything the user may see. FRIENDS: none yet (no friends yet).
+    // One page of the items whose name contains every term of the query (see
+    // CatalogSearch.namePatterns; all of them without query), sorted by name. scope null: everything the user may see. FRIENDS: none yet (no friends yet).
     @Transactional(readOnly = true)
     public List<UserItemResponse> find(Long userId, String query, UserItemScope scope, int page, int size) {
         var pageable = CatalogSearch.page(page, size);
         if (scope == UserItemScope.FRIENDS) {
             return List.of();
         }
-        return itemRepository.searchOwn(userId, CatalogSearch.containsPattern(query), pageable).stream()
+        return itemRepository.searchOwn(userId, CatalogSearch.namePatterns(query), pageable).stream()
                 .map(item -> UserItemResponse.from(item, userId))
                 .toList();
     }

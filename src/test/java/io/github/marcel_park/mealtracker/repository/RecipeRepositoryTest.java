@@ -74,7 +74,7 @@ class RecipeRepositoryTest {
     }
 
     private List<String> search(User user, boolean ownOnly, boolean publicOnly) {
-        return repository.search(user.getId(), "%", ownOnly, publicOnly, Pageable.unpaged()).stream()
+        return repository.search(user.getId(), List.of(), ownOnly, publicOnly, Pageable.unpaged()).stream()
                 .map(Recipe::getName)
                 .toList();
     }
@@ -116,7 +116,7 @@ class RecipeRepositoryTest {
         save("Chili con Carne", alice, false);
         save("Linsensuppe", alice, false);
 
-        assertThat(repository.search(alice.getId(), "%carne%", false, false, Pageable.unpaged()))
+        assertThat(repository.search(alice.getId(), List.of("%carne%", "%chili%"), false, false, Pageable.unpaged()))
                 .extracting(Recipe::getName)
                 .containsExactly("Chili con Carne");
     }

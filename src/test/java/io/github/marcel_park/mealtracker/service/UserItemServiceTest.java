@@ -71,7 +71,7 @@ class UserItemServiceTest {
 
     @Test
     void find_ownItems_searchesTheNameAsPart() {
-        when(itemRepository.searchOwn(USER_ID, "%spül%", PageRequest.of(0, 50)))
+        when(itemRepository.searchOwn(USER_ID, List.of("%spül%"), PageRequest.of(0, 50)))
                 .thenReturn(List.of(item(1L, me, "Spülmittel")));
 
         List<UserItemResponse> result = service.find(USER_ID, " Spül ", UserItemScope.OWN, 0, 50);
@@ -81,7 +81,7 @@ class UserItemServiceTest {
 
     @Test
     void find_withoutScopeOrQuery_listsAllOwnItems() {
-        when(itemRepository.searchOwn(USER_ID, "%", PageRequest.of(1, 20)))
+        when(itemRepository.searchOwn(USER_ID, List.of(), PageRequest.of(1, 20)))
                 .thenReturn(List.of(item(1L, me, "Batterien")));
 
         assertThat(service.find(USER_ID, null, null, 1, 20)).hasSize(1);

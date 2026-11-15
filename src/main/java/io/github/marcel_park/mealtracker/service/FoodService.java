@@ -99,7 +99,7 @@ public class FoodService {
         CatalogSearch search = CatalogSearch.of(query, scope);
         List<Food> foods = scope == CatalogScope.RECENT
                 ? findRecent(userId, search, confirmedOnly, pageable)
-                : foodRepository.search(userId, search.namePattern(), search.eanCode(),
+                : foodRepository.search(userId, search.namePatterns(), search.eanCode(),
                         search.ownOnly(), search.publicOnly(), confirmedOnly, pageable);
         return foods.stream().map(food -> FoodSummaryResponse.from(food, userId)).toList();
     }
@@ -110,7 +110,7 @@ public class FoodService {
             return List.of(); // "in ()" is no valid SQL
         }
         Map<Long, Food> found = foodRepository
-                .searchAmong(userId, recentIds, search.namePattern(), search.eanCode(), confirmedOnly).stream()
+                .searchAmong(userId, recentIds, search.namePatterns(), search.eanCode(), confirmedOnly).stream()
                 .collect(Collectors.toMap(Food::getId, Function.identity()));
         return recentIds.stream()
                 .map(found::get)

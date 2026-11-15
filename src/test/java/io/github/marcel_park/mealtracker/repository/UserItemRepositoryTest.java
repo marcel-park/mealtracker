@@ -59,10 +59,10 @@ class UserItemRepositoryTest {
         save(alice, "Brot-Tüten");
         save(bob, "Spülschwamm");
 
-        assertThat(names(repository.searchOwn(alice.getId(), "%", ALL)))
+        assertThat(names(repository.searchOwn(alice.getId(), List.of(), ALL)))
                 .containsExactly("batterien", "Brot-Tüten", "Spülmittel");
-        assertThat(names(repository.searchOwn(alice.getId(), "%spül%", ALL))).containsExactly("Spülmittel");
-        assertThat(names(repository.searchOwn(bob.getId(), "%", ALL))).containsExactly("Spülschwamm");
+        assertThat(names(repository.searchOwn(alice.getId(), List.of("%spül%"), ALL))).containsExactly("Spülmittel");
+        assertThat(names(repository.searchOwn(bob.getId(), List.of(), ALL))).containsExactly("Spülschwamm");
     }
 
     @Test
@@ -71,7 +71,7 @@ class UserItemRepositoryTest {
         save(alice, "B");
         save(alice, "C");
 
-        assertThat(names(repository.searchOwn(alice.getId(), "%", PageRequest.of(1, 2)))).containsExactly("C");
+        assertThat(names(repository.searchOwn(alice.getId(), List.of(), PageRequest.of(1, 2)))).containsExactly("C");
     }
 
     @Test
