@@ -245,6 +245,11 @@ select:focus-visible {
 
 /* ----- Lists ----- */
 
+/* end of a paged list, see LoadMoreSentinel: 1 px, so the observer sees it */
+.load-more {
+  height: 1px;
+}
+
 .rows {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
