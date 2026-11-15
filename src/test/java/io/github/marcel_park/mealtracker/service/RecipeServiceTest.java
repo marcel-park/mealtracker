@@ -129,7 +129,7 @@ class RecipeServiceTest {
             Recipe chili = recipe(1L, me, false);
             chili.addItem(beans, 400);     // 400 kcal
             chili.addItem(tomatoes, 500);  // 100 kcal
-            when(recipeRepository.search(USER_ID, "%chili%", true, false, PageRequest.of(0, 50))).thenReturn(List.of(chili));
+            when(recipeRepository.search(USER_ID, List.of("%chili%"), true, false, PageRequest.of(0, 50))).thenReturn(List.of(chili));
 
             RecipeResponse result = service.find(USER_ID, "Chili", CatalogScope.OWN, 0, 50).get(0);
 

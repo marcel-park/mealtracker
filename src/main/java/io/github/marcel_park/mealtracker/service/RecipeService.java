@@ -67,7 +67,7 @@ public class RecipeService {
             return List.of();
         }
         CatalogSearch search = CatalogSearch.of(query, scope);
-        return recipeRepository.search(userId, search.namePattern(),
+        return recipeRepository.search(userId, search.namePatterns(),
                         search.ownOnly(), search.publicOnly(), pageable).stream()
                 .map(recipe -> toResponse(recipe, userId))
                 .toList();

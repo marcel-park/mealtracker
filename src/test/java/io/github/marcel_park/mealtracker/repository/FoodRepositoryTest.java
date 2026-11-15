@@ -80,9 +80,9 @@ class FoodRepositoryTest {
         return repository.save(f);
     }
 
-    // Everything alice may see whose name contains the pattern, no filter.
-    private List<String> visibleToAlice(String namePattern) {
-        return names(repository.search(alice.getId(), namePattern, null, false, false, false, ALL));
+    // Everything alice may see whose name matches every pattern, no filter.
+    private List<String> visibleToAlice(String... namePatterns) {
+        return names(repository.search(alice.getId(), List.of(namePatterns), null, false, false, false, ALL));
     }
 
     private static List<String> names(List<Food> foods) {
@@ -101,12 +101,24 @@ class FoodRepositoryTest {
     }
 
     @Test
+    void search_severalPatterns_everyOneMustMatch_inAnyOrder() {
+        save("Paprika, rot", alice, false);
+        save("Rote Paprika", alice, false);
+        save("Brot", alice, false);
+        save("Bananenbrot", alice, false);
+
+        assertThat(visibleToAlice("%paprika%", "%rot%")).containsExactly("Paprika, rot", "Rote Paprika");
+        assertThat(visibleToAlice("%apri%", "%ro%")).containsExactly("Paprika, rot", "Rote Paprika");
+        assertThat(visibleToAlice("%rot%")).containsExactly("Bananenbrot", "Brot", "Paprika, rot", "Rote Paprika");
+    }
+
+    @Test
     void search_findsAFoodByItsEanCode() {
         Food bacon = save("Bacon (Gut & Günstig)", alice, false);
         bacon.setEanCode("4311596443819");
         save("Bacon (REWE)", alice, false);
 
-        assertThat(names(repository.search(alice.getId(), "%4311596443819%", "4311596443819", false, false, false, ALL)))
+        assertThat(names(repository.search(alice.getId(), List.of("%4311596443819%"), "4311596443819", false, false, false, ALL)))
                 .containsExactly("Bacon (Gut & Günstig)");
     }
 
@@ -116,9 +128,9 @@ class FoodRepositoryTest {
         snack.setEanCode("4311501710142");
         save("Bacon Chips (EDEKA)", null, true);
 
-        assertThat(names(repository.search(alice.getId(), "%4311501710142%", "4311501710142", false, false, true, ALL)))
+        assertThat(names(repository.search(alice.getId(), List.of("%4311501710142%"), "4311501710142", false, false, true, ALL)))
                 .containsExactly("Bacon Snack (Gut & Günstig)");
-        assertThat(names(repository.search(alice.getId(), "%bacon%", null, false, false, true, ALL))).isEmpty();
+        assertThat(names(repository.search(alice.getId(), List.of("%bacon%"), null, false, false, true, ALL))).isEmpty();
     }
 
     @Test
@@ -139,7 +151,7 @@ class FoodRepositoryTest {
         save("Bob öffentlich", bob, true);
         save("Ohne Besitzer", null, true);
 
-        assertThat(visibleToAlice("%"))
+        assertThat(visibleToAlice())
                 .containsExactlyInAnyOrder("Alice privat", "Alice öffentlich", "Bob öffentlich", "Ohne Besitzer");
     }
 
@@ -150,7 +162,7 @@ class FoodRepositoryTest {
         save("Bob öffentlich", bob, true);
         save("Ohne Besitzer", null, true);
 
-        assertThat(names(repository.search(alice.getId(), "%", null, true, false, false, ALL)))
+        assertThat(names(repository.search(alice.getId(), List.of(), null, true, false, false, ALL)))
                 .containsExactlyInAnyOrder("Alice privat", "Alice öffentlich");
     }
 
@@ -162,7 +174,7 @@ class FoodRepositoryTest {
         save("Bob öffentlich", bob, true);
         save("Ohne Besitzer", null, true);
 
-        assertThat(names(repository.search(alice.getId(), "%", null, false, true, false, ALL)))
+        assertThat(names(repository.search(alice.getId(), List.of(), null, false, true, false, ALL)))
                 .containsExactlyInAnyOrder("Alice öffentlich", "Bob öffentlich", "Ohne Besitzer");
     }
 
@@ -175,7 +187,7 @@ class FoodRepositoryTest {
         save("Nicht bestätigt", bob, true);
         repository.flush();
 
-        assertThat(names(repository.search(alice.getId(), "%", null, false, false, true, ALL)))
+        assertThat(names(repository.search(alice.getId(), List.of(), null, false, false, true, ALL)))
                 .containsExactly("Bestätigt");
     }
 
@@ -187,9 +199,9 @@ class FoodRepositoryTest {
             save(name, alice, false);
         }
 
-        assertThat(names(repository.search(alice.getId(), "%", null, false, false, false, PageRequest.of(0, 2))))
+        assertThat(names(repository.search(alice.getId(), List.of(), null, false, false, false, PageRequest.of(0, 2))))
                 .containsExactly("A", "B");
-        assertThat(names(repository.search(alice.getId(), "%", null, false, false, false, PageRequest.of(2, 2))))
+        assertThat(names(repository.search(alice.getId(), List.of(), null, false, false, false, PageRequest.of(2, 2))))
                 .containsExactly("E");
     }
 
@@ -233,10 +245,10 @@ class FoodRepositoryTest {
         repository.flush();
         List<Long> ids = List.of(oats.getId(), oatDrink.getId(), hidden.getId());
 
-        assertThat(names(repository.searchAmong(alice.getId(), ids, "%hafer%", null, false)))
+        assertThat(names(repository.searchAmong(alice.getId(), ids, List.of("%hafer%"), null, false)))
                 .containsExactlyInAnyOrder("Haferflocken", "Haferdrink")
                 .doesNotContain(other.getName());
-        assertThat(names(repository.searchAmong(alice.getId(), ids, "%hafer%", null, true)))
+        assertThat(names(repository.searchAmong(alice.getId(), ids, List.of("%hafer%"), null, true)))
                 .containsExactly("Haferdrink");
     }
 

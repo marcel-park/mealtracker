@@ -156,8 +156,8 @@ class FoodServiceTest {
         private static final PageRequest FIRST_PAGE = PageRequest.of(0, 50);
 
         @Test
-        void withoutScope_searchesEverythingVisibleWithEscapedPattern() {
-            when(repository.search(USER_ID, "%50!% fett%", null, false, false, false, FIRST_PAGE))
+        void withoutScope_searchesEverythingVisible_byEveryTermWithEscapedPatterns() {
+            when(repository.search(USER_ID, List.of("%50!%%", "%fett%"), null, false, false, false, FIRST_PAGE))
                     .thenReturn(List.of(food(1L, "Quark 50% Fett", me, false)));
 
             List<FoodSummaryResponse> result = service.find(USER_ID, " 50% Fett ", null, false, 0, 50);
@@ -169,42 +169,42 @@ class FoodServiceTest {
         void eanCodeAsQuery_alsoSearchesByEan() {
             service.find(USER_ID, " 4311596443819 ", null, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%4311596443819%", "4311596443819", false, false, false, FIRST_PAGE);
+            verify(repository).search(USER_ID, List.of("%4311596443819%"), "4311596443819", false, false, false, FIRST_PAGE);
         }
 
         @Test
         void withoutQuery_matchesEveryName() {
             service.find(USER_ID, "  ", null, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, false, false, FIRST_PAGE);
+            verify(repository).search(USER_ID, List.of(), null, false, false, false, FIRST_PAGE);
         }
 
         @Test
         void ownScope_setsOnlyOwnFlag() {
             service.find(USER_ID, "hafer", CatalogScope.OWN, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%hafer%", null, true, false, false, FIRST_PAGE);
+            verify(repository).search(USER_ID, List.of("%hafer%"), null, true, false, false, FIRST_PAGE);
         }
 
         @Test
         void publicScope_setsOnlyPublicFlag() {
             service.find(USER_ID, null, CatalogScope.PUBLIC, false, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, true, false, FIRST_PAGE);
+            verify(repository).search(USER_ID, List.of(), null, false, true, false, FIRST_PAGE);
         }
 
         @Test
         void confirmedOnly_setsOnlyConfirmedFlag() {
             service.find(USER_ID, null, null, true, 0, 50);
 
-            verify(repository).search(USER_ID, "%", null, false, false, true, FIRST_PAGE);
+            verify(repository).search(USER_ID, List.of(), null, false, false, true, FIRST_PAGE);
         }
 
         @Test
         void pageAndSize_selectThePage() {
             service.find(USER_ID, "brot", null, false, 3, 20);
 
-            verify(repository).search(USER_ID, "%brot%", null, false, false, false, PageRequest.of(3, 20));
+            verify(repository).search(USER_ID, List.of("%brot%"), null, false, false, false, PageRequest.of(3, 20));
         }
 
         @Test
@@ -220,7 +220,7 @@ class FoodServiceTest {
 
         @Test
         void mapsOwnershipAndVisibilityFromTheCallersPointOfView() {
-            when(repository.search(USER_ID, "%", null, false, false, false, FIRST_PAGE)).thenReturn(List.of(
+            when(repository.search(USER_ID, List.of(), null, false, false, false, FIRST_PAGE)).thenReturn(List.of(
                     food(1L, "Mein Brot", me, false),
                     food(2L, "Fremdes Brot", other, true),
                     food(3L, "Altes Brot", null, false)));
@@ -238,7 +238,7 @@ class FoodServiceTest {
 
         @Test
         void doesNotAskWhichFoodsAreUsed_onlyTheDetailsSayThat() {
-            when(repository.search(USER_ID, "%", null, false, false, false, FIRST_PAGE))
+            when(repository.search(USER_ID, List.of(), null, false, false, false, FIRST_PAGE))
                     .thenReturn(List.of(food(1L, "Brot", me, false)));
 
             service.find(USER_ID, null, null, false, 0, 50);
@@ -254,7 +254,7 @@ class FoodServiceTest {
             when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
                     .thenReturn(List.of(2L, 9L, 1L));
             // 9 no longer matches (e.g. by its name): left out
-            when(repository.searchAmong(USER_ID, List.of(2L, 9L, 1L), "%", null, false))
+            when(repository.searchAmong(USER_ID, List.of(2L, 9L, 1L), List.of(), null, false))
                     .thenReturn(List.of(milk, oats));
 
             List<FoodSummaryResponse> result = service.find(USER_ID, null, CatalogScope.RECENT, false, 0, 50);
@@ -267,7 +267,7 @@ class FoodServiceTest {
         void recent_isPagedLikeAnySearch() {
             when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
                     .thenReturn(List.of(1L, 2L, 3L));
-            when(repository.searchAmong(USER_ID, List.of(1L, 2L, 3L), "%", null, false)).thenReturn(List.of(
+            when(repository.searchAmong(USER_ID, List.of(1L, 2L, 3L), List.of(), null, false)).thenReturn(List.of(
                     food(1L, "A", me, false), food(2L, "B", me, false), food(3L, "C", me, false)));
 
             assertThat(service.find(USER_ID, null, CatalogScope.RECENT, false, 1, 2))
