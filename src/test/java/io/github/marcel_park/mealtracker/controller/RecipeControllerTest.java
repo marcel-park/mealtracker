@@ -56,7 +56,7 @@ class RecipeControllerTest {
 
     private static RecipeResponse chili() {
         FoodResponse beans = new FoodResponse(1L, "Kidneybohnen", FoodUnit.G, 100, 8, 12, 0.5, Map.of(), List.of(), true, false, false, false, null);
-        return new RecipeResponse(5L, "Chili", 4, true, false, false, 400, 400,
+        return new RecipeResponse(5L, "Chili", 4, true, false, 400, 400,
                 List.of(new RecipeItemResponse(beans, 400, 400)),
                 List.of(new VariationResponse(9L, "Mehr Bohnen", null, 1800.0,
                         List.of(new VariationItemResponse(beans, 600)))),
@@ -65,9 +65,9 @@ class RecipeControllerTest {
 
     @Test
     void list_returnsRecipesWithItemsAsJson() throws Exception {
-        when(service.find(1L, "chili", CatalogScope.PUBLIC, true)).thenReturn(List.of(chili()));
+        when(service.find(1L, "chili", CatalogScope.PUBLIC)).thenReturn(List.of(chili()));
 
-        mockMvc.perform(get("/api/recipes").param("query", "chili").param("scope", "PUBLIC").param("confirmed", "true"))
+        mockMvc.perform(get("/api/recipes").param("query", "chili").param("scope", "PUBLIC"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(5))
                 .andExpect(jsonPath("$[0].servings").value(4.0))

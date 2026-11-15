@@ -36,13 +36,12 @@ public class RecipeController {
         this.recipeService = recipeService;
     }
 
-    // ?scope=PUBLIC|OWN (without: everything the user may see), ?confirmed=true: confirmed ones only.
+    // ?scope=PUBLIC|OWN (without: everything the user may see). There are no confirmed recipes.
     @GetMapping
     public List<RecipeResponse> list(@AuthenticationPrincipal CurrentUser user,
                                      @RequestParam(required = false) String query,
-                                     @RequestParam(required = false) CatalogScope scope,
-                                     @RequestParam(defaultValue = "false") boolean confirmed) {
-        return recipeService.find(user.userId(), query, scope, confirmed);
+                                     @RequestParam(required = false) CatalogScope scope) {
+        return recipeService.find(user.userId(), query, scope);
     }
 
     @GetMapping("/{id}")
