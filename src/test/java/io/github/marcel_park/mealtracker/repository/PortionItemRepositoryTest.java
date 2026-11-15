@@ -118,8 +118,6 @@ class PortionItemRepositoryTest {
         assertThat(shoppingListItemRepository.findByUserIdAndFoodId(alice.getId(), egg.getId())).isPresent();
         assertThat(shoppingListItemRepository.existsByFoodIdAndUserIdNot(milk.getId(), alice.getId())).isFalse();
         assertThat(shoppingListItemRepository.existsByFoodIdAndUserIdNot(egg.getId(), alice.getId())).isTrue();
-        assertThat(shoppingListItemRepository.findUsedFoodIds(List.of(egg.getId(), milk.getId())))
-                .containsExactlyInAnyOrder(egg.getId(), milk.getId());
 
         shoppingListItemRepository.deleteAllOf(alice.getId());
         flushAndClear();

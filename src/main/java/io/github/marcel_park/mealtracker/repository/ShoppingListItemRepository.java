@@ -6,10 +6,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 // Every query that reads or changes items filters by the user, so nobody reaches another user's
 // list. The other queries only tell FoodService whether a food or portion is in use.
@@ -39,9 +37,6 @@ public interface ShoppingListItemRepository extends JpaRepository<ShoppingListIt
 
     // On the list of somebody else.
     boolean existsByFoodIdAndUserIdNot(Long foodId, Long userId);
-
-    @Query("select distinct i.food.id from ShoppingListItem i where i.food.id in :foodIds")
-    Set<Long> findUsedFoodIds(@Param("foodIds") Collection<Long> foodIds);
 
     // The items with the portion, to turn them into amounts before it is deleted.
     // Written out: a derived findByPortionId would take Quantity.getPortionId() for an

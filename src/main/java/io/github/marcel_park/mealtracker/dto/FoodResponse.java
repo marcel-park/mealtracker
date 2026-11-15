@@ -48,12 +48,17 @@ public record FoodResponse(
                 food.getCarbs(),
                 food.getFat(),
                 Nutrient.inOrder(food.getNutrients()),
-                food.getPortions().stream().sorted(PORTION_ORDER).map(FoodPortionResponse::from).toList(),
+                portionsOf(food),
                 food.isOwnedBy(userId),
                 food.isPublic(),
                 food.isConfirmed(),
                 used,
                 food.getEanCode());
+    }
+
+    // Also the portions of FoodSummaryResponse.
+    static List<FoodPortionResponse> portionsOf(Food food) {
+        return food.getPortions().stream().sorted(PORTION_ORDER).map(FoodPortionResponse::from).toList();
     }
 
     // A food inside a meal, recipe or variation: used by definition.

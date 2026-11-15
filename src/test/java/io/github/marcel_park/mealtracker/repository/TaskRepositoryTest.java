@@ -114,7 +114,6 @@ class TaskRepositoryTest {
         assertThat(taskItemRepository.existsByFoodId(powder.getId())).isTrue();
         assertThat(taskItemRepository.existsByFoodIdAndTaskUserIdNot(powder.getId(), alice.getId())).isFalse();
         assertThat(taskItemRepository.existsByFoodIdAndTaskUserIdNot(powder.getId(), bob.getId())).isTrue();
-        assertThat(taskItemRepository.findUsedFoodIds(List.of(powder.getId()))).containsExactly(powder.getId());
         assertThat(taskItemRepository.findByPortionId(scoop.getId())).hasSize(1);
     }
 

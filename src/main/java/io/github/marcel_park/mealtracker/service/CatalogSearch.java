@@ -1,6 +1,9 @@
 package io.github.marcel_park.mealtracker.service;
 
 import io.github.marcel_park.mealtracker.dto.CatalogScope;
+import io.github.marcel_park.mealtracker.exception.InvalidRequestException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.util.Locale;
 
@@ -12,6 +15,18 @@ import java.util.Locale;
 record CatalogSearch(String namePattern, String eanCode, boolean ownOnly, boolean publicOnly) {
 
     static final char ESCAPE = '!';
+
+    // The results come in pages (?page=0, 1, ... of ?size= entries), so a search for "a" does not
+    // send the whole database; the app loads the next page while the list is scrolled.
+    static final int MAX_PAGE_SIZE = 100;
+
+    static Pageable page(int page, int size) {
+        if (page < 0) throw new InvalidRequestException("page must not be negative");
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new InvalidRequestException("size must be between 1 and " + MAX_PAGE_SIZE);
+        }
+        return PageRequest.of(page, size);
+    }
 
     static CatalogSearch of(String query, CatalogScope scope) {
         return new CatalogSearch(

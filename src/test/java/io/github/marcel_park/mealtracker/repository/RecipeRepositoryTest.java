@@ -7,6 +7,7 @@ import io.github.marcel_park.mealtracker.model.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 
 import java.util.List;
@@ -73,7 +74,7 @@ class RecipeRepositoryTest {
     }
 
     private List<String> search(User user, boolean ownOnly, boolean publicOnly) {
-        return repository.search(user.getId(), "%", ownOnly, publicOnly).stream()
+        return repository.search(user.getId(), "%", ownOnly, publicOnly, Pageable.unpaged()).stream()
                 .map(Recipe::getName)
                 .toList();
     }
@@ -115,7 +116,7 @@ class RecipeRepositoryTest {
         save("Chili con Carne", alice, false);
         save("Linsensuppe", alice, false);
 
-        assertThat(repository.search(alice.getId(), "%carne%", false, false))
+        assertThat(repository.search(alice.getId(), "%carne%", false, false, Pageable.unpaged()))
                 .extracting(Recipe::getName)
                 .containsExactly("Chili con Carne");
     }
