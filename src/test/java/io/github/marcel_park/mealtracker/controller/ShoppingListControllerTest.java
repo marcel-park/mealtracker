@@ -57,7 +57,7 @@ class ShoppingListControllerTest {
 
     private static final List<ShoppingListItemResponse> LIST = List.of(new ShoppingListItemResponse(
             5L,
-            new FoodResponse(3L, "Ei", FoodUnit.G, 144, 12, 1, 10, Map.of(), List.of(), false, true, false, true),
+            new FoodResponse(3L, "Ei", FoodUnit.G, 144, 12, 1, 10, Map.of(), List.of(), false, true, false, true, null),
             150.0, 50L, new BigDecimal("2.50"), true));
 
     @Test

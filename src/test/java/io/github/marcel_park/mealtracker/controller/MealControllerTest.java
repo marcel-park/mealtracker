@@ -70,7 +70,7 @@ class MealControllerTest {
 
     private static FoodResponse food(Long id, String name, double kcalPer100) {
         return new FoodResponse(id, name, FoodUnit.G, kcalPer100, 10, 50, 5, Map.of(), List.of(),
-                true, false, false, true);
+                true, false, false, true, null);
     }
 
     private static MealResponse meal(Long id) {

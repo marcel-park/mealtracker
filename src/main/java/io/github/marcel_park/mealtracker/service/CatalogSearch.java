@@ -6,7 +6,9 @@ import java.util.Locale;
 
 // Turns the parameters of a food or recipe search into the arguments of FoodRepository.search
 // and RecipeRepository.search.
-record CatalogSearch(String namePattern, boolean ownOnly, boolean publicOnly, boolean confirmedOnly) {
+// eanCode: the query if it looks like an EAN (8 to 14 digits, e.g. from the barcode scanner), else
+// null; foods are then also found by their EAN.
+record CatalogSearch(String namePattern, String eanCode, boolean ownOnly, boolean publicOnly, boolean confirmedOnly) {
 
     static final char ESCAPE = '!';
 
@@ -14,9 +16,16 @@ record CatalogSearch(String namePattern, boolean ownOnly, boolean publicOnly, bo
     static CatalogSearch of(String query, CatalogScope scope, boolean confirmedOnly) {
         return new CatalogSearch(
                 containsPattern(query),
+                eanCode(query),
                 scope == CatalogScope.OWN,
                 scope == CatalogScope.PUBLIC,
                 confirmedOnly);
+    }
+
+    static String eanCode(String query) {
+        if (query == null) return null;
+        String trimmed = query.trim();
+        return trimmed.matches("\\d{8,14}") ? trimmed : null;
     }
 
     // "50% Fett" must find the text "50% Fett", so the LIKE wildcards typed by the user are escaped.

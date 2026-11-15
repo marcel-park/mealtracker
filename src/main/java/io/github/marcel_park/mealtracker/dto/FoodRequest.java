@@ -1,6 +1,7 @@
 package io.github.marcel_park.mealtracker.dto;
 
 import io.github.marcel_park.mealtracker.model.FoodUnit;
+import io.github.marcel_park.mealtracker.model.Gtin;
 import io.github.marcel_park.mealtracker.model.Nutrient;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
@@ -14,7 +15,8 @@ import java.util.Map;
 
 // Nutrition values are per 100 of the unit (g or ml). nutrients: the optional ones the food should
 // have afterwards (see Nutrient), an empty map removes them all. portions: all portions the food
-// should have afterwards, see FoodPortionRequest; an empty list removes them all.
+// should have afterwards, see FoodPortionRequest; an empty list removes them all. eanCode: the EAN
+// of a product from the shop (8, 12, 13 or 14 digits with a valid check digit, see Gtin), optional.
 public record FoodRequest(
     @NotBlank @Size(max = 100) String name,
     @NotNull FoodUnit unit,
@@ -25,8 +27,15 @@ public record FoodRequest(
     @NotNull Map<@NotNull Nutrient, @NotNull @PositiveOrZero Double> nutrients,
     @NotNull Boolean published,
     // The limit only guards against absurd requests; the app has no use for that many.
-    @NotNull @Size(max = 50) List<@Valid @NotNull FoodPortionRequest> portions
+    @NotNull @Size(max = 50) List<@Valid @NotNull FoodPortionRequest> portions,
+    String eanCode
 ) {
+
+    // Reported as the field "validEanCode".
+    @AssertTrue(message = "must be an EAN of 8, 12, 13 or 14 digits with a valid check digit")
+    public boolean isValidEanCode() {
+        return eanCode == null || Gtin.isValid(eanCode);
+    }
 
     // A part never exceeds what it is part of: sugar the carbs, each kind of fatty acid the fat,
     // omega-3 the polyunsaturated fat. Each part on its own, not their sum: labels round each

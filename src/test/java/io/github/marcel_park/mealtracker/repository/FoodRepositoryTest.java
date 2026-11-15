@@ -77,7 +77,7 @@ class FoodRepositoryTest {
 
     // Everything alice may see whose name contains the pattern, no filter.
     private List<String> visibleToAlice(String namePattern) {
-        return names(repository.search(alice.getId(), namePattern, false, false, false));
+        return names(repository.search(alice.getId(), namePattern, null, false, false, false));
     }
 
     private static List<String> names(List<Food> foods) {
@@ -93,6 +93,27 @@ class FoodRepositoryTest {
         save("Apfel", alice, false);
 
         assertThat(visibleToAlice("%hafer%")).containsExactly("haferdrink", "Haferflocken");
+    }
+
+    @Test
+    void search_findsAFoodByItsEanCode() {
+        Food bacon = save("Bacon (Gut & Günstig)", alice, false);
+        bacon.setEanCode("4311596443819");
+        save("Bacon (REWE)", alice, false);
+
+        assertThat(names(repository.search(alice.getId(), "%4311596443819%", "4311596443819", false, false, false)))
+                .containsExactly("Bacon (Gut & Günstig)");
+    }
+
+    @Test
+    void search_confirmedOnly_stillFindsAnUnconfirmedFoodByItsEanCode() {
+        Food snack = save("Bacon Snack (Gut & Günstig)", null, true);
+        snack.setEanCode("4311501710142");
+        save("Bacon Chips (EDEKA)", null, true);
+
+        assertThat(names(repository.search(alice.getId(), "%4311501710142%", "4311501710142", false, false, true)))
+                .containsExactly("Bacon Snack (Gut & Günstig)");
+        assertThat(names(repository.search(alice.getId(), "%bacon%", null, false, false, true))).isEmpty();
     }
 
     @Test
@@ -124,7 +145,7 @@ class FoodRepositoryTest {
         save("Bob öffentlich", bob, true);
         save("Ohne Besitzer", null, true);
 
-        assertThat(names(repository.search(alice.getId(), "%", true, false, false)))
+        assertThat(names(repository.search(alice.getId(), "%", null, true, false, false)))
                 .containsExactlyInAnyOrder("Alice privat", "Alice öffentlich");
     }
 
@@ -136,7 +157,7 @@ class FoodRepositoryTest {
         save("Bob öffentlich", bob, true);
         save("Ohne Besitzer", null, true);
 
-        assertThat(names(repository.search(alice.getId(), "%", false, true, false)))
+        assertThat(names(repository.search(alice.getId(), "%", null, false, true, false)))
                 .containsExactlyInAnyOrder("Alice öffentlich", "Bob öffentlich", "Ohne Besitzer");
     }
 
@@ -149,7 +170,7 @@ class FoodRepositoryTest {
         save("Nicht bestätigt", bob, true);
         repository.flush();
 
-        assertThat(names(repository.search(alice.getId(), "%", false, false, true)))
+        assertThat(names(repository.search(alice.getId(), "%", null, false, false, true)))
                 .containsExactly("Bestätigt");
     }
 

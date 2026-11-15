@@ -9,7 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-// nutrients: only the stated optional ones, see Nutrient.
+// nutrients: only the stated optional ones, see Nutrient. eanCode: null if not stated.
 // owned: the requesting user owns the food and may edit it. published: everybody can see it.
 // portions: the favorite (the default when booking) first, then in the order they were added.
 // used: the food is in a meal, recipe or variation of anybody. The app then warns that changing the
@@ -27,7 +27,8 @@ public record FoodResponse(
         boolean owned,
         boolean published,
         boolean confirmed,
-        boolean used
+        boolean used,
+        String eanCode
 ) {
     // Sorted here as well, not only by @OrderBy on Food.portions: that order only applies when
     // the list is loaded from the database, not after FoodService changed it in the same
@@ -51,7 +52,8 @@ public record FoodResponse(
                 food.isOwnedBy(userId),
                 food.isPublic(),
                 food.isConfirmed(),
-                used);
+                used,
+                food.getEanCode());
     }
 
     // A food inside a meal, recipe or variation: used by definition.

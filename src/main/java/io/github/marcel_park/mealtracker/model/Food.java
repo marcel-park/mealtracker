@@ -24,6 +24,10 @@ public class Food {
     @Column(nullable = false, length = 100)
     private String name;
 
+    // The EAN of a product from the shop (8, 12, 13 or 14 digits, see Gtin), or null.
+    @Column(name = "ean_code", length = 14)
+    private String eanCode;
+
     // Stored as plain VARCHAR "G" / "ML", see FoodUnitConverter. Every amount of the food is in
     // this unit: changing it turns 100 g into 100 ml everywhere the food is used.
     @Convert(converter = FoodUnitConverter.class)
@@ -93,6 +97,8 @@ public class Food {
     public void setOwner(User owner) { this.owner = owner; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getEanCode() { return eanCode; }
+    public void setEanCode(String eanCode) { this.eanCode = eanCode; }
     public FoodUnit getUnit() { return unit; }
     public void setUnit(FoodUnit unit) { this.unit = unit; }
     public double getKcalPer100() { return kcalPer100; }

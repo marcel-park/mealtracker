@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -68,7 +70,7 @@ class FoodControllerTest {
     @Test
     void list_returnsFoodsAsJson() throws Exception {
         when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false)));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false, null)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(status().isOk())
@@ -97,7 +99,7 @@ class FoodControllerTest {
     @Test
     void create_validRequest_returns201WithBody() throws Exception {
         when(service.create(eq(1L), any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false, null));
 
         mockMvc.perform(post("/api/foods")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -123,6 +125,32 @@ class FoodControllerTest {
                         hasItems("name", "kcalPer100", "protein")));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"4311501042228", "12345", "43115010422x9"})
+    void create_invalidEanCode_returns400(String eanCode) throws Exception {
+        mockMvc.perform(post("/api/foods")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY.replace("\"portions\":[]", "\"portions\":[],\"eanCode\":\"" + eanCode + "\"")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors[*].field", hasItem("validEanCode")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void create_withEanCode_passesItOn() throws Exception {
+        when(service.create(eq(1L), any())).thenReturn(
+                new FoodResponse(1L, "Bacon", FoodUnit.G, 291, 16, 0.5, 25, Map.of(), List.of(), true, false, false, false, "4311596443819"));
+
+        mockMvc.perform(post("/api/foods")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY.replace("\"portions\":[]", "\"portions\":[],\"eanCode\":\"4311596443819\"")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.eanCode").value("4311596443819"));
+
+        verify(service).create(eq(1L), argThat(request -> "4311596443819".equals(request.eanCode())));
+    }
+
     @Test
     void create_malformedJson_returns400() throws Exception {
         mockMvc.perform(post("/api/foods")
@@ -135,7 +163,7 @@ class FoodControllerTest {
     @Test
     void update_validRequest_returns200() throws Exception {
         when(service.update(any(), any(), any())).thenReturn(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false, null));
 
         mockMvc.perform(put("/api/foods/1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -156,7 +184,7 @@ class FoodControllerTest {
 
     @Test
     void get_existingId_returnsAllFieldsAsJson() throws Exception {
-        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false));
+        when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), true, false, false, false, null));
 
         mockMvc.perform(get("/api/foods/1"))
                 .andExpect(status().isOk())
@@ -248,7 +276,7 @@ class FoodControllerTest {
     @Test
     void list_returnsOwnershipFlags() throws Exception {
         when(service.find(1L, null, null, false)).thenReturn(List.of(
-                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), false, true, false, false)));
+                new FoodResponse(1L, "Haferflocken", FoodUnit.G, 372, 13.5, 58.7, 7, Map.of(), List.of(), false, true, false, false, null)));
 
         mockMvc.perform(get("/api/foods"))
                 .andExpect(jsonPath("$[0].owned").value(false))
@@ -305,7 +333,7 @@ class FoodControllerTest {
     @Test
     void get_returnsUnitPortionsAndUsedFlag() throws Exception {
         when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Bier", FoodUnit.ML, 42, 0.5, 3, 0, Map.of(),
-                List.of(new FoodPortionResponse(4L, "Flasche", 330, true)), true, false, false, true));
+                List.of(new FoodPortionResponse(4L, "Flasche", 330, true)), true, false, false, true, null));
 
         mockMvc.perform(get("/api/foods/1"))
                 .andExpect(status().isOk())
@@ -354,7 +382,7 @@ class FoodControllerTest {
     @Test
     void get_returnsNutrients() throws Exception {
         when(service.get(1L, 1L)).thenReturn(new FoodResponse(1L, "Lachs", FoodUnit.G, 200, 20, 2, 13,
-                Map.of(Nutrient.VITAMIN_D, 11.0), List.of(), true, false, false, false));
+                Map.of(Nutrient.VITAMIN_D, 11.0), List.of(), true, false, false, false, null));
 
         mockMvc.perform(get("/api/foods/1"))
                 .andExpect(status().isOk())

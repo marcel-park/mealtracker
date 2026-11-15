@@ -120,11 +120,11 @@ class FoodServiceTest {
     }
 
     private static FoodRequest request(String name, boolean published) {
-        return new FoodRequest(name, FoodUnit.G, 372.0, 13.5, 58.7, 7.0, Map.of(), published, List.of());
+        return new FoodRequest(name, FoodUnit.G, 372.0, 13.5, 58.7, 7.0, Map.of(), published, List.of(), null);
     }
 
     private static FoodRequest request(FoodUnit unit, List<FoodPortionRequest> portions) {
-        return new FoodRequest("Haferflocken", unit, 372.0, 13.5, 58.7, 7.0, Map.of(), false, portions);
+        return new FoodRequest("Haferflocken", unit, 372.0, 13.5, 58.7, 7.0, Map.of(), false, portions, null);
     }
 
     // A portion as already saved, with the id the database would have given it.
@@ -153,7 +153,7 @@ class FoodServiceTest {
 
         @Test
         void withoutScope_searchesEverythingVisibleWithEscapedPattern() {
-            when(repository.search(USER_ID, "%50!% fett%", false, false, false))
+            when(repository.search(USER_ID, "%50!% fett%", null, false, false, false))
                     .thenReturn(List.of(food(1L, "Quark 50% Fett", me, false)));
 
             List<FoodResponse> result = service.find(USER_ID, " 50% Fett ", null, false);
@@ -162,43 +162,50 @@ class FoodServiceTest {
         }
 
         @Test
+        void eanCodeAsQuery_alsoSearchesByEan() {
+            service.find(USER_ID, " 4311596443819 ", null, false);
+
+            verify(repository).search(USER_ID, "%4311596443819%", "4311596443819", false, false, false);
+        }
+
+        @Test
         void withoutQuery_matchesEveryName() {
             service.find(USER_ID, "  ", null, false);
 
-            verify(repository).search(USER_ID, "%", false, false, false);
+            verify(repository).search(USER_ID, "%", null, false, false, false);
         }
 
         @Test
         void ownScope_setsOnlyOwnFlag() {
             service.find(USER_ID, "hafer", CatalogScope.OWN, false);
 
-            verify(repository).search(USER_ID, "%hafer%", true, false, false);
+            verify(repository).search(USER_ID, "%hafer%", null, true, false, false);
         }
 
         @Test
         void publicScope_setsOnlyPublicFlag() {
             service.find(USER_ID, null, CatalogScope.PUBLIC, false);
 
-            verify(repository).search(USER_ID, "%", false, true, false);
+            verify(repository).search(USER_ID, "%", null, false, true, false);
         }
 
         @Test
         void confirmedOnly_setsOnlyConfirmedFlag() {
             service.find(USER_ID, null, null, true);
 
-            verify(repository).search(USER_ID, "%", false, false, true);
+            verify(repository).search(USER_ID, "%", null, false, false, true);
         }
 
         @Test
         void confirmedOnly_combinesWithScope() {
             service.find(USER_ID, null, CatalogScope.OWN, true);
 
-            verify(repository).search(USER_ID, "%", true, false, true);
+            verify(repository).search(USER_ID, "%", null, true, false, true);
         }
 
         @Test
         void mapsOwnershipAndVisibilityFromTheCallersPointOfView() {
-            when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of(
+            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of(
                     food(1L, "Mein Brot", me, false),
                     food(2L, "Fremdes Brot", other, true),
                     food(3L, "Altes Brot", null, false)));
@@ -216,7 +223,7 @@ class FoodServiceTest {
 
         @Test
         void marksFoodsUsedInAMealRecipeVariationShoppingListOrTask_withOneQueryPerKindForTheWholeList() {
-            when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of(
+            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of(
                     food(1L, "Brot", me, false),
                     food(2L, "Milch", me, false),
                     food(3L, "Quark", me, false),
@@ -237,7 +244,7 @@ class FoodServiceTest {
 
         @Test
         void emptyResult_doesNotAskWhichFoodsAreUsed() {
-            when(repository.search(USER_ID, "%", false, false, false)).thenReturn(List.of());
+            when(repository.search(USER_ID, "%", null, false, false, false)).thenReturn(List.of());
 
             assertThat(service.find(USER_ID, null, null, false)).isEmpty();
 
@@ -314,6 +321,20 @@ class FoodServiceTest {
         }
 
         @Test
+        void storesTheEanCode_andReturnsIt() {
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+            stubSaveReturnsArgument();
+
+            FoodResponse result = service.create(USER_ID, new FoodRequest("Bacon", FoodUnit.G, 291.0, 16.0, 0.5, 25.0,
+                    Map.of(), false, List.of(), "4311596443819"));
+
+            ArgumentCaptor<Food> captor = ArgumentCaptor.forClass(Food.class);
+            verify(repository).saveAndFlush(captor.capture());
+            assertThat(captor.getValue().getEanCode()).isEqualTo("4311596443819");
+            assertThat(result.eanCode()).isEqualTo("4311596443819");
+        }
+
+        @Test
         void returnsResponseWithIdFromRepository() {
             when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
             when(repository.saveAndFlush(any(Food.class))).thenAnswer(inv -> {
@@ -342,13 +363,13 @@ class FoodServiceTest {
             stubSaveReturnsArgument();
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), false, List.of()));
+                    new FoodRequest("Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), false, List.of(), null));
 
             assertThat(existing)
                     .extracting(Food::getName, Food::getKcalPer100, Food::getProtein, Food::getCarbs, Food::getFat)
                     .containsExactly("Haferflocken zart", 370.0, 13.0, 59.0, 6.5);
             assertThat(result).isEqualTo(
-                    new FoodResponse(1L, "Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), List.of(), true, false, false, false));
+                    new FoodResponse(1L, "Haferflocken zart", FoodUnit.G, 370.0, 13.0, 59.0, 6.5, Map.of(), List.of(), true, false, false, false, null));
         }
 
         @Test
@@ -359,7 +380,7 @@ class FoodServiceTest {
             stubSaveReturnsArgument();
 
             FoodResponse result = service.update(USER_ID, 1L, new FoodRequest("Lachs", FoodUnit.G, 200.0, 20.0, 0.0,
-                    13.0, Map.of(Nutrient.VITAMIN_D, 11.0), false, List.of()));
+                    13.0, Map.of(Nutrient.VITAMIN_D, 11.0), false, List.of(), null));
 
             assertThat(existing.getNutrients()).isEqualTo(Map.of(Nutrient.VITAMIN_D, 11.0));
             assertThat(result.nutrients()).isEqualTo(Map.of(Nutrient.VITAMIN_D, 11.0));
@@ -420,7 +441,7 @@ class FoodServiceTest {
             });
 
             FoodResponse result = service.update(USER_ID, 1L,
-                    new FoodRequest("Haferflocken", FoodUnit.G, 380.0, 13.5, 58.7, 7.0, Map.of(), false, List.of()));
+                    new FoodRequest("Haferflocken", FoodUnit.G, 380.0, 13.5, 58.7, 7.0, Map.of(), false, List.of(), null));
 
             // The original stays exactly as the others know it, public and without owner
             assertThat(existing.getOwner()).isNull();
@@ -801,7 +822,7 @@ class FoodServiceTest {
             stubSaveReturnsArgument();
 
             service.update(USER_ID, 1L, new FoodRequest("Quark", FoodUnit.G, 70.0, 12.0, 4.0, 0.2, Map.of(), false,
-                    List.of(new FoodPortionRequest(10L, "Packung", 500.0, true))));
+                    List.of(new FoodPortionRequest(10L, "Packung", 500.0, true)), null));
 
             assertThat(existing.getPortions()).containsExactly(pack);
             assertThat(pack.getAmount()).isEqualTo(250.0);
