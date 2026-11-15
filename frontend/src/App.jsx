@@ -47,7 +47,15 @@ import {
   mealRequest,
   msUntilMidnight,
 } from './meals.js'
-import { MACROS, bookedMacros, macroTargets, mealTotals, remainingKcal } from './nutrition.js'
+import {
+  MACROS,
+  bookedMacros,
+  macroTargets,
+  macrosOf,
+  mealTotals,
+  remainingKcal,
+  scaleMacros,
+} from './nutrition.js'
 import { DARK, LIGHT, SYSTEM, applyColorTheme, storedColorTheme } from './theme.js'
 import {
   NUTRIENT_DECIMALS,
@@ -631,13 +639,20 @@ function LoadMoreSentinel({ active, count, onVisible }) {
 }
 
 // What a search view shows instead of rows: a hint before the first letter, nothing while the
-// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt", or how to
-// create the first user item).
+// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt", that
+// there are no recipes yet, or how to create the first user item).
 function CatalogEmpty({ catalog, search, notFound }) {
   if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
   if (!catalog.loaded) return null
   if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
     return <p className="empty">Du hast noch keine Lebensmittel gebucht.</p>
+  }
+  if (search.kind === KIND_RECIPES && search.query.trim() === '') {
+    return (
+      <p className="empty">
+        {search.scope === SCOPE_OWN ? 'Du hast noch keine eigenen Rezepte.' : 'Noch keine Rezepte.'}
+      </p>
+    )
   }
   if (search.kind === KIND_USER_ITEMS && search.scope === SCOPE_OWN) {
     return (
@@ -1664,14 +1679,14 @@ function ScaleIcon() {
 // the scale button with g / ml preselected, for those who mostly book exact amounts.
 //
 // Room: on a 360 px wide phone about 200 px are left for the text next to the two buttons, and
-// "(1000 ml) · 1234 kcal" alone takes about 160 px at the size of the second line. So the line is
-// two pieces that never break inside: the portion, and the kcal. If both do not fit, the kcal moves
-// to a line of its own instead of being cut off. MAX_PORTION_NAME_LENGTH keeps the first piece
-// within one line.
+// "(1000 ml) · 1234 kcal" alone takes about 160 px at the size of the second line. Like every row of
+// the search views (.search-row) it is of fixed height, so the second line stays one line: should
+// both pieces not fit, the portion is cut off with "…" and the kcal always show. The name takes at
+// most two lines.
 function FoodSearchRow({ food, onOpen, onAdd }) {
   const booked = quickAdd(food)
   return (
-    <div className="row">
+    <div className="row search-row">
       <button type="button" className="row-open wrap" onClick={() => onOpen(food)}>
         <span className="main">
           <span className="name">
@@ -1702,14 +1717,15 @@ function FoodSearchRow({ food, onOpen, onAdd }) {
   )
 }
 
-// variation: describe that variation instead of the original.
+// The detail line of a recipe in the search results: its kcal per portion, short enough for one
+// line. variation: describe that variation instead of the original (its name first).
 function RecipeSummary({ recipe, variation = null }) {
   const servings = servingsOf(recipe, variation)
   const kcal = variation ? totalsOf(itemsOf(recipe, variation)).kcal : recipe.kcal
   return (
     <>
       {variation && `${variation.name} · `}
-      {formatKcal(kcal / servings)} pro Portion · {formatServings(servings)}
+      {formatKcal(kcal / servings)} pro Portion
     </>
   )
 }
@@ -1717,7 +1733,7 @@ function RecipeSummary({ recipe, variation = null }) {
 // "+" books one portion as saved in the recipe; the row itself opens the booking view.
 function RecipeSearchRow({ recipe, onOpen, onAdd }) {
   return (
-    <div className="row">
+    <div className="row search-row">
       <button type="button" className="row-open wrap" onClick={() => onOpen(recipe)}>
         <span className="main">
           <span className="name">
@@ -1899,9 +1915,12 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
   return (
     <section>
       <TopBar title={food.name} closeLabel="Schließen" onClose={onClose} centered />
-      <p className="detail-line">
-        <KcalPer100 kcal={food.kcalPer100} unit={food.unit} />
-      </p>
+      <div className="detail-nutrition">
+        <p className="detail-line">
+          <KcalPer100 kcal={food.kcalPer100} unit={food.unit} />
+        </p>
+        <MacroValues grams={macrosOf(food, 100)} />
+      </div>
       <form onSubmit={submit}>
         <div className="detail-amount portion-amount">
           <input
@@ -1918,16 +1937,71 @@ function FoodDetail({ food, initial, confirmLabel, onConfirm, onClose }) {
           />
           <SelectBox label="Portion" value={choice} options={amountChoices(food)} onChange={changeChoice} />
         </div>
-        <p className="amount-result" role="status">
-          {isValid
-            ? `${formatAmount(amount, food.unit)} · ${formatKcal(kcalOf(food, amount))}`
-            : 'Bitte eine Menge eingeben.'}
-        </p>
+        <BookResult
+          kcal={isValid ? kcalOf(food, amount) : null}
+          grams={isValid ? macrosOf(food, amount) : null}
+        />
         <button type="submit" className="btn primary wide" disabled={!isValid}>
           {confirmLabel}
         </button>
       </form>
     </section>
+  )
+}
+
+// Carbs, protein and fat side by side in three columns like the bars of the main view, without
+// bars: the grams centered above their name. grams: { carbs, protein, fat } (see macrosOf); null,
+// or a value that is no number, shows "–" (no valid amount typed, a value missing).
+function MacroValues({ grams }) {
+  return (
+    <div className="macro-bars macro-values">
+      {MACROS.map(({ key, label }) => (
+        <div key={key} className="macro">
+          <span className="macro-grams">
+            {grams !== null && Number.isFinite(grams[key]) ? `${formatNumber(grams[key])} g` : '–'}
+          </span>
+          <span className="macro-label">{label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// What booking a recipe or an amount of a food adds, below the amount: the kcal number large and
+// centred on its own, "kcal" beside it; below them carbs, protein and fat in three columns, the grams in one row and
+// the names centred below. kcal and grams null: nothing valid typed, "–".
+function BookResult({ kcal, grams }) {
+  const isValid = kcal !== null && grams !== null
+  return (
+    <div className="book-result" role="status">
+      <p className="book-kcal">
+        <span className="book-kcal-number">{isValid ? Math.round(kcal).toLocaleString(LOCALE) : '–'}</span>
+        <span className="book-kcal-label">kcal</span>
+      </p>
+      <div className="book-macros">
+        {MACROS.map(({ key }) => (
+          <span key={key} className="book-number">
+            {isValid && Number.isFinite(grams[key]) ? formatNumber(grams[key]) : '–'}
+            <span className="book-unit"> g</span>
+          </span>
+        ))}
+        {MACROS.map(({ key, label }) => (
+          <span key={key} className="book-label">
+            {label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// A wide block in an info card (FoodInfo, RecipeInfo): its name above, the macros below.
+function MacroInfo({ label, grams }) {
+  return (
+    <div className="info wide">
+      <span className="info-label">{label}</span>
+      <MacroValues grams={grams} />
+    </div>
   )
 }
 
@@ -2079,12 +2153,13 @@ function CartButton({ name, justAdded, onClick }) {
   )
 }
 
-// A user item in the shopping list search: one line with its name, the pencil (name, delete)
-// and the cart (count, then onto the list). The buttons are as big as in the other search rows,
-// so the row is as tall as they are. Tapping the name is the same as the cart.
+// A user item in the shopping list search: its name (at most two lines, no second line, so lower
+// than the rows of foods and recipes, all user item rows equally high), the pencil (name, delete)
+// and the cart (count, then onto the list). The buttons are as big as in the other search rows.
+// Tapping the name is the same as the cart.
 function UserItemRow({ item, justAdded, onEdit, onAddToList }) {
   return (
-    <div className="row user-item-row">
+    <div className="row search-row user-item-row">
       <button type="button" className="row-open" onClick={onAddToList}>
         <span className="name">{item.name}</span>
       </button>
@@ -2216,10 +2291,10 @@ function UserItemCount({ name, initialCount = 1, confirmLabel, onConfirm, onClos
 }
 
 // A food or recipe in a database list; sub is the second line (kcal, portions), children the
-// button at the right. Tapping the row opens the details.
+// button at the right. Tapping the row opens the details. Fixed height, see .search-row.
 function DatabaseRow({ entry, sub, onOpen, children }) {
   return (
-    <div className="row">
+    <div className="row search-row">
       <button type="button" className="row-open" onClick={onOpen}>
         <span className="main">
           <span className="name">
@@ -3205,10 +3280,10 @@ function FoodInfo({ food, onClose }) {
         )}
         <Info label={`Kcal ${per100}`}>{formatNumber(food.kcalPer100)}</Info>
         <Info label="Einheit">{FOOD_UNIT_OPTIONS.find((option) => option.value === food.unit)?.label}</Info>
-        <Info label={`Protein ${per100}`}>{formatNumber(food.protein)} g</Info>
-        <Info label={`Kohlenhydrate ${per100}`}>{formatNumber(food.carbs)} g</Info>
-        <Info label={`Fett ${per100}`}>{formatNumber(food.fat)} g</Info>
-        <Info label="Sichtbarkeit">{visibilityLabel(food.published)}</Info>
+        <Info label="Sichtbarkeit" wide>
+          {visibilityLabel(food.published)}
+        </Info>
+        <MacroInfo label={`Nährwerte ${per100}`} grams={macrosOf(food, 100)} />
       </div>
       {statedGroups.length > 0 && (
         <Collapsible title="Weitere Nährwerte">
@@ -3286,6 +3361,7 @@ function RecipeInfo({ recipe, variationId, copying, onSelectVariation, onCopying
         ) : (
           <Info label="Sichtbarkeit">{visibilityLabel(recipe.published)}</Info>
         )}
+        <MacroInfo label="Nährwerte pro Portion" grams={scaleMacros(mealTotals(items), 1 / servings)} />
       </div>
 
       <div className="section-head">
@@ -3343,6 +3419,8 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
   const isValid = totals.amount > 0 && servings > 0 && weightG > 0 && quantity > 0
   const share = isValid ? shareOf({ unit, quantity, servings, weightG }) : 0
   const adjusted = isAdjusted(booking)
+  // carbs, protein and fat of the whole recipe as it is booked (items of the variation, if any)
+  const macroTotals = mealTotals(items)
 
   function changeUnit(newUnit) {
     if (newUnit === unit) return
@@ -3478,9 +3556,10 @@ function RecipeBooking({ booking, onChange, onAddFoods, onConfirm, onSaveVariati
             </>
           )}
         </div>
-        <p className="book-result" role="status">
-          {isValid ? formatKcal(totals.kcal * share) : '–'}
-        </p>
+        <BookResult
+          kcal={isValid ? totals.kcal * share : null}
+          grams={isValid ? scaleMacros(macroTotals, share) : null}
+        />
 
         <div className="section-head">
           <h2>Dieses Rezept variieren</h2>

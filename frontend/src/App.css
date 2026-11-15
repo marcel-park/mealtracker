@@ -1189,13 +1189,69 @@ fieldset.plain:disabled input {
   height: var(--book-amount-height);
 }
 
+/* what booking a recipe adds (BookResult): the kcal number centred and largest, "kcal" muted
+   beside it; below, carbs, protein and fat in three columns like the bars of the main view: the
+   grams in one row, a little smaller than the kcal, the names small and muted (the colour of the
+   section headings) centred below them. */
 .book-result {
   margin: 0 0 8px;
+  text-align: center;
+}
+
+/* the amount view of a food: room before the button */
+.portion-amount + .book-result {
+  margin-bottom: 20px;
+}
+
+/* the number centred on its own, "kcal" beside it (like the totals of a meal, .meal-summary) */
+.book-kcal {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  column-gap: 6px;
+  margin: 0 0 10px;
+}
+
+.book-kcal-number {
+  grid-column: 2;
   font-size: 2rem;
   font-weight: 700;
   line-height: 1.2;
-  text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.book-kcal-label {
+  grid-column: 3;
+  justify-self: start;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.book-macros {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 8px;
+  row-gap: 2px;
+}
+
+.book-number {
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.book-unit {
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.book-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .link-btn {
@@ -1357,8 +1413,9 @@ fieldset.plain:disabled input {
   font-size: 1.3rem; /* the ✓ after putting something on the shopping list, as big as on "+" */
 }
 
-/* "Packung (250 g) · 430 kcal": two pieces that never break inside. If they do not fit in one line
-   together, the kcal moves to the next line instead of being cut off (see FoodSearchRow). */
+/* "Packung (250 g) · 430 kcal": two pieces that never break inside. In the search rows the line
+   does not wrap: the portion is cut off with "…" instead, so the kcal always show (see
+   FoodSearchRow and .search-row). */
 .booking-part {
   display: inline-block;
   max-width: 100%;
@@ -1394,12 +1451,31 @@ fieldset.plain:disabled input {
   font-size: 1.1rem;
 }
 
-/* what the typed amount means: "400 g · 1.488 kcal" */
-.amount-result {
-  margin: 0 0 16px;
-  color: var(--muted);
-  text-align: center;
+/* amount view (FoodDetail), at the top: the kcal per 100 g / ml with carbs, protein and fat below
+   in three columns like the bars of the main view: the grams above their name, no bar. What the
+   typed amount adds is shown below the amount like when booking a recipe (.book-result). */
+.detail-nutrition {
+  margin: 0 0 20px;
+}
+
+.detail-nutrition .detail-line {
+  margin-bottom: 8px;
+}
+
+/* in an info card (FoodInfo, RecipeInfo): the label above, a little room before the values */
+.info .macro-values {
+  margin-top: 4px;
+}
+
+.macro-values .macro-grams {
+  font-size: 0.95rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.macro-values .macro-label {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 /* food form: calories and unit side by side, half and half */
@@ -1593,11 +1669,63 @@ fieldset.plain:disabled input {
   color: var(--muted);
 }
 
-/* user items in the shopping list search: only their name, so one line, as tall as the buttons
-   (the same size as in the other search rows) */
+/* user items in the shopping list search: only their name, no second line (see .search-row) */
 .row.user-item-row {
   padding-top: 8px;
   padding-bottom: 8px;
+}
+
+/* ----- Rows of the search views (.search-row): all equally high -----
+   The name takes at most two lines and ends with "…" if it is longer; the details show all of it.
+   The line below it stays one line. Every row is as high as two lines of name plus that line
+   (user items: two lines of name), however long the name is, and the content is centred in it. */
+.row.search-row {
+  --search-name-line: 1.3rem;
+  --search-sub-line: 1.25rem;
+  height: calc(24px + 2 * var(--search-name-line) + var(--search-sub-line));
+}
+
+.row.search-row.user-item-row {
+  height: calc(16px + 2 * var(--search-name-line));
+}
+
+.row.search-row .row-open .name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--search-name-line);
+}
+
+.row.search-row .row-open .sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: var(--search-sub-line);
+}
+
+/* "Packung (250 g) · 430 kcal" in one line: the portion gives way, the rest keeps its width */
+.row.search-row .row-open .booking-sub {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.row.search-row .booking-sub > * {
+  flex: none;
+}
+
+.row.search-row .booking-sub > .booking-part:first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* keeps the spaces of " · ", which a flex item would drop at its edges */
+.row.search-row .booking-separator {
+  white-space: pre;
 }
 
 /* two buttons sharing the bottom bar half and half */

@@ -13,6 +13,7 @@ import {
   canCreateUserItem,
   catalogKey,
   confirmedFilterAvailable,
+  defaultScope,
   createCatalogCache,
   isIdleSearch,
   isLastPage,
@@ -64,12 +65,41 @@ describe('withScope', () => {
 describe('withKind', () => {
   const search = { query: 'quark', scope: SCOPE_PUBLIC, confirmedOnly: true, kind: KIND_FOODS }
 
-  it('switches "only confirmed" off for recipes and keeps the rest', () => {
-    expect(withKind(search, KIND_RECIPES)).toEqual({ ...search, kind: KIND_RECIPES, confirmedOnly: false })
+  it('switches to "Eigene" and "only confirmed" off for recipes, and keeps the text', () => {
+    expect(withKind(search, KIND_RECIPES)).toEqual({
+      query: 'quark',
+      scope: SCOPE_OWN,
+      confirmedOnly: false,
+      kind: KIND_RECIPES,
+    })
   })
 
-  it('leaves it off when going back to foods', () => {
-    expect(withKind(withKind(search, KIND_RECIPES), KIND_FOODS).confirmedOnly).toBe(false)
+  it('switches to "Eigene" for recipes from every filter', () => {
+    for (const scope of [null, SCOPE_PUBLIC, SCOPE_OWN, SCOPE_FRIENDS, SCOPE_RECENT]) {
+      expect(withKind({ ...search, scope }, KIND_RECIPES).scope).toBe(SCOPE_OWN)
+    }
+  })
+
+  it('goes back to "Alle" without "only confirmed" when switching from recipes to foods', () => {
+    const recipes = withKind(search, KIND_RECIPES)
+    expect(withKind({ ...recipes, scope: SCOPE_PUBLIC }, KIND_FOODS)).toEqual({
+      query: 'quark',
+      scope: null,
+      confirmedOnly: false,
+      kind: KIND_FOODS,
+    })
+  })
+
+  it('changes nothing when the kind shown is chosen again', () => {
+    expect(withKind(search, KIND_FOODS)).toEqual(search)
+    const publicRecipes = { ...search, scope: SCOPE_PUBLIC, confirmedOnly: false, kind: KIND_RECIPES }
+    expect(withKind(publicRecipes, KIND_RECIPES)).toEqual(publicRecipes)
+  })
+
+  it('has "Alle" as the default for foods and "Eigene" for recipes and user items', () => {
+    expect(defaultScope(KIND_FOODS)).toBe(null)
+    expect(defaultScope(KIND_RECIPES)).toBe(SCOPE_OWN)
+    expect(defaultScope(KIND_USER_ITEMS)).toBe(SCOPE_OWN)
   })
 })
 
@@ -79,26 +109,28 @@ describe('recent scope', () => {
     expect(recentScopeAvailable(KIND_RECIPES)).toBe(false)
   })
 
-  it('goes back to everything when switching to recipes', () => {
+  it('is left for "Eigene" when switching to recipes', () => {
     const recent = { query: '', scope: SCOPE_RECENT, confirmedOnly: false, kind: KIND_FOODS }
-    expect(withKind(recent, KIND_RECIPES)).toEqual({ ...recent, kind: KIND_RECIPES, scope: null })
-  })
-
-  it('keeps other scopes when switching to recipes', () => {
-    const own = { query: '', scope: SCOPE_OWN, confirmedOnly: false, kind: KIND_FOODS }
-    expect(withKind(own, KIND_RECIPES).scope).toBe(SCOPE_OWN)
+    expect(withKind(recent, KIND_RECIPES)).toEqual({ ...recent, kind: KIND_RECIPES, scope: SCOPE_OWN })
   })
 })
 
 describe('isIdleSearch', () => {
-  it('waits for the first letter', () => {
-    expect(isIdleSearch({ query: '', scope: null })).toBe(true)
-    expect(isIdleSearch({ query: '  ', scope: SCOPE_PUBLIC })).toBe(true)
-    expect(isIdleSearch({ query: 'a', scope: null })).toBe(false)
+  it('waits for the first letter for foods', () => {
+    expect(isIdleSearch({ query: '', scope: null, kind: KIND_FOODS })).toBe(true)
+    expect(isIdleSearch({ query: '  ', scope: SCOPE_PUBLIC, kind: KIND_FOODS })).toBe(true)
+    expect(isIdleSearch({ query: '', scope: SCOPE_OWN, kind: KIND_FOODS })).toBe(true)
+    expect(isIdleSearch({ query: 'a', scope: null, kind: KIND_FOODS })).toBe(false)
   })
 
   it('shows the recently booked foods right away', () => {
-    expect(isIdleSearch({ query: '', scope: SCOPE_RECENT })).toBe(false)
+    expect(isIdleSearch({ query: '', scope: SCOPE_RECENT, kind: KIND_FOODS })).toBe(false)
+  })
+
+  it('lists recipes right away with every filter', () => {
+    for (const scope of [null, SCOPE_PUBLIC, SCOPE_OWN, SCOPE_FRIENDS]) {
+      expect(isIdleSearch({ query: '', scope, kind: KIND_RECIPES })).toBe(false)
+    }
   })
 })
 
@@ -194,11 +226,11 @@ describe('user items', () => {
     expect(withKind({ ...foods, scope: SCOPE_RECENT }, KIND_USER_ITEMS).scope).toBe(SCOPE_OWN)
   })
 
-  it('go back to "Alle" without "Nur bestätigte" when switching to foods or recipes', () => {
+  it('go back to "Alle" for foods and to "Eigene" for recipes when switching', () => {
     const userItems = { ...USER_ITEM_SEARCH, query: 'milch' }
     expect(withKind(userItems, KIND_FOODS)).toEqual({ query: 'milch', scope: null, confirmedOnly: false, kind: KIND_FOODS })
-    expect(withKind(userItems, KIND_RECIPES).scope).toBe(null)
     expect(withKind({ ...userItems, scope: SCOPE_FRIENDS }, KIND_FOODS).scope).toBe(null)
+    expect(withKind({ ...userItems, scope: SCOPE_FRIENDS }, KIND_RECIPES).scope).toBe(SCOPE_OWN)
   })
 
   it('show all own items right away, without typing', () => {
