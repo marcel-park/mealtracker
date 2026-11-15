@@ -93,8 +93,8 @@ import {
   SCOPE_FRIENDS,
   SCOPE_OWN,
   SCOPE_PUBLIC,
-  confirmedByDefault,
-  confirmedFilterApplies,
+  confirmedFilterAvailable,
+  withKind,
   withScope,
 } from './catalog.js'
 import { WEEKDAYS, canSaveTask, formatWeekdays, taskEditorFor, taskRequest, toggleWeekday } from './tasks.js'
@@ -201,13 +201,13 @@ const SCOPE_OPTIONS = [
 
 
 // GET /api/foods or /api/recipes with the search text and the filters, if any. "Nur bestätigte"
-// only for foods (see confirmedFilterApplies).
+// only where it applies (see confirmedFilterAvailable).
 function fetchCatalog(kind, { query, scope, confirmedOnly }, signal) {
   const params = new URLSearchParams()
   const search = query.trim()
   if (search) params.set(SEARCH_PARAM, search)
   if (scope) params.set(SCOPE_PARAM, scope)
-  if (confirmedOnly && confirmedFilterApplies(kind)) params.set(CONFIRMED_PARAM, 'true')
+  if (confirmedOnly && confirmedFilterAvailable({ kind, scope })) params.set(CONFIRMED_PARAM, 'true')
   const paramText = params.toString()
   return request(paramText ? `${KIND_URLS[kind]}?${paramText}` : KIND_URLS[kind], { signal })
 }
@@ -559,8 +559,9 @@ function CatalogHeader({
   children,
 }) {
   const { query, scope, confirmedOnly, kind } = search
-  // Recipes cannot be confirmed: the toggle is greyed out and shown off for them.
-  const confirmable = confirmedFilterApplies(kindLocked ? KIND_FOODS : kind)
+  // "Nur bestätigte" only for public foods and foods of everybody, otherwise greyed out and off
+  // (see confirmedFilterAvailable).
+  const confirmable = confirmedFilterAvailable({ kind: kindLocked ? KIND_FOODS : kind, scope })
   const placeholder = kind === KIND_RECIPES ? 'Rezepte suchen' : 'Lebensmittel suchen'
   // The barcode button takes the place of the field's own "×" while nothing is typed, for foods only
   // and only where the device can scan (see scanner.js). A scanned EAN becomes the search text; the
@@ -636,7 +637,7 @@ function CatalogHeader({
               ? 'Nur bestätigte (hier immer an)'
               : confirmable
                 ? 'Nur bestätigte'
-                : 'Nur bestätigte (für Rezepte nicht verfügbar)'
+                : 'Nur bestätigte (nur für öffentliche Lebensmittel)'
           }
           aria-label="Nur bestätigte"
           disabled={filtersLocked || !confirmable}
@@ -658,7 +659,7 @@ function CatalogHeader({
           value={kindLocked ? KIND_FOODS : kind}
           options={CATALOG_KINDS}
           disabled={kindLocked || filtersLocked}
-          onChange={(value) => onSearchChange({ ...search, kind: value })}
+          onChange={(value) => onSearchChange(withKind(search, value))}
         />
         {children}
       </div>
@@ -858,9 +859,9 @@ function BarcodeScanner({ onDetected, onClose }) {
   )
 }
 
-// Search text, whose entries (scope, null: everything the user may see), "only confirmed" (on, as
-// for "Alle", see catalog.js) and kind of a search view.
-const NEW_SEARCH = { query: '', scope: null, confirmedOnly: confirmedByDefault(null), kind: KIND_FOODS }
+// Search text, whose entries (scope, null: everything the user may see), "only confirmed" (off,
+// see catalog.js) and kind of a search view.
+const NEW_SEARCH = { query: '', scope: null, confirmedOnly: false, kind: KIND_FOODS }
 
 const DROPDOWN_MAX_HEIGHT = 280
 const DROPDOWN_SCREEN_MARGIN = 16 // distance the open list keeps from the screen edge
