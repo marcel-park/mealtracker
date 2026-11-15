@@ -8,18 +8,17 @@ import java.util.Locale;
 // and RecipeRepository.search.
 // eanCode: the query if it looks like an EAN (8 to 14 digits, e.g. from the barcode scanner), else
 // null; foods are then also found by their EAN.
-record CatalogSearch(String namePattern, String eanCode, boolean ownOnly, boolean publicOnly, boolean confirmedOnly) {
+// "Confirmed only" exists for foods only and is passed to FoodRepository.search directly.
+record CatalogSearch(String namePattern, String eanCode, boolean ownOnly, boolean publicOnly) {
 
     static final char ESCAPE = '!';
 
-    // confirmedOnly combines with the scope, e.g. "own and confirmed".
-    static CatalogSearch of(String query, CatalogScope scope, boolean confirmedOnly) {
+    static CatalogSearch of(String query, CatalogScope scope) {
         return new CatalogSearch(
                 containsPattern(query),
                 eanCode(query),
                 scope == CatalogScope.OWN,
-                scope == CatalogScope.PUBLIC,
-                confirmedOnly);
+                scope == CatalogScope.PUBLIC);
     }
 
     static String eanCode(String query) {

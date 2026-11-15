@@ -12,7 +12,6 @@ public record RecipeResponse(
         double servings,
         boolean owned,
         boolean published,
-        boolean confirmed,
         double amount,
         double kcal,
         List<RecipeItemResponse> items,

@@ -28,10 +28,6 @@ public class Recipe {
     @Column(name = "is_public", nullable = false)
     private boolean published;
 
-    // Checked by an official source. Nobody can set this yet.
-    @Column(name = "is_confirmed", nullable = false)
-    private boolean confirmed;
-
     @OneToMany(mappedBy = "recipe", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<RecipeItem> items = new ArrayList<>();
 
@@ -80,8 +76,6 @@ public class Recipe {
     public void setServings(double servings) { this.servings = servings; }
     public boolean isPublished() { return published; }
     public void setPublished(boolean published) { this.published = published; }
-    public boolean isConfirmed() { return confirmed; }
-    public void setConfirmed(boolean confirmed) { this.confirmed = confirmed; }
     public List<RecipeItem> getItems() { return items; }
     public List<RecipeVariation> getVariations() { return variations; }
     public Long getLastUsedVariationId() { return lastUsedVariationId; }

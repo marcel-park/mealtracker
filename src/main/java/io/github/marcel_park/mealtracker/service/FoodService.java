@@ -85,9 +85,9 @@ public class FoodService {
 
     @Transactional(readOnly = true)
     public List<FoodResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly) {
-        CatalogSearch search = CatalogSearch.of(query, scope, confirmedOnly);
+        CatalogSearch search = CatalogSearch.of(query, scope);
         List<Food> foods = foodRepository.search(userId, search.namePattern(), search.eanCode(),
-                search.ownOnly(), search.publicOnly(), search.confirmedOnly());
+                search.ownOnly(), search.publicOnly(), confirmedOnly);
         Set<Long> usedIds = findUsedIds(foods.stream().map(Food::getId).toList());
         return foods.stream()
                 .map(food -> FoodResponse.from(food, userId, usedIds.contains(food.getId())))

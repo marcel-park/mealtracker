@@ -9,21 +9,20 @@ import java.util.List;
 
 public interface RecipeRepository extends JpaRepository<Recipe, Long> {
 
-    // Same filters as FoodRepository.search. A recipe always has an owner.
+    // Same scope filters as FoodRepository.search. A recipe always has an owner, and there are no
+    // confirmed recipes.
     @Query("""
             select r from Recipe r
             where (r.published = true or r.owner.id = :userId)
               and (:ownOnly = false or r.owner.id = :userId)
               and (:publicOnly = false or r.published = true)
-              and (:confirmedOnly = false or r.confirmed = true)
               and lower(r.name) like :namePattern escape '!'
             order by lower(r.name), r.id
             """)
     List<Recipe> search(@Param("userId") Long userId,
                         @Param("namePattern") String namePattern,
                         @Param("ownOnly") boolean ownOnly,
-                        @Param("publicOnly") boolean publicOnly,
-                        @Param("confirmedOnly") boolean confirmedOnly);
+                        @Param("publicOnly") boolean publicOnly);
 
     // The owner's public recipes that contain the food. They become private together with it.
     @Query("""
