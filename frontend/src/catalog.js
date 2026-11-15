@@ -57,20 +57,27 @@ export function recentScopeAvailable(kind) {
   return kind === KIND_FOODS
 }
 
+// The filter a kind starts with when it is chosen: "Alle" for foods, "Eigene" for recipes and user
+// items (the user's own recipes are the ones mostly looked for).
+const DEFAULT_SCOPES = {
+  [KIND_FOODS]: null,
+  [KIND_RECIPES]: SCOPE_OWN,
+  [KIND_USER_ITEMS]: USER_ITEM_DEFAULT_SCOPE,
+}
+
+export function defaultScope(kind) {
+  return DEFAULT_SCOPES[kind] ?? null
+}
+
 // The search after choosing another scope or kind, "Nur bestätigte" switched off if it no longer
-// applies. Switching to recipes while "Zuletzt" is chosen goes back to "Alle". Switching to user
-// items starts with "Eigene"; leaving them goes back to "Alle", like a new search of foods.
+// applies. Choosing another kind always starts with its default filter (see defaultScope): recipes
+// and user items with "Eigene", foods with "Alle". Choosing the kind shown already changes nothing.
 export function withScope(search, scope) {
   return withConfirmedFilterFitting({ ...search, scope })
 }
 
 export function withKind(search, kind) {
-  let { scope } = search
-  if (kind === KIND_USER_ITEMS) {
-    if (search.kind !== KIND_USER_ITEMS || !scopeAvailable(kind, scope)) scope = USER_ITEM_DEFAULT_SCOPE
-  } else if (search.kind === KIND_USER_ITEMS || !scopeAvailable(kind, scope)) {
-    scope = null
-  }
+  const scope = kind === search.kind && scopeAvailable(kind, search.scope) ? search.scope : defaultScope(kind)
   return withConfirmedFilterFitting({ ...search, kind, scope })
 }
 
@@ -85,10 +92,11 @@ export function canCreateUserItem(search, { entries, loaded }) {
   return !entries.some((entry) => entry.name.trim().toLocaleLowerCase() === lower)
 }
 
-// Nothing is searched before the first letter: the whole database is no useful list. "Zuletzt" is
-// short and shows its foods right away, and so are the user's items, which typing filters.
+// Foods are only searched from the first letter: the whole food database is no useful list.
+// "Zuletzt" is short and shows its foods right away. Recipes and user items are listed right away
+// with every filter (sorted by name, a page at a time); typing narrows them down.
 export function isIdleSearch({ query, scope, kind }) {
-  return query.trim() === '' && scope !== SCOPE_RECENT && kind !== KIND_USER_ITEMS
+  return kind === KIND_FOODS && query.trim() === '' && scope !== SCOPE_RECENT
 }
 
 // The entries with the next page appended. An entry can come twice when something was added or

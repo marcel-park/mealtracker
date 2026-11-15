@@ -53,6 +53,17 @@ export function mealTotals(entries) {
   }
 }
 
+// { carbs, protein, fat } in grams in `amount` of a food (in its unit; 100: the values per 100 g
+// or ml). A value the food lacks comes out as NaN, shown as "–" (see MacroValues).
+export function macrosOf(food, amount) {
+  return Object.fromEntries(MACROS.map(({ key }) => [key, (amount * food[key]) / 100]))
+}
+
+// { carbs, protein, fat } times factor, e.g. a recipe's totals divided by its portions.
+export function scaleMacros(macros, factor) {
+  return Object.fromEntries(MACROS.map(({ key }) => [key, macros[key] * factor]))
+}
+
 // What is left of the calorie target. Negative: that much too much.
 export function remainingKcal(calorieTarget, meals) {
   return calorieTarget - meals.reduce((sum, meal) => sum + meal.kcal, 0)

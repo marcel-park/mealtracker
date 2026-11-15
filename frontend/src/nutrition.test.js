@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { bookedMacros, macroTargetGrams, macroTargets, mealTotals, remainingKcal } from './nutrition.js'
+import {
+  bookedMacros,
+  macroTargetGrams,
+  macroTargets,
+  macrosOf,
+  mealTotals,
+  remainingKcal,
+  scaleMacros,
+} from './nutrition.js'
 
 const user = { calorieTarget: 2000, carbsPercent: 40, proteinPercent: 30, fatPercent: 30 }
 
@@ -57,5 +65,24 @@ describe('mealTotals', () => {
 
   it('is all 0 without entries', () => {
     expect(mealTotals([])).toEqual({ kcal: 0, carbs: 0, protein: 0, fat: 0 })
+  })
+})
+
+describe('macrosOf', () => {
+  const oats = { kcalPer100: 372, carbs: 58.7, protein: 13.5, fat: 7 }
+
+  it('gives the grams in an amount of a food', () => {
+    expect(macrosOf(oats, 100)).toEqual({ carbs: 58.7, protein: 13.5, fat: 7 })
+    expect(macrosOf(oats, 50)).toEqual({ carbs: 29.35, protein: 6.75, fat: 3.5 })
+  })
+
+  it('gives NaN for values the food lacks', () => {
+    expect(macrosOf({ kcalPer100: 100 }, 100).carbs).toBeNaN()
+  })
+})
+
+describe('scaleMacros', () => {
+  it('multiplies every value, e.g. a recipe per portion', () => {
+    expect(scaleMacros({ carbs: 120, protein: 40, fat: 20 }, 1 / 4)).toEqual({ carbs: 30, protein: 10, fat: 5 })
   })
 })
