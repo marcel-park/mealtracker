@@ -17,8 +17,10 @@ public class CorsConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        // Origin of the Capacitor app on Android (androidScheme "http"), plus https for safety
-        config.setAllowedOrigins(List.of("http://localhost", "https://localhost"));
+        // Origins of the Capacitor app: Android (androidScheme "http", plus https for safety) and
+        // iOS, whose web view always runs on capacitor://localhost (http and https are not allowed
+        // as iosScheme)
+        config.setAllowedOrigins(List.of("http://localhost", "https://localhost", "capacitor://localhost"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE));
 
