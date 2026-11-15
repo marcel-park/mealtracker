@@ -1,0 +1,60 @@
+name: iOS build
+
+# Builds the iOS app on a macOS runner (Xcode only exists on macOS) and uploads an unsigned .ipa.
+# It is signed and installed from Linux with Impactor and a free Apple ID, see frontend/IOS.md.
+# Started by hand (Actions > iOS build > Run workflow): macOS minutes count ten times for private
+# repositories.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26 # Capacitor 8 needs Xcode 26
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      # Optional repository variable (Settings > Secrets and variables > Actions > Variables):
+      # the server address suggested on the login page, as in .env.example.
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+
+      - run: npx cap sync ios
+
+      - run: xcodebuild -version
+
+      - name: Build the app without signing
+        run: >
+          xcodebuild build
+          -project ios/App/App.xcodeproj
+          -scheme App
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -derivedDataPath ios/build
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+
+      # An .ipa is a zip with the app in a Payload folder.
+      - name: Package the .ipa
+        run: |
+          mkdir -p ipa/Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/App.app ipa/Payload/
+          cd ipa && zip -qry ../Mealtracker-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mealtracker-ios
+          path: frontend/Mealtracker-unsigned.ipa
+          retention-days: 14
