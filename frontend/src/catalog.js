@@ -11,21 +11,24 @@ export const SCOPE_PUBLIC = 'PUBLIC'
 export const SCOPE_OWN = 'OWN'
 export const SCOPE_FRIENDS = 'FRIENDS'
 
-// "Nur bestätigte" follows the scope: on for everything and for public entries, where the
-// confirmed ones (values from an official source) are what one looks for; off for the user's own
-// entries and those of friends, which are rarely confirmed. It can still be switched by hand.
-export function confirmedByDefault(scope) {
-  return scope === null || scope === SCOPE_PUBLIC
+// "Nur bestätigte" (values from an official source) is off when a search starts and is switched on
+// by hand. Only foods can be confirmed, there are no confirmed recipes. For the user's own entries
+// and those of friends the filter makes no sense either. Where it does not apply it cannot be
+// switched on and is switched off, also when the search goes back to foods or to everything.
+export function confirmedFilterAvailable({ kind, scope }) {
+  return kind === KIND_FOODS && (scope === null || scope === SCOPE_PUBLIC)
 }
 
-// The search after choosing another scope, with "Nur bestätigte" set to fit it.
+function withConfirmedFilterFitting(search) {
+  return confirmedFilterAvailable(search) ? search : { ...search, confirmedOnly: false }
+}
+
+// The search after choosing another scope or kind, "Nur bestätigte" switched off if it no longer
+// applies.
 export function withScope(search, scope) {
-  return { ...search, scope, confirmedOnly: confirmedByDefault(scope) }
+  return withConfirmedFilterFitting({ ...search, scope })
 }
 
-// Only foods can be confirmed so far, recipes not. For recipes "Nur bestätigte" is therefore greyed
-// out and not sent with the search. The choice is kept and applies again once the search switches
-// back to foods.
-export function confirmedFilterApplies(kind) {
-  return kind === KIND_FOODS
+export function withKind(search, kind) {
+  return withConfirmedFilterFitting({ ...search, kind })
 }

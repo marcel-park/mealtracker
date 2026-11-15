@@ -503,7 +503,7 @@ select:focus-visible {
   height: var(--filter-height);
 }
 
-/* square on/off button ("only confirmed"), filled while on */
+/* square on/off button ("only confirmed") */
 .toggle-btn {
   flex: none;
   display: inline-flex;
@@ -518,10 +518,9 @@ select:focus-visible {
   color: var(--ink);
 }
 
-.toggle-btn[aria-pressed='true'] {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--bg);
+/* off: the symbol muted like the detail lines of the search results; on: the symbol in ink */
+.toggle-btn[aria-pressed='false'] {
+  color: var(--muted);
 }
 
 /* the filter and kind selects share the rest of the row */
