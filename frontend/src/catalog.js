@@ -9,10 +9,11 @@ export const KIND_RECIPES = 'recipes'
 export const KIND_USER_ITEMS = 'userItems'
 
 // Whose entries a search shows, as the backend names them. null (the "Alle" choice) means
-// everything the user may see. RECENT ("Zuletzt"): the foods the user booked last (at most 30, see
-// FoodService.RECENT_COUNT in the backend); recipes are not recorded as booked, so it is for foods
-// only. "Zuletzt" is a list, not a search: it is the default for foods, and typing (or scanning an
-// EAN) switches to "Alle", see withQuery.
+// everything the user may see. RECENT ("Zuletzt"): the foods the user used last, i.e. booked or
+// added to a recipe, a task or the shopping list (at most 50, see FoodService.RECENT_COUNT and
+// RecentFoodService in the backend); recipes are not recorded as used, so it is for foods only.
+// "Zuletzt" is a list, not a search: it is the default for foods, and typing (or scanning an EAN)
+// switches to "Alle", see withQuery.
 export const SCOPE_PUBLIC = 'PUBLIC'
 export const SCOPE_OWN = 'OWN'
 export const SCOPE_FRIENDS = 'FRIENDS'
@@ -42,7 +43,7 @@ export function scopeAvailable(kind, scope) {
 }
 
 // The search the food searches open with (booking, adding foods to a recipe or task, food
-// database): the foods booked last, see SCOPE_RECENT.
+// database): the foods used last, see SCOPE_RECENT.
 export const NEW_SEARCH = { query: '', scope: SCOPE_RECENT, confirmedOnly: false, kind: KIND_FOODS }
 
 // The search the shopping list opens with: user items, own ones.
