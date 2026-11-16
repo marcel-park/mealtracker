@@ -49,13 +49,16 @@ public class RecipeService {
     private final RecipeVariationRepository variationRepository;
     private final FoodService foodService;
     private final UserRepository userRepository;
+    private final RecentFoodService recentFoodService;
 
     public RecipeService(RecipeRepository recipeRepository, RecipeVariationRepository variationRepository,
-                         FoodService foodService, UserRepository userRepository) {
+                         FoodService foodService, UserRepository userRepository,
+                         RecentFoodService recentFoodService) {
         this.recipeRepository = recipeRepository;
         this.variationRepository = variationRepository;
         this.foodService = foodService;
         this.userRepository = userRepository;
+        this.recentFoodService = recentFoodService;
     }
 
     // One page of the results, see CatalogSearch.page. RECENT: none, see CatalogScope.
@@ -83,11 +86,13 @@ public class RecipeService {
         Recipe recipe = new Recipe();
         recipe.setOwner(userRepository.getReferenceById(userId));
         applyFields(request, recipe);
-        RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
-                .values()
-                .forEach(requested -> recipe.addItem(requested.food(), requested.quantity()));
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> foodService.getVisibleEntity(userId, foodId));
+        requested.values().forEach(wanted -> recipe.addItem(wanted.food(), wanted.quantity()));
         publishFoodsIfPublic(userId, recipe);
-        return toResponse(recipeRepository.save(recipe), userId);
+        RecipeResponse response = toResponse(recipeRepository.save(recipe), userId);
+        recentFoodService.record(userId, requested.keySet());
+        return response;
     }
 
     // Variations keep their own amounts; ingredients they do not change follow the new original.
@@ -117,6 +122,7 @@ public class RecipeService {
         });
 
         publishFoodsIfPublic(userId, recipe);
+        recentFoodService.recordAdded(userId, requested.keySet(), keptItems.keySet());
         return toResponse(recipe, userId);
     }
 
@@ -237,6 +243,10 @@ public class RecipeService {
                 variation.addItem(wanted.food(), wanted.quantity());
             }
         });
+        // Foods the variation adds to the recipe; changed amounts of its ingredients do not count.
+        recentFoodService.recordAdded(userId,
+                changed.keySet().stream().filter(foodId -> !originalQuantities.containsKey(foodId)).toList(),
+                keptItems.keySet());
     }
 
     private void publishFoodsIfPublic(Long userId, Recipe recipe) {

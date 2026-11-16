@@ -35,14 +35,17 @@ public class MealService {
     private final UserRepository userRepository;
     private final RecipeService recipeService;
     private final TaskCompletionRepository completionRepository;
+    private final RecentFoodService recentFoodService;
 
     public MealService(MealRepository mealRepository, FoodService foodService, UserRepository userRepository,
-                       RecipeService recipeService, TaskCompletionRepository completionRepository) {
+                       RecipeService recipeService, TaskCompletionRepository completionRepository,
+                       RecentFoodService recentFoodService) {
         this.mealRepository = mealRepository;
         this.foodService = foodService;
         this.userRepository = userRepository;
         this.recipeService = recipeService;
         this.completionRepository = completionRepository;
+        this.recentFoodService = recentFoodService;
     }
 
     // Items and their foods are loaded lazily, so toResponse() has to run inside a transaction.
@@ -67,11 +70,12 @@ public class MealService {
         // A reference is enough to set the foreign key; it does not load the user.
         meal.setUser(userRepository.getReferenceById(userId));
         meal.setTitle(request.title());
-        RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
-                .values()
-                .forEach(requested -> meal.addItem(requested.food(), requested.quantity()));
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> foodService.getVisibleEntity(userId, foodId));
+        requested.values().forEach(wanted -> meal.addItem(wanted.food(), wanted.quantity()));
         MealResponse response = toResponse(mealRepository.save(meal), userId, null);
         recipeService.markUsed(userId, request.recipes());
+        recentFoodService.record(userId, requested.keySet());
         return response;
     }
 
@@ -106,6 +110,7 @@ public class MealService {
         });
 
         recipeService.markUsed(userId, request.recipes());
+        recentFoodService.recordAdded(userId, requested.keySet(), keptItems.keySet());
 
         // No save() needed: the meal was loaded in this transaction, so Hibernate writes all
         // changes, including added and removed items, on commit.

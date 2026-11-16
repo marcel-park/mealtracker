@@ -35,6 +35,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -64,6 +65,9 @@ class MealServiceTest {
     @Mock
     private TaskCompletionRepository completionRepository;
 
+    @Mock
+    private RecentFoodService recentFoodService;
+
     private MealService service;
 
     // The logged-in user on whose behalf every call is made.
@@ -76,7 +80,8 @@ class MealServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MealService(mealRepository, foodService, userRepository, recipeService, completionRepository);
+        service = new MealService(mealRepository, foodService, userRepository, recipeService, completionRepository,
+                recentFoodService);
     }
 
     // ---------- test data ----------
@@ -327,6 +332,17 @@ class MealServiceTest {
         }
 
         @Test
+        void create_countsAllItsFoodsAsUsed() {
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
+            when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(milk);
+            when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(USER_ID, request("Haferflocken, Milch", item(1L, 150), item(2L, 200)));
+
+            verify(recentFoodService).record(USER_ID, Set.of(1L, 2L));
+        }
+
+        @Test
         void create_passesBookedRecipesOnForThePreselection() {
             when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(oats);
             when(mealRepository.save(any(Meal.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -484,6 +500,17 @@ class MealServiceTest {
             assertThat(existing.getItems())
                     .extracting(MealItem::getFood, MealItem::getAmount)
                     .containsExactly(tuple(oats, 150.0), tuple(milk, 200.0), tuple(apple, 120.0));
+        }
+
+        @Test
+        void update_countsOnlyTheAddedFoodsAsUsed() {
+            when(mealRepository.findByIdAndUserId(1L, USER_ID)).thenReturn(Optional.of(existing));
+            when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(apple);
+
+            service.update(USER_ID, 1L, request("Apfel, Haferflocken", item(3L, 120), item(1L, 150)));
+
+            // what is in the meal now, and what was in it before
+            verify(recentFoodService).recordAdded(USER_ID, Set.of(3L, 1L), Set.of(1L, 2L));
         }
 
         @Test

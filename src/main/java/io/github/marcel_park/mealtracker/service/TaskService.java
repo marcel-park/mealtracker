@@ -28,13 +28,16 @@ public class TaskService {
     private final TaskCompletionRepository completionRepository;
     private final FoodService foodService;
     private final UserRepository userRepository;
+    private final RecentFoodService recentFoodService;
 
     public TaskService(TaskRepository taskRepository, TaskCompletionRepository completionRepository,
-                       FoodService foodService, UserRepository userRepository) {
+                       FoodService foodService, UserRepository userRepository,
+                       RecentFoodService recentFoodService) {
         this.taskRepository = taskRepository;
         this.completionRepository = completionRepository;
         this.foodService = foodService;
         this.userRepository = userRepository;
+        this.recentFoodService = recentFoodService;
     }
 
     // In the order they were created.
@@ -51,10 +54,12 @@ public class TaskService {
         task.setUser(userRepository.getReferenceById(userId));
         task.setName(request.name().trim());
         task.setWeekdays(request.weekdays());
-        RequestedQuantities.byFoodId(request.items(), foodId -> foodService.getVisibleEntity(userId, foodId))
-                .values()
-                .forEach(requested -> task.addItem(requested.food(), requested.quantity()));
-        return TaskResponse.from(taskRepository.save(task), userId);
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> foodService.getVisibleEntity(userId, foodId));
+        requested.values().forEach(wanted -> task.addItem(wanted.food(), wanted.quantity()));
+        TaskResponse response = TaskResponse.from(taskRepository.save(task), userId);
+        recentFoodService.record(userId, requested.keySet());
+        return response;
     }
 
     // The items are updated in place, like those of a meal (see MealService.update): task_item's
@@ -81,6 +86,7 @@ public class TaskService {
                 task.addItem(wanted.food(), wanted.quantity());
             }
         });
+        recentFoodService.recordAdded(userId, requested.keySet(), keptItems.keySet());
         return TaskResponse.from(task, userId);
     }
 

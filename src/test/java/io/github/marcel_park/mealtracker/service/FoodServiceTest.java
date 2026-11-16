@@ -24,6 +24,7 @@ import io.github.marcel_park.mealtracker.model.TaskItem;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
 import io.github.marcel_park.mealtracker.repository.MealItemRepository;
+import io.github.marcel_park.mealtracker.repository.RecentFoodRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
@@ -86,6 +87,9 @@ class FoodServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private RecentFoodRepository recentFoodRepository;
+
     private FoodService service;
 
     // The logged-in user on whose behalf every call is made, and somebody else.
@@ -97,7 +101,7 @@ class FoodServiceTest {
     void setUp() {
         service = new FoodService(repository, mealItemRepository, recipeItemRepository,
                 variationItemRepository, shoppingListItemRepository, taskItemRepository, recipeRepository,
-                userRepository);
+                userRepository, recentFoodRepository);
     }
 
     // ---------- test data ----------
@@ -248,10 +252,10 @@ class FoodServiceTest {
         }
 
         @Test
-        void recent_returnsTheRecentlyBookedFoodsMostRecentFirst_filteredLikeAnySearch() {
+        void recent_returnsTheRecentlyUsedFoodsMostRecentFirst_filteredLikeAnySearch() {
             Food milk = food(1L, "Milch", null, true);
             Food oats = food(2L, "Haferflocken", me, false);
-            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+            when(recentFoodRepository.findFoodIdsMostRecentFirst(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
                     .thenReturn(List.of(2L, 9L, 1L));
             // 9 no longer matches (e.g. by its name): left out
             when(repository.searchAmong(USER_ID, List.of(2L, 9L, 1L), List.of(), null, false))
@@ -265,7 +269,7 @@ class FoodServiceTest {
 
         @Test
         void recent_isPagedLikeAnySearch() {
-            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+            when(recentFoodRepository.findFoodIdsMostRecentFirst(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
                     .thenReturn(List.of(1L, 2L, 3L));
             when(repository.searchAmong(USER_ID, List.of(1L, 2L, 3L), List.of(), null, false)).thenReturn(List.of(
                     food(1L, "A", me, false), food(2L, "B", me, false), food(3L, "C", me, false)));
@@ -275,8 +279,8 @@ class FoodServiceTest {
         }
 
         @Test
-        void recent_withoutBookings_isEmpty() {
-            when(mealItemRepository.findRecentlyBookedFoodIds(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
+        void recent_withoutUsedFoods_isEmpty() {
+            when(recentFoodRepository.findFoodIdsMostRecentFirst(USER_ID, PageRequest.of(0, FoodService.RECENT_COUNT)))
                     .thenReturn(List.of());
 
             assertThat(service.find(USER_ID, "milch", CatalogScope.RECENT, false, 0, 50)).isEmpty();

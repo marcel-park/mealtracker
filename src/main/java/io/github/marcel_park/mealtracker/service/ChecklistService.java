@@ -34,13 +34,16 @@ public class ChecklistService {
     private final TaskCompletionRepository completionRepository;
     private final MealRepository mealRepository;
     private final TaskService taskService;
+    private final RecentFoodService recentFoodService;
 
     public ChecklistService(TaskRepository taskRepository, TaskCompletionRepository completionRepository,
-                            MealRepository mealRepository, TaskService taskService) {
+                            MealRepository mealRepository, TaskService taskService,
+                            RecentFoodService recentFoodService) {
         this.taskRepository = taskRepository;
         this.completionRepository = completionRepository;
         this.mealRepository = mealRepository;
         this.taskService = taskService;
+        this.recentFoodService = recentFoodService;
     }
 
     // Open tasks first, then the ticked off ones, each in the order the tasks were created.
@@ -64,7 +67,7 @@ public class ChecklistService {
             if (!task.isDueOn(day.getDayOfWeek())) {
                 throw new InvalidRequestException("Task with id " + taskId + " is not due on " + day);
             }
-            completionRepository.save(new TaskCompletion(task, day, bookMeal(task)));
+            completionRepository.save(new TaskCompletion(task, day, bookMeal(userId, task)));
         }
         return get(userId, day);
     }
@@ -86,8 +89,8 @@ public class ChecklistService {
     }
 
     // null for a task without foods. The meal gets copies of the task's quantities, so changing
-    // the task later does not change it.
-    private Meal bookMeal(Task task) {
+    // the task later does not change it. Its foods count as used (see RecentFoodService).
+    private Meal bookMeal(Long userId, Task task) {
         if (task.getItems().isEmpty()) {
             return null;
         }
@@ -97,7 +100,9 @@ public class ChecklistService {
         for (TaskItem item : task.getItems()) {
             meal.addItem(item.getFood(), item.getQuantity().copy());
         }
-        return mealRepository.save(meal);
+        Meal saved = mealRepository.save(meal);
+        recentFoodService.record(userId, task.getItems().stream().map(item -> item.getFood().getId()).toList());
+        return saved;
     }
 
     private static ChecklistEntryResponse entry(Task task, TaskCompletion completion, Long userId) {

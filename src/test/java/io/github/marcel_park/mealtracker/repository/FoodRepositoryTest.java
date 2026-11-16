@@ -5,6 +5,8 @@ import io.github.marcel_park.mealtracker.model.FoodPortion;
 import io.github.marcel_park.mealtracker.model.FoodUnit;
 import io.github.marcel_park.mealtracker.model.Meal;
 import io.github.marcel_park.mealtracker.model.Nutrient;
+import io.github.marcel_park.mealtracker.model.RecentFood;
+import io.github.marcel_park.mealtracker.model.RecentFoodId;
 import io.github.marcel_park.mealtracker.model.Recipe;
 import io.github.marcel_park.mealtracker.model.User;
 import jakarta.persistence.EntityManager;
@@ -44,6 +46,9 @@ class FoodRepositoryTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private RecentFoodRepository recentFoodRepository;
 
     @Autowired
     private EntityManager entityManager;
@@ -205,34 +210,42 @@ class FoodRepositoryTest {
                 .containsExactly("E");
     }
 
-    // ---------- recently booked foods (scope RECENT) ----------
+    // ---------- recently used foods (scope RECENT, see RecentFoodService) ----------
 
-    private void book(User user, LocalDateTime bookedAt, Food... foods) {
-        Meal meal = new Meal();
-        meal.setUser(user);
-        meal.setTitle("Mahlzeit");
-        meal.setBookedAt(bookedAt);
-        for (Food food : foods) meal.addItem(food, 100);
-        mealRepository.save(meal);
+    private void used(User user, Food food, LocalDateTime usedAt) {
+        recentFoodRepository.save(new RecentFood(new RecentFoodId(user.getId(), food.getId()), usedAt));
     }
 
     @Test
-    void recentlyBookedFoodIds_mostRecentFirst_eachOnce_onlyOfTheUser_limited() {
+    void recentFoodIds_mostRecentFirst_onlyOfTheUser_limited() {
         Food oats = save("Haferflocken", alice, false);
         Food milk = save("Milch", null, true);
         Food apple = save("Apfel", null, true);
         Food bread = save("Brot", null, true);
         LocalDateTime monday = LocalDateTime.of(2026, 11, 9, 8, 0);
-        book(alice, monday, oats, milk);
-        book(alice, monday.plusDays(1), apple);
-        book(alice, monday.plusDays(2), milk);
-        book(bob, monday.plusDays(3), bread);
-        repository.flush();
+        used(alice, oats, monday);
+        used(alice, milk, monday.plusDays(2));
+        used(alice, apple, monday.plusDays(1));
+        used(bob, bread, monday.plusDays(3));
+        recentFoodRepository.flush();
 
-        assertThat(mealItemRepository.findRecentlyBookedFoodIds(alice.getId(), PageRequest.of(0, 30)))
+        assertThat(recentFoodRepository.findFoodIdsMostRecentFirst(alice.getId(), PageRequest.of(0, 50)))
                 .containsExactly(milk.getId(), apple.getId(), oats.getId());
-        assertThat(mealItemRepository.findRecentlyBookedFoodIds(alice.getId(), PageRequest.of(0, 2)))
+        assertThat(recentFoodRepository.findFoodIdsMostRecentFirst(alice.getId(), PageRequest.of(0, 2)))
                 .containsExactly(milk.getId(), apple.getId());
+    }
+
+    @Test
+    void recentFoodIds_usedAtTheSameTime_byFoodId() {
+        Food milk = save("Milch", null, true);
+        Food oats = save("Haferflocken", alice, false);
+        LocalDateTime now = LocalDateTime.of(2026, 11, 9, 8, 0);
+        used(alice, oats, now);
+        used(alice, milk, now);
+        recentFoodRepository.flush();
+
+        assertThat(recentFoodRepository.findFoodIdsMostRecentFirst(alice.getId(), PageRequest.of(0, 50)))
+                .containsExactly(milk.getId(), oats.getId());
     }
 
     @Test
