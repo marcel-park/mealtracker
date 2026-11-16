@@ -226,7 +226,7 @@ const SHOPPING_KINDS = [...CATALOG_KINDS, { value: KIND_USER_ITEMS, label: 'Benu
 const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes, [KIND_USER_ITEMS]: API.userItems }
 
 // Whose entries the search shows. "Alle": everything the user may see (own entries, private
-// ones included, and all public ones). "Zuletzt": the foods booked last, for foods only and their
+// ones included, and all public ones). "Zuletzt": the foods used last, for foods only and their
 // default; typing switches it to "Alle" (see withQuery in catalog.js). Values as
 // the backend expects them ('' = no scope). "Nur bestätigte" is a separate toggle for some of
 // these (see catalog.js). soon: does not work yet, marked "bald".
@@ -643,14 +643,14 @@ function LoadMoreSentinel({ active, count, onVisible }) {
 }
 
 // What a search view shows instead of rows: a hint before the first letter, nothing while the
-// first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt", that
+// first results load, otherwise notFound (or that nothing was used yet, for "Zuletzt", that
 // there are no own foods / foods of friends or no recipes yet, or how to create the first user
 // item).
 function CatalogEmpty({ catalog, search, notFound }) {
   if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
   if (!catalog.loaded) return null
   if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
-    return <p className="empty">Du hast noch keine Lebensmittel gebucht. Tippe, um alle Lebensmittel zu durchsuchen.</p>
+    return <p className="empty">Du hast noch keine Lebensmittel verwendet. Tippe, um alle Lebensmittel zu durchsuchen.</p>
   }
   if (search.kind === KIND_FOODS && search.query.trim() === '') {
     return (
