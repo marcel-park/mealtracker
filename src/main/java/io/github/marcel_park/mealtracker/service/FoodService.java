@@ -14,6 +14,7 @@ import io.github.marcel_park.mealtracker.model.Quantity;
 import io.github.marcel_park.mealtracker.model.User;
 import io.github.marcel_park.mealtracker.repository.FoodRepository;
 import io.github.marcel_park.mealtracker.repository.MealItemRepository;
+import io.github.marcel_park.mealtracker.repository.RecentFoodRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeItemRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeRepository;
 import io.github.marcel_park.mealtracker.repository.RecipeVariationItemRepository;
@@ -69,13 +70,15 @@ public class FoodService {
     private final TaskItemRepository taskItemRepository;
     private final RecipeRepository recipeRepository;
     private final UserRepository userRepository;
+    private final RecentFoodRepository recentFoodRepository;
 
     public FoodService(FoodRepository foodRepository, MealItemRepository mealItemRepository,
                        RecipeItemRepository recipeItemRepository,
                        RecipeVariationItemRepository variationItemRepository,
                        ShoppingListItemRepository shoppingListItemRepository,
                        TaskItemRepository taskItemRepository,
-                       RecipeRepository recipeRepository, UserRepository userRepository) {
+                       RecipeRepository recipeRepository, UserRepository userRepository,
+                       RecentFoodRepository recentFoodRepository) {
         this.foodRepository = foodRepository;
         this.mealItemRepository = mealItemRepository;
         this.recipeItemRepository = recipeItemRepository;
@@ -84,14 +87,15 @@ public class FoodService {
         this.taskItemRepository = taskItemRepository;
         this.recipeRepository = recipeRepository;
         this.userRepository = userRepository;
+        this.recentFoodRepository = recentFoodRepository;
     }
 
     // How many foods the search with scope RECENT offers at most.
-    static final int RECENT_COUNT = 30;
+    static final int RECENT_COUNT = 50;
 
     // One page of the search results (see CatalogSearch.page), without the nutrients, see
-    // FoodSummaryResponse. RECENT: the RECENT_COUNT foods the user booked last, most recent first,
-    // narrowed down by the text and "confirmed only" like any search.
+    // FoodSummaryResponse. RECENT: the RECENT_COUNT foods the user used last (see RecentFoodService),
+    // most recent first, narrowed down by the text and "confirmed only" like any search.
     @Transactional(readOnly = true)
     public List<FoodSummaryResponse> find(Long userId, String query, CatalogScope scope, boolean confirmedOnly,
                                           int page, int size) {
@@ -105,7 +109,7 @@ public class FoodService {
     }
 
     private List<Food> findRecent(Long userId, CatalogSearch search, boolean confirmedOnly, Pageable pageable) {
-        List<Long> recentIds = mealItemRepository.findRecentlyBookedFoodIds(userId, PageRequest.of(0, RECENT_COUNT));
+        List<Long> recentIds = recentFoodRepository.findFoodIdsMostRecentFirst(userId, PageRequest.of(0, RECENT_COUNT));
         if (recentIds.isEmpty()) {
             return List.of(); // "in ()" is no valid SQL
         }

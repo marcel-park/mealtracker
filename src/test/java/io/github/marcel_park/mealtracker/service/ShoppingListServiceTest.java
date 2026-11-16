@@ -29,6 +29,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -55,6 +56,9 @@ class ShoppingListServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private RecentFoodService recentFoodService;
+
     private ShoppingListService service;
 
     private static final Long USER_ID = 7L;
@@ -67,7 +71,7 @@ class ShoppingListServiceTest {
     void setUp() {
         me.setId(USER_ID);
         service = new ShoppingListService(itemRepository, foodService, recipeService, userItemService,
-                userRepository);
+                userRepository, recentFoodService);
     }
 
     // ---------- test data ----------
@@ -148,6 +152,19 @@ class ShoppingListServiceTest {
             assertThat(eggs.getQuantity().getPortionCount()).isEqualByComparingTo("5");
             assertThat(eggs.isChecked()).isTrue();
             verify(itemRepository, never()).save(any());
+        }
+
+        @Test
+        void countsTheFoodsAsUsed_alsoThoseOnTheListAlready() {
+            ShoppingListItem eggs = item(5L, egg, Quantity.ofPortions(piece, new BigDecimal("3")), false, 0);
+            when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(egg);
+            when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(milk);
+            when(itemRepository.findByUserIdAndFoodId(USER_ID, 1L)).thenReturn(Optional.of(eggs));
+            when(itemRepository.findByUserIdAndFoodId(USER_ID, 2L)).thenReturn(Optional.empty());
+
+            service.add(USER_ID, new ShoppingListAddRequest(List.of(grams(1L, 60), grams(2L, 500)), null));
+
+            verify(recentFoodService).record(USER_ID, Set.of(1L, 2L));
         }
 
         @Test

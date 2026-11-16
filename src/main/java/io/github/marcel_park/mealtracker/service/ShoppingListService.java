@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 // Rules for the shopping list (one per user):
 // - Every method takes the id of the logged-in user and only touches that user's list. An item
@@ -39,15 +40,17 @@ public class ShoppingListService {
     private final RecipeService recipeService;
     private final UserItemService userItemService;
     private final UserRepository userRepository;
+    private final RecentFoodService recentFoodService;
 
     public ShoppingListService(ShoppingListItemRepository itemRepository, FoodService foodService,
                                RecipeService recipeService, UserItemService userItemService,
-                               UserRepository userRepository) {
+                               UserRepository userRepository, RecentFoodService recentFoodService) {
         this.itemRepository = itemRepository;
         this.foodService = foodService;
         this.recipeService = recipeService;
         this.userItemService = userItemService;
         this.userRepository = userRepository;
+        this.recentFoodService = recentFoodService;
     }
 
     // Foods and portions are loaded lazily, so the response has to be built inside a transaction.
@@ -60,8 +63,9 @@ public class ShoppingListService {
     @Transactional
     public List<ShoppingListItemResponse> add(Long userId, ShoppingListAddRequest request) {
         int nextPosition = itemRepository.nextPosition(userId);
-        for (RequestedQuantities.Requested wanted : RequestedQuantities.byFoodId(request.items(),
-                foodId -> foodService.getVisibleEntity(userId, foodId)).values()) {
+        Map<Long, RequestedQuantities.Requested> requested = RequestedQuantities.byFoodId(request.items(),
+                foodId -> foodService.getVisibleEntity(userId, foodId));
+        for (RequestedQuantities.Requested wanted : requested.values()) {
             var existing = itemRepository.findByUserIdAndFoodId(userId, wanted.food().getId());
             if (existing.isPresent()) {
                 ShoppingListItem item = existing.get();
@@ -72,6 +76,7 @@ public class ShoppingListService {
             }
         }
         recipeService.markUsed(userId, request.recipes());
+        recentFoodService.record(userId, requested.keySet());
         return find(userId);
     }
 

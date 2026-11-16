@@ -110,6 +110,42 @@ class MealBookingIntegrationTest {
                 .andExpect(status().isNoContent());
     }
 
+    // "Zuletzt" against the real schema (Flyway V17): a food counts as used when it is booked or put
+    // on the shopping list, the most recently used first. A food used before can still be deleted
+    // once nothing holds it any more: its row in recent_food goes with it (ON DELETE CASCADE).
+    @Test
+    void recentFoods_bookedOrPutOnTheShoppingList_mostRecentFirst_andDeletedWithTheFood() throws Exception {
+        String token = register();
+        long oatsId = createFood(token, "Haferflocken (Zuletzt)", 372);
+        long milkId = createFood(token, "Milch (Zuletzt)", 64);
+
+        mockMvc.perform(as(token, post("/api/meals"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Frühstück","items":[{"foodId":%d,"amount":50}]}
+                                """.formatted(oatsId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(token, post("/api/shopping-list/items"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"foodId":%d,"amount":1000}]}
+                                """.formatted(milkId)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(token, get("/api/foods").param("scope", "RECENT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id").value(contains((int) milkId, (int) oatsId)));
+
+        mockMvc.perform(as(token, delete("/api/shopping-list")))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(as(token, delete("/api/foods/" + milkId)))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(as(token, get("/api/foods").param("scope", "RECENT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id").value(contains((int) oatsId)));
+    }
+
     // Portions against the real schema (Flyway V6): the unique name per food (case- and
     // accent-insensitive by collation), the flush order in FoodService.applyPortions, and the unit
     // change of a booked food.

@@ -52,6 +52,9 @@ class TaskServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private RecentFoodService recentFoodService;
+
     private TaskService service;
 
     private static final Long USER_ID = 7L;
@@ -61,7 +64,8 @@ class TaskServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TaskService(taskRepository, completionRepository, foodService, userRepository);
+        service = new TaskService(taskRepository, completionRepository, foodService, userRepository,
+                recentFoodService);
     }
 
     private static User user(Long id) {
@@ -107,6 +111,33 @@ class TaskServiceTest {
                 .extracting(item -> item.food().id(), item -> item.amount())
                 .containsExactly(tuple(1L, 40.0), tuple(2L, 200.0));
         assertThat(result.kcal()).isEqualTo(40 * 3.8 + 200 * 0.64);
+    }
+
+    @Test
+    void create_countsAllItsFoodsAsUsed() {
+        when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+        when(foodService.getVisibleEntity(USER_ID, 1L)).thenReturn(shake);
+        when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(milk);
+        when(taskRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.create(USER_ID, request("Proteinshake", EnumSet.of(MONDAY),
+                new TaskItemRequest(1L, 30), new TaskItemRequest(2L, 200)));
+
+        verify(recentFoodService).record(USER_ID, Set.of(1L, 2L));
+    }
+
+    @Test
+    void update_countsOnlyTheAddedFoodsAsUsed() {
+        Task existing = task(3L, "Shake", EnumSet.of(MONDAY));
+        existing.addItem(shake, Quantity.ofAmount(30));
+        when(taskRepository.findByIdAndUserId(3L, USER_ID)).thenReturn(Optional.of(existing));
+        when(foodService.getVisibleEntity(USER_ID, 2L)).thenReturn(milk);
+
+        service.update(USER_ID, 3L, request("Shake", EnumSet.of(MONDAY),
+                new TaskItemRequest(1L, 30), new TaskItemRequest(2L, 200)));
+
+        // what is in the task now, and what was in it before
+        verify(recentFoodService).recordAdded(USER_ID, Set.of(1L, 2L), Set.of(1L));
     }
 
     @Test

@@ -34,6 +34,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -60,6 +61,9 @@ class RecipeServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private RecentFoodService recentFoodService;
+
     private RecipeService service;
 
     private static final Long USER_ID = 7L;
@@ -72,7 +76,8 @@ class RecipeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new RecipeService(recipeRepository, variationRepository, foodService, userRepository);
+        service = new RecipeService(recipeRepository, variationRepository, foodService, userRepository,
+                recentFoodService);
     }
 
     // ---------- test data ----------
@@ -194,6 +199,17 @@ class RecipeServiceTest {
         }
 
         @Test
+        void countsAllItsFoodsAsUsed() {
+            when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
+            stubFoods();
+            when(recipeRepository.save(any(Recipe.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.create(USER_ID, request(false, item(2L, 300), item(1L, 400)));
+
+            verify(recentFoodService).record(USER_ID, Set.of(2L, 1L));
+        }
+
+        @Test
         void privateRecipe_leavesFoodsAlone() {
             when(userRepository.getReferenceById(USER_ID)).thenReturn(me);
             stubFoods();
@@ -252,6 +268,20 @@ class RecipeServiceTest {
             assertThat(result.amount()).isEqualTo(1300.0);
             // kept items need no lookup
             verify(foodService, never()).getVisibleEntity(USER_ID, 2L);
+        }
+
+        @Test
+        void countsOnlyTheAddedFoodsAsUsed() {
+            Recipe chili = recipe(1L, me, false);
+            chili.addItem(beans, 400);
+            chili.addItem(tomatoes, 500);
+            stubFind(chili);
+            when(foodService.getVisibleEntity(USER_ID, 3L)).thenReturn(mince);
+
+            service.update(USER_ID, 1L, new RecipeRequest("Chili", 4.0, false, List.of(item(2L, 800), item(3L, 500))));
+
+            // what is in the recipe now, and what was in it before
+            verify(recentFoodService).recordAdded(USER_ID, Set.of(2L, 3L), Set.of(1L, 2L));
         }
 
         @Test
@@ -379,6 +409,8 @@ class RecipeServiceTest {
                     .containsExactly(tuple(beans, 600.0), tuple(mince, 200.0));
             assertThat(result.id()).isEqualTo(9L);
             assertThat(result.items()).extracting(i -> i.food().id()).containsExactly(1L, 3L);
+            // only the food the variation adds to the recipe counts as used, not the changed beans
+            verify(recentFoodService).recordAdded(USER_ID, List.of(3L), Set.of());
         }
 
         @Test

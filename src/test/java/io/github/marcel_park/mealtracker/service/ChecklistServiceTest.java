@@ -56,6 +56,9 @@ class ChecklistServiceTest {
     @Mock
     private TaskService taskService;
 
+    @Mock
+    private RecentFoodService recentFoodService;
+
     private ChecklistService service;
 
     private static final Long USER_ID = 7L;
@@ -67,7 +70,8 @@ class ChecklistServiceTest {
     @BeforeEach
     void setUp() {
         me.setId(USER_ID);
-        service = new ChecklistService(taskRepository, completionRepository, mealRepository, taskService);
+        service = new ChecklistService(taskRepository, completionRepository, mealRepository, taskService,
+                recentFoodService);
     }
 
     private static Food food(Long id, String name, double kcalPer100) {
@@ -157,6 +161,7 @@ class ChecklistServiceTest {
         // A copy: changing the task later does not change the meal
         assertThat(meal.getItems().get(0).getQuantity()).isNotSameAs(shake.getItems().get(0).getQuantity());
         assertThat(completion.getValue().getDoneOn()).isEqualTo(DAY);
+        verify(recentFoodService).record(USER_ID, List.of(1L));
     }
 
     @Test
