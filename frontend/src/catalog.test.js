@@ -17,9 +17,11 @@ import {
   createCatalogCache,
   isIdleSearch,
   isLastPage,
+  NEW_SEARCH,
   recentScopeAvailable,
   scopeAvailable,
   withKind,
+  withQuery,
   withScope,
 } from './catalog.js'
 
@@ -60,6 +62,10 @@ describe('withScope', () => {
     expect(withScope(own, SCOPE_PUBLIC).confirmedOnly).toBe(false)
     expect(withScope(own, null).confirmedOnly).toBe(false)
   })
+
+  it('empties the text for "Zuletzt", so its list shows', () => {
+    expect(withScope(search, SCOPE_RECENT)).toEqual({ ...search, query: '', scope: SCOPE_RECENT, confirmedOnly: false })
+  })
 })
 
 describe('withKind', () => {
@@ -80,7 +86,17 @@ describe('withKind', () => {
     }
   })
 
-  it('goes back to "Alle" without "only confirmed" when switching from recipes to foods', () => {
+  it('goes to "Zuletzt" without "only confirmed" when switching from recipes to foods', () => {
+    const recipes = { ...withKind(search, KIND_RECIPES), query: '' }
+    expect(withKind({ ...recipes, scope: SCOPE_PUBLIC }, KIND_FOODS)).toEqual({
+      query: '',
+      scope: SCOPE_RECENT,
+      confirmedOnly: false,
+      kind: KIND_FOODS,
+    })
+  })
+
+  it('goes to "Alle" instead when switching to foods with a search text', () => {
     const recipes = withKind(search, KIND_RECIPES)
     expect(withKind({ ...recipes, scope: SCOPE_PUBLIC }, KIND_FOODS)).toEqual({
       query: 'quark',
@@ -96,8 +112,8 @@ describe('withKind', () => {
     expect(withKind(publicRecipes, KIND_RECIPES)).toEqual(publicRecipes)
   })
 
-  it('has "Alle" as the default for foods and "Eigene" for recipes and user items', () => {
-    expect(defaultScope(KIND_FOODS)).toBe(null)
+  it('has "Zuletzt" as the default for foods and "Eigene" for recipes and user items', () => {
+    expect(defaultScope(KIND_FOODS)).toBe(SCOPE_RECENT)
     expect(defaultScope(KIND_RECIPES)).toBe(SCOPE_OWN)
     expect(defaultScope(KIND_USER_ITEMS)).toBe(SCOPE_OWN)
   })
@@ -112,6 +128,39 @@ describe('recent scope', () => {
   it('is left for "Eigene" when switching to recipes', () => {
     const recent = { query: '', scope: SCOPE_RECENT, confirmedOnly: false, kind: KIND_FOODS }
     expect(withKind(recent, KIND_RECIPES)).toEqual({ ...recent, kind: KIND_RECIPES, scope: SCOPE_OWN })
+  })
+
+  it('is where the food searches start', () => {
+    expect(NEW_SEARCH).toEqual({ query: '', scope: SCOPE_RECENT, confirmedOnly: false, kind: KIND_FOODS })
+  })
+})
+
+describe('withQuery', () => {
+  it('switches from "Zuletzt" to "Alle" with the first letter, and stays there when emptied', () => {
+    const typed = withQuery(NEW_SEARCH, 'm')
+    expect(typed).toEqual({ ...NEW_SEARCH, query: 'm', scope: null })
+    expect(withQuery(typed, '')).toEqual({ ...NEW_SEARCH, scope: null })
+  })
+
+  it('switches for a scanned EAN too, but not for spaces only', () => {
+    expect(withQuery(NEW_SEARCH, '4006040001234').scope).toBe(null)
+    expect(withQuery(NEW_SEARCH, '  ')).toEqual({ ...NEW_SEARCH, query: '  ' })
+  })
+
+  it('switches again after "Zuletzt" was chosen once more', () => {
+    const recentAgain = withScope(withQuery(NEW_SEARCH, 'milch'), SCOPE_RECENT)
+    expect(recentAgain).toEqual(NEW_SEARCH)
+    expect(withQuery(recentAgain, 'k').scope).toBe(null)
+  })
+
+  it('keeps every other filter and "only confirmed"', () => {
+    for (const scope of [null, SCOPE_PUBLIC, SCOPE_OWN, SCOPE_FRIENDS]) {
+      expect(withQuery({ ...NEW_SEARCH, scope }, 'milch').scope).toBe(scope)
+    }
+    const confirmed = { ...NEW_SEARCH, scope: SCOPE_PUBLIC, confirmedOnly: true }
+    expect(withQuery(confirmed, 'milch')).toEqual({ ...confirmed, query: 'milch' })
+    expect(withQuery({ ...NEW_SEARCH, kind: KIND_RECIPES, scope: SCOPE_OWN }, 'k').scope).toBe(SCOPE_OWN)
+    expect(withQuery(USER_ITEM_SEARCH, 'k')).toEqual({ ...USER_ITEM_SEARCH, query: 'k' })
   })
 })
 
@@ -229,7 +278,7 @@ describe('user items', () => {
     expect(withKind({ ...foods, scope: SCOPE_RECENT }, KIND_USER_ITEMS).scope).toBe(SCOPE_OWN)
   })
 
-  it('go back to "Alle" for foods and to "Eigene" for recipes when switching', () => {
+  it('go to "Alle" for foods with a text and to "Eigene" for recipes when switching', () => {
     const userItems = { ...USER_ITEM_SEARCH, query: 'milch' }
     expect(withKind(userItems, KIND_FOODS)).toEqual({ query: 'milch', scope: null, confirmedOnly: false, kind: KIND_FOODS })
     expect(withKind({ ...userItems, scope: SCOPE_FRIENDS }, KIND_FOODS).scope).toBe(null)

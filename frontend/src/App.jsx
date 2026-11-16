@@ -97,6 +97,7 @@ import {
   tuningFor,
 } from './scanner.js'
 import {
+  NEW_SEARCH,
   USER_ITEM_SEARCH,
   KIND_USER_ITEMS,
   KIND_FOODS,
@@ -115,6 +116,7 @@ import {
   isLastPage,
   scopeAvailable,
   withKind,
+  withQuery,
   withScope,
 } from './catalog.js'
 import { WEEKDAYS, canSaveTask, formatWeekdays, taskEditorFor, taskRequest, toggleWeekday } from './tasks.js'
@@ -223,7 +225,8 @@ const SHOPPING_KINDS = [...CATALOG_KINDS, { value: KIND_USER_ITEMS, label: 'Benu
 const KIND_URLS = { [KIND_FOODS]: API.foods, [KIND_RECIPES]: API.recipes, [KIND_USER_ITEMS]: API.userItems }
 
 // Whose entries the search shows. "Alle": everything the user may see (own entries, private
-// ones included, and all public ones). "Zuletzt": the foods booked last, for foods only. Values as
+// ones included, and all public ones). "Zuletzt": the foods booked last, for foods only and their
+// default; typing switches it to "Alle" (see withQuery in catalog.js). Values as
 // the backend expects them ('' = no scope). "Nur bestätigte" is a separate toggle for some of
 // these (see catalog.js). soon: does not work yet, marked "bald".
 const SCOPE_OPTIONS = [
@@ -646,7 +649,7 @@ function CatalogEmpty({ catalog, search, notFound }) {
   if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
   if (!catalog.loaded) return null
   if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
-    return <p className="empty">Du hast noch keine Lebensmittel gebucht.</p>
+    return <p className="empty">Du hast noch keine Lebensmittel gebucht. Tippe, um alle Lebensmittel zu durchsuchen.</p>
   }
   if (search.kind === KIND_FOODS && search.query.trim() === '') {
     return (
@@ -764,7 +767,7 @@ function CatalogHeader({
     scannedCode !== null && query === scannedCode && results?.query === scannedCode && results.count === 0
   const clearSearch = useRef(null)
   useEffect(() => {
-    clearSearch.current = () => onSearchChange({ ...search, query: '' })
+    clearSearch.current = () => onSearchChange(withQuery(search, ''))
   })
   useEffect(() => {
     if (!isScanNotFound) return
@@ -789,7 +792,7 @@ function CatalogHeader({
             value={query}
             onChange={(event) => {
               setScannedCode(null)
-              onSearchChange({ ...search, query: event.target.value })
+              onSearchChange(withQuery(search, event.target.value))
             }}
           />
           {showScan && (
@@ -810,7 +813,7 @@ function CatalogHeader({
           onDetected={(code) => {
             setIsScanning(false)
             setScannedCode(code)
-            onSearchChange({ ...search, query: code })
+            onSearchChange(withQuery(search, code))
           }}
           onClose={() => setIsScanning(false)}
         />
@@ -1052,10 +1055,6 @@ function BarcodeScanner({ onDetected, onClose }) {
     document.body,
   )
 }
-
-// Search text, whose entries (scope, null: everything the user may see), "only confirmed" (off,
-// see catalog.js) and kind of a search view.
-const NEW_SEARCH = { query: '', scope: null, confirmedOnly: false, kind: KIND_FOODS }
 
 const DROPDOWN_MAX_HEIGHT = 280
 const DROPDOWN_SCREEN_MARGIN = 16 // distance the open list keeps from the screen edge

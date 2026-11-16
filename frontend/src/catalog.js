@@ -11,7 +11,8 @@ export const KIND_USER_ITEMS = 'userItems'
 // Whose entries a search shows, as the backend names them. null (the "Alle" choice) means
 // everything the user may see. RECENT ("Zuletzt"): the foods the user booked last (at most 30, see
 // FoodService.RECENT_COUNT in the backend); recipes are not recorded as booked, so it is for foods
-// only.
+// only. "Zuletzt" is a list, not a search: it is the default for foods, and typing (or scanning an
+// EAN) switches to "Alle", see withQuery.
 export const SCOPE_PUBLIC = 'PUBLIC'
 export const SCOPE_OWN = 'OWN'
 export const SCOPE_FRIENDS = 'FRIENDS'
@@ -40,6 +41,10 @@ export function scopeAvailable(kind, scope) {
   return scope !== SCOPE_RECENT || recentScopeAvailable(kind)
 }
 
+// The search the food searches open with (booking, adding foods to a recipe or task, food
+// database): the foods booked last, see SCOPE_RECENT.
+export const NEW_SEARCH = { query: '', scope: SCOPE_RECENT, confirmedOnly: false, kind: KIND_FOODS }
+
 // The search the shopping list opens with: user items, own ones.
 export const USER_ITEM_SEARCH = {
   query: '',
@@ -57,10 +62,10 @@ export function recentScopeAvailable(kind) {
   return kind === KIND_FOODS
 }
 
-// The filter a kind starts with when it is chosen: "Alle" for foods, "Eigene" for recipes and user
-// items (the user's own recipes are the ones mostly looked for).
+// The filter a kind starts with when it is chosen: "Zuletzt" for foods (see SCOPE_RECENT), "Eigene"
+// for recipes and user items (the user's own recipes are the ones mostly looked for).
 const DEFAULT_SCOPES = {
-  [KIND_FOODS]: null,
+  [KIND_FOODS]: SCOPE_RECENT,
   [KIND_RECIPES]: SCOPE_OWN,
   [KIND_USER_ITEMS]: USER_ITEM_DEFAULT_SCOPE,
 }
@@ -69,16 +74,30 @@ export function defaultScope(kind) {
   return DEFAULT_SCOPES[kind] ?? null
 }
 
+// "Zuletzt" never goes with a search text: with text, it is "Alle" instead.
+function withRecentOnlyWithoutText(search) {
+  return search.scope === SCOPE_RECENT && search.query.trim() !== '' ? { ...search, scope: null } : search
+}
+
+// The search after typing (or scanning an EAN): from "Zuletzt" it switches to "Alle", every other
+// filter stays. Emptying the field again stays with "Alle".
+export function withQuery(search, query) {
+  return withRecentOnlyWithoutText({ ...search, query })
+}
+
 // The search after choosing another scope or kind, "Nur bestätigte" switched off if it no longer
-// applies. Choosing another kind always starts with its default filter (see defaultScope): recipes
-// and user items with "Eigene", foods with "Alle". Choosing the kind shown already changes nothing.
+// applies. Choosing "Zuletzt" empties the search text, so its list shows. Choosing another kind
+// always starts with its default filter (see defaultScope): recipes and user items with "Eigene",
+// foods with "Zuletzt" (with a search text: "Alle"). Choosing the kind shown already changes
+// nothing.
 export function withScope(search, scope) {
-  return withConfirmedFilterFitting({ ...search, scope })
+  const query = scope === SCOPE_RECENT ? '' : search.query
+  return withConfirmedFilterFitting({ ...search, scope, query })
 }
 
 export function withKind(search, kind) {
   const scope = kind === search.kind && scopeAvailable(kind, search.scope) ? search.scope : defaultScope(kind)
-  return withConfirmedFilterFitting({ ...search, kind, scope })
+  return withConfirmedFilterFitting(withRecentOnlyWithoutText({ ...search, kind, scope }))
 }
 
 // "+" next to the filters of the shopping list search creates a user item named as typed. Only
@@ -94,8 +113,9 @@ export function canCreateUserItem(search, { entries, loaded }) {
 
 // Foods of "Alle" and "Öffentlich" are only searched from the first letter: the whole food
 // database is no useful list. The other filters ("Eigene", "Freunde", "Zuletzt") are short and
-// show their foods right away. Recipes and user items are listed right away with every filter
-// (sorted by name, a page at a time); typing narrows them down.
+// show their foods right away (typing in "Zuletzt" switches to "Alle", see withQuery). Recipes and
+// user items are listed right away with every filter (sorted by name, a page at a time); typing
+// narrows them down.
 export function isIdleSearch({ query, scope, kind }) {
   return kind === KIND_FOODS && query.trim() === '' && (scope === null || scope === SCOPE_PUBLIC)
 }
