@@ -173,6 +173,7 @@ const SEARCH_DELAY_MS = 250 // search only once typing pauses
 const LOAD_AHEAD_PX = 1200 // the next page of results is loaded when the list ends this close below the screen
 const CATALOG_CACHE = { maxEntries: 30, maxAgeMs: 5 * 60 * 1000 } // see createCatalogCache
 const SCAN_NOT_FOUND_MS = 1200 // how long a scanned EAN that finds nothing stays in the field
+const KEYBOARD_CLOSE_MOVE_PX = 10 // finger movement that closes the keyboard of a search, see useCloseKeyboardOnSwipe
 const ADDED_FEEDBACK_MS = 600 // how long the + button shows ✓
 const LOCALE = 'de-DE'
 const DATE_TIME_FORMAT = { dateStyle: 'short', timeStyle: 'short' }
@@ -731,6 +732,39 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
   )
 }
 
+// Closes the on-screen keyboard as soon as the finger moves over the page (to scroll the list): the
+// field (ref) loses its focus, its text stays; tapping it opens the keyboard again. Only touch
+// counts: the page also scrolls by itself when the keyboard opens, which must not close it again,
+// and on a computer the cursor stays in the field. A tap wobbles a few pixels, so only a move of
+// more than KEYBOARD_CLOSE_MOVE_PX counts; moving the finger inside the field (placing the cursor,
+// selecting text) does not.
+function useCloseKeyboardOnSwipe(ref) {
+  useEffect(() => {
+    let start = null // where the current touch began, null: it does not count
+    function onTouchStart(event) {
+      const touch = event.touches[0]
+      start = event.touches.length === 1 && !ref.current?.contains(event.target)
+        ? { x: touch.clientX, y: touch.clientY }
+        : null
+    }
+    function onTouchMove(event) {
+      const field = ref.current
+      if (!start || !field || document.activeElement !== field) return
+      const touch = event.touches[0]
+      if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > KEYBOARD_CLOSE_MOVE_PX) {
+        start = null
+        field.blur()
+      }
+    }
+    document.addEventListener('touchstart', onTouchStart, { passive: true })
+    document.addEventListener('touchmove', onTouchMove, { passive: true })
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart)
+      document.removeEventListener('touchmove', onTouchMove)
+    }
+  }, [ref])
+}
+
 // Search field with the filter row below it. Both stick to the top while the list scrolls.
 // Filter row: "only confirmed" toggle, whose entries, foods or recipes; the two selects share the
 // width. children: extra buttons at the end (the "+" of the food database and of the shopping list
@@ -738,6 +772,9 @@ function TopBar({ title, closeLabel, onClose, centered = false }) {
 // filtersLocked: the filters are fixed by the view (see NutrientProfileSearch); they show what
 // applies, greyed out, and cannot be changed. results: { query, count } of the list shown below,
 // query the search text it was loaded for; a scan that finds nothing is cleared again with it.
+// The field is focused when the search opens, after choosing another kind and after choosing a
+// filter that needs typing; scrolling with the finger closes the keyboard (see
+// useCloseKeyboardOnSwipe).
 function CatalogHeader({
   search,
   onSearchChange,
@@ -754,6 +791,8 @@ function CatalogHeader({
   // (see confirmedFilterAvailable).
   const confirmable = confirmedFilterAvailable({ kind: kindLocked ? KIND_FOODS : kind, scope })
   const placeholder = SEARCH_PLACEHOLDERS[kindLocked ? KIND_FOODS : kind]
+  const inputRef = useRef(null)
+  useCloseKeyboardOnSwipe(inputRef)
   // The barcode button takes the place of the field's own "×" while nothing is typed, for foods only
   // and only where the device can scan (see scanner.js). A scanned EAN becomes the search text; the
   // backend finds the food by its EAN (also an unconfirmed one, see FoodRepository.search).
@@ -784,6 +823,7 @@ function CatalogHeader({
         <FramedCloseButton label={closeLabel} onClick={onClose} />
         <div className="search-input inline-btn-field">
           <input
+            ref={inputRef}
             type="search"
             placeholder={placeholder}
             aria-label={placeholder}
@@ -842,7 +882,15 @@ function CatalogHeader({
           value={scope ?? ''}
           options={SCOPE_OPTIONS_BY_KIND[kindLocked ? KIND_FOODS : kind]}
           disabled={filtersLocked}
-          onChange={(value) => onSearchChange(withScope(search, value === '' ? null : value))}
+          onChange={(value) => {
+            const changed = withScope(search, value === '' ? null : value)
+            onSearchChange(changed)
+            // A filter whose list only comes with typing ("Alle" or "Öffentlich" for foods, see
+            // isIdleSearch): the field gets the focus back from the select, as for the kind below.
+            if (isIdleSearch({ ...changed, kind: kindLocked ? KIND_FOODS : changed.kind })) {
+              inputRef.current?.focus()
+            }
+          }}
         />
         <SelectBox
           label="Art"
@@ -850,7 +898,12 @@ function CatalogHeader({
           value={kindLocked ? KIND_FOODS : kind}
           options={kinds}
           disabled={kindLocked || filtersLocked}
-          onChange={(value) => onSearchChange(withKind(search, value))}
+          onChange={(value) => {
+            onSearchChange(withKind(search, value))
+            // The select took the focus; typing right away should search the new kind. Still within
+            // the tap, so the phone opens its keyboard too.
+            inputRef.current?.focus()
+          }}
         />
         {children}
       </div>
