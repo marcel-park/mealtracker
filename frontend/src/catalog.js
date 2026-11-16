@@ -92,11 +92,12 @@ export function canCreateUserItem(search, { entries, loaded }) {
   return !entries.some((entry) => entry.name.trim().toLocaleLowerCase() === lower)
 }
 
-// Foods are only searched from the first letter: the whole food database is no useful list.
-// "Zuletzt" is short and shows its foods right away. Recipes and user items are listed right away
-// with every filter (sorted by name, a page at a time); typing narrows them down.
+// Foods of "Alle" and "Öffentlich" are only searched from the first letter: the whole food
+// database is no useful list. The other filters ("Eigene", "Freunde", "Zuletzt") are short and
+// show their foods right away. Recipes and user items are listed right away with every filter
+// (sorted by name, a page at a time); typing narrows them down.
 export function isIdleSearch({ query, scope, kind }) {
-  return kind === KIND_FOODS && query.trim() === '' && scope !== SCOPE_RECENT
+  return kind === KIND_FOODS && query.trim() === '' && (scope === null || scope === SCOPE_PUBLIC)
 }
 
 // The entries with the next page appended. An entry can come twice when something was added or

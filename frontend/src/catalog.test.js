@@ -116,15 +116,18 @@ describe('recent scope', () => {
 })
 
 describe('isIdleSearch', () => {
-  it('waits for the first letter for foods', () => {
+  it('waits for the first letter for all foods and public foods', () => {
     expect(isIdleSearch({ query: '', scope: null, kind: KIND_FOODS })).toBe(true)
     expect(isIdleSearch({ query: '  ', scope: SCOPE_PUBLIC, kind: KIND_FOODS })).toBe(true)
-    expect(isIdleSearch({ query: '', scope: SCOPE_OWN, kind: KIND_FOODS })).toBe(true)
     expect(isIdleSearch({ query: 'a', scope: null, kind: KIND_FOODS })).toBe(false)
+    expect(isIdleSearch({ query: 'a', scope: SCOPE_PUBLIC, kind: KIND_FOODS })).toBe(false)
   })
 
-  it('shows the recently booked foods right away', () => {
-    expect(isIdleSearch({ query: '', scope: SCOPE_RECENT, kind: KIND_FOODS })).toBe(false)
+  it('shows own foods, those of friends and the recently booked ones right away', () => {
+    for (const scope of [SCOPE_OWN, SCOPE_FRIENDS, SCOPE_RECENT]) {
+      expect(isIdleSearch({ query: '', scope, kind: KIND_FOODS })).toBe(false)
+      expect(isIdleSearch({ query: '  ', scope, kind: KIND_FOODS })).toBe(false)
+    }
   })
 
   it('lists recipes right away with every filter', () => {
@@ -235,7 +238,7 @@ describe('user items', () => {
 
   it('show all own items right away, without typing', () => {
     expect(isIdleSearch(USER_ITEM_SEARCH)).toBe(false)
-    expect(isIdleSearch({ ...USER_ITEM_SEARCH, kind: KIND_FOODS, scope: SCOPE_OWN })).toBe(true)
+    expect(isIdleSearch({ ...USER_ITEM_SEARCH, kind: KIND_FOODS, scope: null })).toBe(true)
   })
 })
 

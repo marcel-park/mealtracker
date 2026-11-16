@@ -640,12 +640,22 @@ function LoadMoreSentinel({ active, count, onVisible }) {
 
 // What a search view shows instead of rows: a hint before the first letter, nothing while the
 // first results load, otherwise notFound (or that nothing was booked yet, for "Zuletzt", that
-// there are no recipes yet, or how to create the first user item).
+// there are no own foods / foods of friends or no recipes yet, or how to create the first user
+// item).
 function CatalogEmpty({ catalog, search, notFound }) {
   if (catalog.idle) return <p className="empty">Tippe, um die Suche zu starten.</p>
   if (!catalog.loaded) return null
   if (search.scope === SCOPE_RECENT && search.query.trim() === '') {
     return <p className="empty">Du hast noch keine Lebensmittel gebucht.</p>
+  }
+  if (search.kind === KIND_FOODS && search.query.trim() === '') {
+    return (
+      <p className="empty">
+        {search.scope === SCOPE_OWN
+          ? 'Du hast noch keine eigenen Lebensmittel.'
+          : 'Deine Freunde haben noch keine Lebensmittel.'}
+      </p>
+    )
   }
   if (search.kind === KIND_RECIPES && search.query.trim() === '') {
     return (
