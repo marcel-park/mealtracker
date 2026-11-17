@@ -14,14 +14,20 @@
 // Step length as a share of the height, the usual estimate from gait research. DIVERSE: between.
 const STEP_LENGTH_PER_HEIGHT = { MALE: 0.415, FEMALE: 0.413, DIVERSE: 0.414 }
 
-const NET_KCAL_PER_KG_AND_KM = 0.5
+export const NET_KCAL_PER_KG_AND_KM = 0.5
+
+// The estimated step length in metres; null while height or sex are missing.
+export function stepLengthM({ heightCm, sex }) {
+  const factor = STEP_LENGTH_PER_HEIGHT[sex]
+  return heightCm && factor ? (heightCm / 100) * factor : null
+}
 
 // kcal of `steps` steps for a user; 0 while weight, height or sex are missing.
-export function stepKcal(steps, { weightKg, heightCm, sex }) {
-  const factor = STEP_LENGTH_PER_HEIGHT[sex]
-  if (!weightKg || !heightCm || !factor || !(steps > 0)) return 0
-  const distanceKm = (steps * (heightCm / 100) * factor) / 1000
-  return distanceKm * weightKg * NET_KCAL_PER_KG_AND_KM
+export function stepKcal(steps, user) {
+  const stepLength = stepLengthM(user)
+  if (!user.weightKg || !stepLength || !(steps > 0)) return 0
+  const distanceKm = (steps * stepLength) / 1000
+  return distanceKm * user.weightKg * NET_KCAL_PER_KG_AND_KM
 }
 
 // Workouts can overlap (e.g. recorded by watch and phone); merged so no time counts twice.
