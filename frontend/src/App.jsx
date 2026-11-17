@@ -136,6 +136,22 @@ import {
 } from './bodyData.js'
 import * as healthConnect from './healthConnect.js'
 import {
+  TYPE_GROUPS,
+  TYPE_INFO,
+  activityCalculation,
+  dayLabel,
+  describeAll,
+  entryLine,
+  formatNumber as formatHealthNumber,
+  formatValue,
+  isError,
+  shiftDay,
+  summarizeBySource,
+  summaryLine,
+  timeRange,
+  workoutRows,
+} from './healthData.js'
+import {
   NEW_EDITOR,
   UNIT_GRAM,
   UNIT_PORTION,
@@ -4276,7 +4292,8 @@ function wholeNumberIn(text, min, max) {
 // connection to Health Connect (Android app only), which is kept on the phone, not on the server.
 // activity: see useActivity. The daily nutrient targets follow from the saved profile on their own
 // (see dailyTargets.js and NutrientOverview); there is nothing to set for them here.
-function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError }) {
+// hidden: under the Health Connect data (onOpenHealthData, admins only), which keeps what was typed.
+function ProfilePage({ user, activity, hidden = false, onUserChange, onOpenHealthData, onLogout, onClose, onError }) {
   const [targetText, setTargetText] = useState(String(user.calorieTarget))
   const [stepGoalText, setStepGoalText] = useState(String(user.stepGoal))
   // { carbsPercent, proteinPercent, fatPercent } as typed
@@ -4371,7 +4388,7 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
   }
 
   return (
-    <section>
+    <section hidden={hidden}>
       <TopBar title="Profil" closeLabel="Schließen" onClose={onClose} />
       <p className="profile-email">
         {user.email}
@@ -4450,6 +4467,15 @@ function ProfilePage({ user, activity, onUserChange, onLogout, onClose, onError 
       </div>
 
       <HealthConnectSetting activity={activity} onError={onError} />
+
+      {/* Admins only (the first account): what Health Connect holds, see HealthDataPage. */}
+      {user.admin && healthConnect.isSupported() && (
+        <div className="field">
+          <button type="button" className="btn wide" onClick={onOpenHealthData}>
+            Daten aus Health Connect anzeigen
+          </button>
+        </div>
+      )}
 
       {/* Who sees the user's items (shopping list); never public. */}
       <div className="field theme-field">
@@ -4657,6 +4683,246 @@ function HealthConnectSetting({ activity, onError }) {
       <span>Health Connect</span>
       {content}
     </div>
+  )
+}
+
+// Entries listed per type in the view; all of them are in the copied text.
+const HEALTH_DATA_SHOWN_ENTRIES = 300
+const COPIED_FEEDBACK_MS = 1500
+
+// Admin only (see ProfilePage): everything Health Connect holds for a day, to see where steps and
+// calories come from and how the main view gets its activity calories from them (see
+// healthConnect.readAll and healthData.js). Reads when it opens, for another day and on
+// "Aktualisieren". "Zugriff erlauben" asks for the types not granted yet; the main view never needs
+// them.
+function HealthDataPage({ user, onClose, onError }) {
+  const today = localDate(new Date())
+  const [day, setDay] = useState(today)
+  const [reads, setReads] = useState(0) // counts "Aktualisieren" and granted access, to read again
+  const [result, setResult] = useState(null) // { day, reads, data }
+  const [copied, setCopied] = useState(false)
+  const runAction = useActionRunner(onError)
+  const isSupported = healthConnect.isSupported()
+
+  useEffect(() => {
+    if (!isSupported) return
+    let isCurrent = true
+    healthConnect.readAll(day).then(
+      (data) => isCurrent && setResult({ day, reads, data }),
+      (error) => isCurrent && onError(error.message),
+    )
+    return () => {
+      isCurrent = false
+    }
+  }, [isSupported, day, reads, onError])
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  const data = result?.day === day && result.reads === reads ? result.data : null
+  const accessCount = data && !isError(data.access) ? data.access.length : null
+  const typeCount = healthConnect.ALL_TYPES.length
+
+  function copy() {
+    runAction(async () => {
+      if (!navigator.clipboard) throw new Error('Kopieren geht hier nicht.')
+      await navigator.clipboard.writeText(describeAll(data, user))
+      setCopied(true)
+    })
+  }
+
+  function requestAccess() {
+    runAction(async () => {
+      await healthConnect.requestAllAccess()
+      setReads((count) => count + 1)
+    })
+  }
+
+  return (
+    <section className="health-data">
+      <TopBar title="Health-Connect-Daten" closeLabel="Zurück zum Profil" onClose={onClose} />
+      {!isSupported ? (
+        <p className="empty">Nur in der Android-App verfügbar.</p>
+      ) : (
+        <>
+          <div className="health-data-day">
+            <button type="button" className="btn small" aria-label="Vortag" onClick={() => setDay(shiftDay(day, -1))}>
+              ‹
+            </button>
+            <span>{dayLabel(day, today)}</span>
+            <button
+              type="button"
+              className="btn small"
+              aria-label="Folgetag"
+              disabled={day >= today}
+              onClick={() => setDay(shiftDay(day, 1))}
+            >
+              ›
+            </button>
+          </div>
+          <div className="health-data-actions">
+            <button type="button" className="btn small" onClick={() => setReads((count) => count + 1)}>
+              Aktualisieren
+            </button>
+            <button type="button" className="btn small" disabled={!data} onClick={copy}>
+              {copied ? 'Kopiert ✓' : 'Text kopieren'}
+            </button>
+            {accessCount !== null && accessCount < typeCount && (
+              <button type="button" className="btn small" onClick={requestAccess}>
+                Zugriff erlauben
+              </button>
+            )}
+          </div>
+          {data ? <HealthDataContent data={data} user={user} /> : <p className="empty">Lese Health Connect …</p>}
+        </>
+      )}
+    </section>
+  )
+}
+
+function HealthDataContent({ data, user }) {
+  const { day } = data
+  const calculation = activityCalculation(data.activity, user)
+  const types = TYPE_GROUPS.flatMap((group) => group.types)
+  const notGranted = isError(data.access) ? [] : types.filter((type) => !data.access.includes(type))
+
+  return (
+    <div className="health-data-content">
+      <p className="hint">
+        {isError(data.access)
+          ? `Zugriff nicht prüfbar: ${data.access.error}`
+          : `Zugriff auf ${data.access.length} von ${healthConnect.ALL_TYPES.length} Datenarten.`}
+        {notGranted.length > 0 && ` Kein Zugriff: ${notGranted.map((type) => TYPE_INFO[type].label).join(', ')}.`}
+      </p>
+
+      <div className="section-head">
+        <h2>Rechnung der Hauptansicht</h2>
+      </div>
+      {calculation ? (
+        <>
+          <dl className="health-data-rows">
+            <dt>Schritte</dt>
+            <dd>{formatHealthNumber(calculation.steps, 0)}</dd>
+            <dt>davon in Workouts</dt>
+            <dd>{formatHealthNumber(calculation.stepsInWorkouts, 0)}</dd>
+            <dt>außerhalb von Workouts</dt>
+            <dd>{formatHealthNumber(calculation.stepsOutside, 0)}</dd>
+            <dt>Schrittlänge</dt>
+            <dd>{formatValue(calculation.stepLengthM, 'm', 3)}</dd>
+            <dt>Strecke</dt>
+            <dd>{formatValue(calculation.distanceKm, 'km', 2)}</dd>
+            <dt>Gewicht</dt>
+            <dd>{formatValue(calculation.weightKg, 'kg')}</dd>
+            <dt>Schrittkalorien</dt>
+            <dd>{formatValue(calculation.stepKcal, 'kcal')}</dd>
+            <dt>Workouts (laut Plugin)</dt>
+            <dd>{formatValue(calculation.workoutKcal, 'kcal')}</dd>
+            <dt>Aktivitätskalorien</dt>
+            <dd>{formatValue(calculation.activityKcal, 'kcal')}</dd>
+          </dl>
+          <p className="hint">
+            Schrittkalorien = Schritte außerhalb von Workouts × Schrittlänge × Gewicht ×{' '}
+            {formatHealthNumber(calculation.kcalPerKgAndKm, 2)} kcal je kg und km. Die Schrittlänge ist ein fester Anteil der
+            Größe (Mann 0,415, Frau 0,413, divers 0,414).
+            {calculation.missing.length > 0 && ` Fehlt im Profil: ${calculation.missing.join(', ')}.`}
+          </p>
+        </>
+      ) : (
+        <p className="hint">Nicht gelesen: {data.activity?.error ?? 'keine Daten'}</p>
+      )}
+
+      <div className="section-head">
+        <h2>Health Connect gesamt</h2>
+      </div>
+      <p className="hint">Bereinigt nach der Datenquellen-Priorität in Health Connect, wie die Hauptansicht liest.</p>
+      <dl className="health-data-rows">
+        {Object.entries(data.totals).map(([type, total]) => (
+          <Fragment key={type}>
+            <dt>{TYPE_INFO[type].label}</dt>
+            <dd>{isError(total) ? `Fehler: ${total.error}` : formatValue(total, TYPE_INFO[type].unit, 0)}</dd>
+          </Fragment>
+        ))}
+      </dl>
+
+      <div className="section-head">
+        <h2>Workouts</h2>
+      </div>
+      {isError(data.workouts) ? (
+        <p className="hint">Fehler: {data.workouts.error}</p>
+      ) : data.workouts.length === 0 ? (
+        <p className="hint">Keine Workouts.</p>
+      ) : (
+        workoutRows(data.workouts, data.entries).map((row) => (
+          <div key={`${row.startDate}-${row.source}`} className="health-data-workout">
+            <strong>
+              {timeRange(row.startDate, row.endDate, day)} · {row.workoutType} · {formatHealthNumber(row.minutes, 0)} min
+            </strong>
+            <span className="hint">{row.source}</span>
+            <dl className="health-data-rows">
+              <dt>Plugin (zählt)</dt>
+              <dd>{formatValue(row.pluginKcal, 'kcal')}</dd>
+              <dt>aktive Kalorien darin</dt>
+              <dd>{formatValue(row.activeKcal, 'kcal')}</dd>
+              <dt>insgesamt darin</dt>
+              <dd>{formatValue(row.totalKcal, 'kcal')}</dd>
+            </dl>
+          </div>
+        ))
+      )}
+
+      {TYPE_GROUPS.map((group) => (
+        <HealthDataGroup key={group.title} group={group} data={data} />
+      ))}
+    </div>
+  )
+}
+
+// One group of types: each type with entries as a collapsible block (sources, then the entries),
+// the others in one line each for "keine Einträge" and errors.
+function HealthDataGroup({ group, data }) {
+  const withEntries = group.types.filter((type) => Array.isArray(data.entries[type]) && data.entries[type].length > 0)
+  const empty = group.types.filter((type) => Array.isArray(data.entries[type]) && data.entries[type].length === 0)
+  const failed = group.types.filter((type) => isError(data.entries[type]))
+
+  return (
+    <>
+      <div className="section-head">
+        <h2>{group.title}</h2>
+      </div>
+      {withEntries.map((type) => {
+        const { label, unit, kind } = TYPE_INFO[type]
+        const entries = data.entries[type]
+        const shown = entries.slice(0, HEALTH_DATA_SHOWN_ENTRIES)
+        return (
+          <details key={type} className="health-data-type">
+            <summary>
+              {label}: {formatHealthNumber(entries.length, 0)} Einträge
+              {data.truncated.includes(type) && ' (gekürzt)'}
+            </summary>
+            <ul className="health-data-sources">
+              {summarizeBySource(entries, kind).map((summary) => (
+                <li key={summary.source}>{summaryLine(summary, unit)}</li>
+              ))}
+            </ul>
+            <pre className="health-data-entries">
+              {shown.map((entry) => entryLine(entry, type, data.day, true)).join('\n')}
+              {entries.length > shown.length && `\n… ${entries.length - shown.length} weitere (mehr im kopierten Text)`}
+            </pre>
+          </details>
+        )
+      })}
+      {empty.length > 0 && (
+        <p className="hint">Keine Einträge: {empty.map((type) => TYPE_INFO[type].label).join(', ')}</p>
+      )}
+      {failed.map((type) => (
+        <p key={type} className="hint">
+          {TYPE_INFO[type].label}: {data.entries[type].error}
+        </p>
+      ))}
+    </>
   )
 }
 
@@ -5061,6 +5327,7 @@ const SEARCH_CLOSE_LABELS = { editor: 'Zurück zum Rezept', booking: 'Zurück zu
 function MealTracker({ user, onUserChange, onLogout }) {
   // 'list' | 'edit' | 'search' | 'preview' | 'foods' | 'shopping' | 'profile' | 'nutrients' | 'checklist'
   const [view, setView] = useState('list')
+  const [healthDataOpen, setHealthDataOpen] = useState(false) // over the profile, see HealthDataPage
   const [meals, setMeals] = useState([])
   const [draft, setDraft] = useState(NEW_DRAFT)
   // Amount view of a food: null or { food, mode: 'add' | 'set' | 'recipe-add' | 'task-set', initial },
@@ -5884,6 +6151,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
 
   function closeProfile() {
     setError(null)
+    setHealthDataOpen(false)
     setView('list')
   }
 
@@ -6000,6 +6268,7 @@ function MealTracker({ user, onUserChange, onLogout }) {
     else if (view === 'nutrients') closeNutrients()
     else if (view === 'checklist' && tasksOpen) setTasksOpen(false)
     else if (view === 'checklist') closeChecklist()
+    else if (view === 'profile' && healthDataOpen) setHealthDataOpen(false)
     else if (view === 'profile') closeProfile()
   }
 
@@ -6175,12 +6444,18 @@ function MealTracker({ user, onUserChange, onLogout }) {
         <ProfilePage
           user={user}
           activity={activity}
+          hidden={healthDataOpen}
           onUserChange={onUserChange}
+          onOpenHealthData={() => {
+            setError(null)
+            setHealthDataOpen(true)
+          }}
           onLogout={onLogout}
           onClose={goBack}
           onError={setError}
         />
       )}
+      {view === 'profile' && healthDataOpen && <HealthDataPage user={user} onClose={goBack} onError={setError} />}
 
       {/* Stays mounted (only hidden) under the preview and the detail views,
           so the search text, filter and results survive. */}

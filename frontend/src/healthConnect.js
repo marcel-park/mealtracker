@@ -120,3 +120,108 @@ export async function lastRead(day) {
     return null
   }
 }
+
+// ---------- everything, for the admin view "Health-Connect-Daten" ----------
+// Every type the plugin reads on Android (its manifest declares their read permissions), except
+// distance while cycling (the same record type as distance) and the heart rate (thousands of
+// measurements a day that say nothing about steps or calories). The main view only ever asks
+// for READ_TYPES; this view asks for the others itself (requestAllAccess), so normal use never
+// needs more than the activity data, and reading all of it costs nothing until the view is opened.
+export const ALL_TYPES = [
+  'steps',
+  'distance',
+  'calories',
+  'totalCalories',
+  'basalCalories',
+  'flightsClimbed',
+  'workouts',
+  'restingHeartRate',
+  'heartRateVariability',
+  'vo2Max',
+  'respiratoryRate',
+  'oxygenSaturation',
+  'sleep',
+  'mindfulness',
+  'weight',
+  'height',
+  'bodyFat',
+  'bodyTemperature',
+  'basalBodyTemperature',
+  'bloodPressure',
+  'bloodGlucose',
+  'dietaryWater',
+  'dietaryEnergyConsumed',
+]
+
+// Entries read per type at most; see readAll's truncated.
+export const MAX_ENTRIES = 5000
+
+// Health Connect's own totals (deduplicated by the user's source priorities), for the types the
+// plugin can aggregate; the raw entries of all sources are summed by the view itself.
+const AGGREGATED_TYPES = ['steps', 'distance', 'calories']
+
+// The types read access is granted for, of ALL_TYPES.
+export async function allAccess() {
+  const status = await Health.checkAuthorization({ read: ALL_TYPES })
+  return ALL_TYPES.filter((type) => status.readAuthorized.includes(type))
+}
+
+// Asks Android for read access to every type; returns the types granted.
+export async function requestAllAccess() {
+  const status = await Health.requestAuthorization({ read: ALL_TYPES })
+  return ALL_TYPES.filter((type) => status.readAuthorized.includes(type))
+}
+
+const failure = (error) => ({ error: error?.message ?? String(error) })
+
+// Everything Health Connect holds for a day (see readDay for day, start and end), each type on its
+// own, so a missing permission or a failure only affects that type:
+// - activity: what the main view reads (readDay), or { error }
+// - totals: { [type]: kcal, steps or metres of the day } from Health Connect's aggregation, or { error }
+// - entries: { [type]: [sample] } as the plugin returns them (all sources), or { error }
+// - workouts: [workout] with all the plugin returns (type, source, ...), or { error }
+// - truncated: the types with MAX_ENTRIES entries, of which there may be more
+// - access: the types read access is granted for, or { error }
+export async function readAll(day) {
+  const start = new Date(`${day}T00:00:00`)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  const range = { startDate: start.toISOString(), endDate: end.toISOString() }
+
+  const [access, activity, workouts, totals, entries] = await Promise.all([
+    allAccess().catch(failure),
+    readDay(day).catch(failure),
+    Health.queryWorkouts({ ...range, limit: MAX_WORKOUTS }).then(({ workouts }) => workouts, failure),
+    Promise.all(
+      AGGREGATED_TYPES.map((dataType) =>
+        Health.queryAggregated({ ...range, dataType, bucket: 'day', aggregation: 'sum' }).then(
+          ({ samples }) => [dataType, samples.reduce((sum, sample) => sum + sample.value, 0)],
+          (error) => [dataType, failure(error)],
+        ),
+      ),
+    ),
+    Promise.all(
+      ALL_TYPES.filter((type) => type !== 'workouts').map((dataType) =>
+        Health.readSamples({ ...range, dataType, limit: MAX_ENTRIES, ascending: true }).then(
+          ({ samples }) => [dataType, samples],
+          (error) => [dataType, failure(error)],
+        ),
+      ),
+    ),
+  ])
+  const entriesByType = Object.fromEntries(entries)
+  return {
+    day,
+    start: range.startDate,
+    end: range.endDate,
+    readAt: new Date().toISOString(),
+    access,
+    activity,
+    workouts,
+    totals: Object.fromEntries(totals),
+    entries: entriesByType,
+    truncated: Object.keys(entriesByType).filter(
+      (type) => Array.isArray(entriesByType[type]) && entriesByType[type].length >= MAX_ENTRIES,
+    ),
+  }
+}

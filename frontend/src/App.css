@@ -1552,6 +1552,79 @@ fieldset.plain:disabled input {
   gap: 12px;
 }
 
+/* ----- Health Connect data (admins, see HealthDataPage) ----- */
+
+.health-data-day {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 12px;
+  font-weight: 600;
+}
+
+.health-data-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* label left, value right, one row each */
+.health-data-rows {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  margin: 8px 0;
+}
+
+.health-data-rows dt {
+  color: var(--muted);
+}
+
+.health-data-rows dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-data-workout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.health-data-type {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.health-data-type summary {
+  cursor: pointer;
+}
+
+.health-data-sources {
+  margin: 8px 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.health-data-entries {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.75rem;
+  white-space: pre;
+  user-select: text;
+}
+
 /* ----- Shopping list ----- */
 
 /* checked off: crossed out and greyed; the list puts it at the end */
