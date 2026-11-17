@@ -3,18 +3,21 @@
 // data never leaves the phone. What was read last today is kept in the app's storage, so the main
 // view can still show it when reading fails, e.g. right after a restart without Health Connect.
 //
-// Unverified against a real Galaxy Watch so far: whether Samsung Health writes the calories of
-// each workout (they are read as the active calories within the workout's time, see the plugin).
+// Samsung Health only shares its data if it is allowed to in its own settings (Health Connect);
+// otherwise its workouts are missing here.
+//
+// The calories of a workout: the plugin adds up the active calories within the workout's time and,
+// if there are none, the total calories burned, as apps write them either way.
 
 import { Capacitor } from '@capacitor/core'
 import { Preferences } from '@capacitor/preferences'
 import { Health } from '@capgo/capacitor-health'
 import { localDate } from './meals.js'
 
-// What is read: step counts, workouts, and the active calories the workout calories come from.
-// Distance is not used, but the plugin asks Health Connect for a workout's distance and calories
-// in one request, which fails as a whole without the distance permission.
-const READ_TYPES = ['steps', 'workouts', 'calories', 'distance']
+// What is read: step counts, workouts, and the active and total calories the workout calories come
+// from (see above). Distance is not used, but the plugin asks Health Connect for a workout's
+// distance and calories in one request, which fails as a whole without the distance permission.
+const READ_TYPES = ['steps', 'workouts', 'calories', 'totalCalories', 'distance']
 
 // Play Store page of Health Connect, for phones that do not have it (Android 13 and older).
 const HEALTH_CONNECT_STORE_URL =
@@ -36,15 +39,24 @@ export async function availability() {
   return available ? 'available' : 'notInstalled'
 }
 
+const allGranted = (status) => READ_TYPES.every((type) => status.readAuthorized.includes(type))
+
+// Connected in the profile, and read access to every type is (still) granted: after an update
+// that reads more types (as the total calories), the profile offers to connect again, which asks
+// for the new ones. If the access cannot be checked, reading tries anyway (see readDay).
 export async function isConnected() {
   const { value } = await Preferences.get({ key: CONNECTED_KEY })
-  return value === 'true'
+  if (value !== 'true') return false
+  try {
+    return allGranted(await Health.checkAuthorization({ read: READ_TYPES }))
+  } catch {
+    return true
+  }
 }
 
-// Asks Android for read access. Connected only if all three types were granted.
+// Asks Android for read access. Connected only if all types were granted.
 export async function connect() {
-  const status = await Health.requestAuthorization({ read: READ_TYPES })
-  const granted = READ_TYPES.every((type) => status.readAuthorized.includes(type))
+  const granted = allGranted(await Health.requestAuthorization({ read: READ_TYPES }))
   if (granted) await Preferences.set({ key: CONNECTED_KEY, value: 'true' })
   return granted
 }
